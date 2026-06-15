@@ -29,4 +29,9 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+
+  // Les tests unitaires (store Zustand) sont de la logique pure sans DOM → environnement node.
+  // (jsdom@29 casse sous Node 21.7 via une dép ESM ; si des tests DOM sont ajoutés plus tard,
+  //  passer à happy-dom plutôt que jsdom.)
+  test: { environment: "node", globals: true },
 }));
