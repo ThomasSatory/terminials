@@ -1,0 +1,11 @@
+[package]
+name = "terminials-core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "terminials_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }
