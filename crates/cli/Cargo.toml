@@ -1,0 +1,17 @@
+[package]
+name = "terminials-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "terminials"
+path = "src/main.rs"
+
+[lib]
+name = "terminials_cli"
+path = "src/lib.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+protocol = { path = "../protocol" }
+serde_json = { workspace = true }
