@@ -89,6 +89,12 @@ pub fn resize_pty(reg: &PtyRegistry, id: PtyId, cols: u16, rows: u16) -> std::io
         .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
+/// Ferme un PTY : retire le handle du registre. Le drop du child + master ferme le fd
+/// esclave → EOF côté reader → le thread lecteur se termine naturellement.
+pub fn close_pty(reg: &PtyRegistry, id: PtyId) {
+    reg.handles.lock().unwrap().remove(&id);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

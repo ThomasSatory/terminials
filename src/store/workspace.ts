@@ -13,6 +13,7 @@ export interface Workspace {
   id: string;
   cwd: string;
   branch?: string;
+  dirty?: boolean;
   ports: number[];
   root: PaneNode;
   unread: boolean;
@@ -36,6 +37,7 @@ interface WorkspaceState {
   setStatus: (wsId: string, status: { label: string; color?: string }) => void;
   setProgress: (wsId: string, progress: { value: number; label?: string }) => void;
   setPanePty: (paneId: string, ptyId: number) => void;
+  removePanePty: (paneId: string) => void;
   reset: () => void;
 }
 
@@ -93,9 +95,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, unread: false } : w)),
     })),
   setActive: (wsId) => set({ activeId: wsId }),
-  setGit: (wsId, branch, _dirty) =>
+  setGit: (wsId, branch, dirty) =>
     set((s) => ({
-      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, branch } : w)),
+      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, branch, dirty } : w)),
     })),
   setPorts: (wsId, ports) =>
     set((s) => ({
@@ -111,6 +113,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     })),
   setPanePty: (paneId, ptyId) =>
     set((s) => ({ panePtys: { ...s.panePtys, [paneId]: ptyId } })),
+  removePanePty: (paneId) =>
+    set((s) => {
+      const { [paneId]: _removed, ...rest } = s.panePtys;
+      return { panePtys: rest };
+    }),
   reset: () => {
     counter = 0;
     set({ workspaces: [], activeId: null, panePtys: {} });

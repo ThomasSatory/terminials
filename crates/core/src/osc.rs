@@ -48,6 +48,70 @@ pub fn parse_notifications(buf: &[u8]) -> Vec<OscNotification> {
     out
 }
 
+/// Scanner OSC à état, robuste aux séquences réparties sur plusieurs lectures PTY.
+/// Conserve l'état entre les appels à `feed`, contrairement à `parse_notifications`.
+#[derive(Default)]
+pub struct OscScanner {
+    in_osc: bool,
+    esc: bool,           // hors OSC : ESC vu, on attend ']'
+    saw_esc_in_osc: bool, // dans OSC : ESC vu, on attend '\' (terminateur ST)
+    payload: Vec<u8>,
+}
+
+impl OscScanner {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Alimente le scanner avec un chunk d'octets ; retourne les notifications complètes trouvées.
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<OscNotification> {
+        let mut out = Vec::new();
+        for &b in bytes {
+            if !self.in_osc {
+                if self.esc && b == b']' {
+                    self.in_osc = true;
+                    self.esc = false;
+                    self.payload.clear();
+                } else {
+                    self.esc = b == 0x1b;
+                }
+                continue;
+            }
+            // Dans une séquence OSC.
+            if self.saw_esc_in_osc {
+                // ST = ESC '\' ; sinon séquence abandonnée.
+                if b == b'\\' {
+                    if let Some(n) = interpret(&String::from_utf8_lossy(&self.payload)) {
+                        out.push(n);
+                    }
+                }
+                self.reset_seq();
+            } else if b == 0x07 {
+                // BEL termine l'OSC.
+                if let Some(n) = interpret(&String::from_utf8_lossy(&self.payload)) {
+                    out.push(n);
+                }
+                self.reset_seq();
+            } else if b == 0x1b {
+                self.saw_esc_in_osc = true;
+            } else {
+                self.payload.push(b);
+                // Borne anti-emballement sur entrée malformée (OSC jamais terminé).
+                if self.payload.len() > 4096 {
+                    self.reset_seq();
+                }
+            }
+        }
+        out
+    }
+
+    fn reset_seq(&mut self) {
+        self.in_osc = false;
+        self.saw_esc_in_osc = false;
+        self.payload.clear();
+    }
+}
+
 fn interpret(payload: &str) -> Option<OscNotification> {
     // OSC 9 (iTerm2) : "9;<message>"
     if let Some(rest) = payload.strip_prefix("9;") {
@@ -102,5 +166,23 @@ mod tests {
     fn ignores_non_notification_sequences() {
         let input = b"\x1b]0;some window title\x07normal text";
         assert!(parse_notifications(input).is_empty());
+    }
+
+    #[test]
+    fn scanner_handles_sequence_split_across_chunks() {
+        let mut sc = OscScanner::new();
+        // La séquence OSC 777 est coupée en deux lectures.
+        assert!(sc.feed(b"\x1b]777;notify;Titre").is_empty());
+        let n = sc.feed(b";Corps\x07");
+        assert_eq!(n, vec![OscNotification { title: "Titre".into(), body: "Corps".into() }]);
+    }
+
+    #[test]
+    fn scanner_handles_st_terminator_and_multiple() {
+        let mut sc = OscScanner::new();
+        let n = sc.feed(b"bruit\x1b]9;A\x07plus\x1b]99;i=1:p=title:B\x1b\\fin");
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0].body, "A");
+        assert_eq!(n[1].title, "B");
     }
 }

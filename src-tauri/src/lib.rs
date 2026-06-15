@@ -31,13 +31,14 @@ fn spawn_pty(
 
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
+        let mut scanner = terminials_core::osc::OscScanner::new();
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break, // EOF
                 Ok(n) => {
                     let chunk = &buf[..n];
-                    // v1 : séquences OSC à cheval sur 2 chunks non gérées (rare pour des notifs courtes).
-                    for notif in terminials_core::osc::parse_notifications(chunk) {
+                    // Scanner à état : gère les séquences OSC réparties sur plusieurs lectures.
+                    for notif in scanner.feed(chunk) {
                         let _ = app.emit(
                             "agent-notification",
                             serde_json::json!({
@@ -77,6 +78,11 @@ fn resize_pty(
 }
 
 #[tauri::command]
+fn close_pty(reg: State<'_, Arc<PtyRegistry>>, id: PtyId) {
+    pty::close_pty(reg.inner(), id);
+}
+
+#[tauri::command]
 fn git_info(cwd: String) -> terminials_core::git::GitInfo {
     terminials_core::git::git_info(&cwd)
 }
@@ -99,6 +105,7 @@ pub fn run() {
             spawn_pty,
             write_pty,
             resize_pty,
+            close_pty,
             git_info,
             workspace_ports
         ])

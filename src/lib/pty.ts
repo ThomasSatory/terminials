@@ -28,3 +28,8 @@ export async function spawnPty(
     resize: (cols, rows) => void invoke("resize_pty", { id, cols, rows }),
   };
 }
+
+/** Ferme un PTY côté backend (le shell est tué, le thread lecteur se termine). */
+export function closePty(id: number): void {
+  void invoke("close_pty", { id });
+}

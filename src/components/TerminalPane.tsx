@@ -3,7 +3,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { spawnPty, type Pty } from "../lib/pty";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { spawnPty, closePty, type Pty } from "../lib/pty";
 import { useWorkspaceStore } from "../store/workspace";
 
 const SHELL = "/bin/bash";
@@ -31,6 +32,7 @@ export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: stri
 
     let pty: Pty | null = null;
     let disposed = false;
+    let unlistenExit: UnlistenFn | null = null;
     let buffer: Uint8Array[] = [];
     let flushScheduled = false;
     const flush = () => {
@@ -47,10 +49,20 @@ export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: stri
         requestAnimationFrame(flush);
       }
     }).then((p) => {
-      if (disposed) return;
+      if (disposed) {
+        closePty(p.id);
+        return;
+      }
       pty = p;
       useWorkspaceStore.getState().setPanePty(paneId, p.id);
       term.onData((d) => p.write(d));
+      // Le shell est mort : on l'indique au lieu de laisser un terminal figé.
+      listen<{ id: number }>("pty-exit", (e) => {
+        if (e.payload.id === p.id) term.write("\r\n[Processus terminé]\r\n");
+      }).then((un) => {
+        if (disposed) un();
+        else unlistenExit = un;
+      });
     });
 
     const ro = new ResizeObserver(() => {
@@ -62,6 +74,11 @@ export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: stri
     return () => {
       disposed = true;
       ro.disconnect();
+      unlistenExit?.();
+      if (pty) {
+        closePty(pty.id);
+        useWorkspaceStore.getState().removePanePty(paneId);
+      }
       term.dispose();
     };
   }, [wsId, paneId, cwd]);

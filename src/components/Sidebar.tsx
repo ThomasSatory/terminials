@@ -37,7 +37,8 @@ export function Sidebar() {
             {w.unread && <span style={{ color: "#4ea1ff" }}>●</span>}
           </div>
           <div style={{ fontSize: 11, color: "#888" }}>
-            {w.branch ? `⎇ ${w.branch}` : ""} {w.ports.length ? `:${w.ports.join(",")}` : ""}
+            {w.branch ? `⎇ ${w.branch}${w.dirty ? " *" : ""}` : ""}{" "}
+            {w.ports.length ? `:${w.ports.join(",")}` : ""}
           </div>
           {w.status && (
             <div style={{ fontSize: 11, color: w.status.color ?? "#aaa" }}>{w.status.label}</div>
