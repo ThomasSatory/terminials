@@ -22,3 +22,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true }
+portable-pty = "0.9"
+notify-rust = "4.17"
+protocol = { path = "../crates/protocol" }
+terminials-core = { path = "../crates/core" }

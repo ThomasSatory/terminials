@@ -4,7 +4,7 @@ import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { registerSocketEvents } from "./lib/socketEvents";
-import { useWorkspaceStore } from "./store/workspace";
+import { useWorkspaceStore, firstLeafPaneId } from "./store/workspace";
 import "./App.css";
 
 const HOME = "/home/user";
@@ -38,6 +38,27 @@ export default function App() {
           if (info.branch) s.setGit(w.id, info.branch, info.dirty);
         } catch {
           /* commande indisponible (backend pas prêt) ou cwd hors repo */
+        }
+      }
+    };
+    const h = setInterval(tick, 2000);
+    tick();
+    return () => clearInterval(h);
+  }, []);
+
+  // Poller ports (~2s) : interroge le PTY du premier pane de chaque workspace.
+  useEffect(() => {
+    const tick = async () => {
+      const s = useWorkspaceStore.getState();
+      for (const w of s.workspaces) {
+        const paneId = firstLeafPaneId(w.root);
+        const ptyId = paneId ? s.panePtys[paneId] : undefined;
+        if (ptyId === undefined) continue;
+        try {
+          const ports = await invoke<number[]>("workspace_ports", { ptyId });
+          s.setPorts(w.id, ports);
+        } catch {
+          /* backend pas prêt */
         }
       }
     };

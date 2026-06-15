@@ -5,7 +5,7 @@ import { TerminalPane } from "./TerminalPane";
 
 function renderNode(node: PaneNode, ws: Workspace) {
   if (node.kind === "leaf") {
-    return <TerminalPane key={node.paneId} wsId={ws.id} cwd={ws.cwd} />;
+    return <TerminalPane key={node.paneId} wsId={ws.id} paneId={node.paneId} cwd={ws.cwd} />;
   }
   return (
     <Allotment vertical={node.dir === "vertical"}>

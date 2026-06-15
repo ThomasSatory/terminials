@@ -24,6 +24,8 @@ export interface Workspace {
 interface WorkspaceState {
   workspaces: Workspace[];
   activeId: string | null;
+  /** paneId -> id du PTY backend (pour interroger les ports). */
+  panePtys: Record<string, number>;
   addWorkspace: (cwd: string) => string;
   splitPane: (wsId: string, paneId: string, dir: "horizontal" | "vertical") => void;
   setNotification: (wsId: string, n: Notification) => void;
@@ -33,6 +35,7 @@ interface WorkspaceState {
   setPorts: (wsId: string, ports: number[]) => void;
   setStatus: (wsId: string, status: { label: string; color?: string }) => void;
   setProgress: (wsId: string, progress: { value: number; label?: string }) => void;
+  setPanePty: (paneId: string, ptyId: number) => void;
   reset: () => void;
 }
 
@@ -47,9 +50,20 @@ function splitNode(node: PaneNode, target: string, dir: "horizontal" | "vertical
   return { ...node, children: node.children.map((c) => splitNode(c, target, dir)) };
 }
 
+/** Renvoie le paneId du premier leaf (en profondeur) d'un arbre de panes. */
+export function firstLeafPaneId(node: PaneNode): string | null {
+  if (node.kind === "leaf") return node.paneId;
+  for (const c of node.children) {
+    const r = firstLeafPaneId(c);
+    if (r) return r;
+  }
+  return null;
+}
+
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   workspaces: [],
   activeId: null,
+  panePtys: {},
   addWorkspace: (cwd) => {
     const id = uid("ws");
     const ws: Workspace = {
@@ -95,8 +109,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((s) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, progress } : w)),
     })),
+  setPanePty: (paneId, ptyId) =>
+    set((s) => ({ panePtys: { ...s.panePtys, [paneId]: ptyId } })),
   reset: () => {
     counter = 0;
-    set({ workspaces: [], activeId: null });
+    set({ workspaces: [], activeId: null, panePtys: {} });
   },
 }));

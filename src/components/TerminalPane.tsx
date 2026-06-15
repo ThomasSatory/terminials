@@ -4,10 +4,11 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { spawnPty, type Pty } from "../lib/pty";
+import { useWorkspaceStore } from "../store/workspace";
 
 const SHELL = "/bin/bash";
 
-export function TerminalPane({ wsId, cwd }: { wsId: string; cwd: string }) {
+export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: string; cwd: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -48,6 +49,7 @@ export function TerminalPane({ wsId, cwd }: { wsId: string; cwd: string }) {
     }).then((p) => {
       if (disposed) return;
       pty = p;
+      useWorkspaceStore.getState().setPanePty(paneId, p.id);
       term.onData((d) => p.write(d));
     });
 
@@ -62,7 +64,7 @@ export function TerminalPane({ wsId, cwd }: { wsId: string; cwd: string }) {
       ro.disconnect();
       term.dispose();
     };
-  }, [wsId, cwd]);
+  }, [wsId, paneId, cwd]);
 
   return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
 }
