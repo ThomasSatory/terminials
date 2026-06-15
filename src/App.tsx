@@ -1,51 +1,56 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
+import { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { Sidebar } from "./components/Sidebar";
+import { PaneTree } from "./components/PaneTree";
+import { useShortcuts } from "./hooks/useShortcuts";
+import { registerSocketEvents } from "./lib/socketEvents";
+import { useWorkspaceStore } from "./store/workspace";
 import "./App.css";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+const HOME = "/home/user";
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+export default function App() {
+  useShortcuts();
+  const { workspaces, activeId, addWorkspace } = useWorkspaceStore();
 
+  // Crée un workspace initial au premier montage.
+  useEffect(() => {
+    if (useWorkspaceStore.getState().workspaces.length === 0) addWorkspace(HOME);
+  }, [addWorkspace]);
+
+  // Branche les events backend (socket-command, agent-notification).
+  useEffect(() => {
+    const cleanup = registerSocketEvents();
+    return () => {
+      cleanup.then((fn) => fn());
+    };
+  }, []);
+
+  // Poller git (~2s) : rafraîchit la branche affichée dans la sidebar.
+  useEffect(() => {
+    const tick = async () => {
+      const s = useWorkspaceStore.getState();
+      for (const w of s.workspaces) {
+        try {
+          const info = await invoke<{ branch: string | null; dirty: boolean }>("git_info", {
+            cwd: w.cwd,
+          });
+          if (info.branch) s.setGit(w.id, info.branch, info.dirty);
+        } catch {
+          /* commande indisponible (backend pas prêt) ou cwd hors repo */
+        }
+      }
+    };
+    const h = setInterval(tick, 2000);
+    tick();
+    return () => clearInterval(h);
+  }, []);
+
+  const active = workspaces.find((w) => w.id === activeId);
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <div style={{ display: "flex", width: "100vw", height: "100vh", background: "#1e1e1e" }}>
+      <Sidebar />
+      <div style={{ flex: 1 }}>{active && <PaneTree ws={active} />}</div>
+    </div>
   );
 }
-
-export default App;
