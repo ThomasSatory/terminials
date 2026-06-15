@@ -35,7 +35,14 @@ Trois besoins, formulés par l'utilisateur :
 - **Maximum 4 terminaux** par workspace. Ajouter un 5e est **bloqué** (toast « max 4 terminaux »).
 - On **remplace** les splits libres directionnels (Ctrl+D / Ctrl+Shift+D) par cette grille fixe.
   Les arrangements arbitraires ne sont plus possibles (YAGNI : pas demandés).
-- Les séparateurs restent **redimensionnables à la souris** (défaut Allotment, comme cmux).
+- **Layout = CSS Grid** (on abandonne Allotment pour la zone workspace). Raison décisive :
+  préserver les terminaux. Les panes sont rendus dans un **ordre stable** (`ws.panes.map(...)`,
+  clés = paneId) ; seul le `grid-template-areas` du conteneur change selon le nombre. React ne
+  **démonte donc jamais** un terminal existant quand on en ajoute/retire un → **aucune perte de
+  travail / pas de réinitialisation du PTY**.
+- **Tailles fixes et égales** (50/50 en 2 colonnes, quadrants 25 %…). **Pas de redimensionnement
+  à la souris** en v1 (compromis assumé en échange de la fiabilité ; un splitter draggable pourra
+  être ajouté plus tard sans casser ce socle).
 - **Persistance** nom + couleur via **localStorage** (les terminaux eux-mêmes ne sont pas restaurés —
   cohérent avec « pas de session restore » de la spec parente).
 
@@ -87,22 +94,32 @@ Actions inchangées : `setNotification`, `markRead`, `setActive`, `setGit`, `set
 
 ---
 
-## 3. Layout par nombre — `PaneTree.tsx`
+## 3. Layout par nombre — `PaneTree.tsx` (CSS Grid)
 
-Réécriture autour d'une fonction pure `renderLayout(panes, ws)`. Mapping count → Allotment
-(rappel : `<Allotment>` sans `vertical` = colonnes côte à côte ; `<Allotment vertical>` = lignes empilées) :
+**Principe anti-remontage** : les panes sont toujours rendus dans le **même ordre**
+(`ws.panes.map((id, i) => <PaneCell key={id} .../>)`). Le conteneur est une **CSS Grid** dont
+le `gridTemplateColumns` / `gridTemplateRows` / `gridTemplateAreas` change selon le nombre, et
+chaque cellule reçoit son `gridArea` par index. Comme la liste de composants ne change ni d'ordre
+ni de clé, React **conserve chaque `TerminalPane` monté** — le PTY et le buffer xterm survivent
+aux changements de layout.
 
-| N | Structure |
-|---|---|
-| 1 | `<TerminalPane p0>` plein |
-| 2 | `<Allotment>` `[p0, p1]` (2 colonnes) |
-| 3 | `<Allotment vertical>` `[ <Allotment>[p0, p1] (ligne haut), p2 (ligne bas) ]` |
-| 4 | `<Allotment vertical>` `[ <Allotment>[p0, p1], <Allotment>[p2, p3] ]` |
+Conteneur grid (`display: grid`, `width/height: 100%`, `gap: 2px`) par nombre :
 
-- Chaque pane est enveloppé d'un conteneur cliquable qui appelle `setActivePane` (focus) et
-  affiche un **bouton X au survol** (close).
-- Le pane actif reçoit un fin liseré de la **couleur du workspace** (identité). L'anneau
-  d'unread/notification utilise la **couleur d'alerte ambre** (voir §5), indépendante.
+| N | `grid-template-areas` | colonnes | lignes |
+|---|---|---|---|
+| 1 | `"a"` | `1fr` | `1fr` |
+| 2 | `"a b"` | `1fr 1fr` | `1fr` |
+| 3 | `"a b" "c c"` | `1fr 1fr` | `1fr 1fr` |
+| 4 | `"a b" "c d"` | `1fr 1fr` | `1fr 1fr` |
+
+Cellule par index : `i=0→"a"`, `1→"b"`, `2→"c"`, `3→"d"` (via `gridArea`).
+
+- Chaque pane est enveloppé d'un `PaneCell` cliquable (`onMouseDownCapture` → `setActivePane`)
+  affichant un **bouton X** quand on survole la cellule (`onMouseEnter/Leave` + state local) —
+  masqué s'il ne reste qu'un pane.
+- Le pane actif reçoit un fin liseré (`border 1px`) de la **couleur du workspace** (identité).
+  L'anneau d'unread/notification (sur le conteneur PaneTree) utilise la **couleur d'alerte
+  ambre** (voir §5), indépendante.
 
 ---
 
@@ -208,6 +225,8 @@ redémarrer l'app (nom + couleur conservés via localStorage).
 ## 11. Décisions tranchées
 
 - **Grille fixe par count** (vs arbre de splits libre) — colle au besoin, plus simple.
+- **CSS Grid + ordre stable** (vs Allotment) — garantit qu'aucun terminal n'est démonté/réinitialisé
+  quand le layout change. Compromis : pas de drag-resize en v1.
 - **Max 4** terminaux, 5e bloqué par toast.
 - **Palette curatée** de 8 couleurs (vs picker libre) — cohérence visuelle.
 - **Renommage inline** (vs dialog à la création) — zéro friction.
