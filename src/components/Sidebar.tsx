@@ -59,6 +59,7 @@ export function Sidebar() {
             {editingId === w.id ? (
               <input
                 autoFocus
+                onFocus={(e) => e.target.select()}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
