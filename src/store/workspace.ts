@@ -1,8 +1,5 @@
 import { create } from "zustand";
-
-export type PaneNode =
-  | { kind: "leaf"; paneId: string }
-  | { kind: "branch"; dir: "horizontal" | "vertical"; children: PaneNode[] };
+import { PALETTE, basename } from "../lib/palette";
 
 export interface Notification {
   title: string;
@@ -12,23 +9,33 @@ export interface Notification {
 export interface Workspace {
   id: string;
   cwd: string;
+  name: string;
+  color: string;
+  panes: string[];
+  activePaneId: string | null;
   branch?: string;
   dirty?: boolean;
   ports: number[];
-  root: PaneNode;
   unread: boolean;
   lastNotification?: Notification;
   status?: { label: string; color?: string };
   progress?: { value: number; label?: string };
 }
 
+export const MAX_PANES = 4;
+
 interface WorkspaceState {
   workspaces: Workspace[];
   activeId: string | null;
   /** paneId -> id du PTY backend (pour interroger les ports). */
   panePtys: Record<string, number>;
+  toast: string | null;
   addWorkspace: (cwd: string) => string;
-  splitPane: (wsId: string, paneId: string, dir: "horizontal" | "vertical") => void;
+  addPane: (wsId: string) => boolean;
+  closePane: (wsId: string, paneId: string) => void;
+  setActivePane: (wsId: string, paneId: string) => void;
+  renameWorkspace: (wsId: string, name: string) => void;
+  setColor: (wsId: string, color: string) => void;
   setNotification: (wsId: string, n: Notification) => void;
   markRead: (wsId: string) => void;
   setActive: (wsId: string) => void;
@@ -38,51 +45,113 @@ interface WorkspaceState {
   setProgress: (wsId: string, progress: { value: number; label?: string }) => void;
   setPanePty: (paneId: string, ptyId: number) => void;
   removePanePty: (paneId: string) => void;
+  showToast: (msg: string) => void;
+  clearToast: () => void;
   reset: () => void;
 }
 
 let counter = 0;
+let colorIndex = 0;
 const uid = (prefix: string) => `${prefix}:${counter++}`;
 
-function splitNode(node: PaneNode, target: string, dir: "horizontal" | "vertical"): PaneNode {
-  if (node.kind === "leaf") {
-    if (node.paneId !== target) return node;
-    return { kind: "branch", dir, children: [node, { kind: "leaf", paneId: uid("pane") }] };
+// --- Persistance localStorage (gardée : absente en environnement de test node) ---
+const STORAGE_KEY = "terminials:workspaces";
+type SavedMeta = Record<string, { name: string; color: string }>;
+
+function loadAllMeta(): SavedMeta {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as SavedMeta;
+  } catch {
+    return {};
   }
-  return { ...node, children: node.children.map((c) => splitNode(c, target, dir)) };
 }
 
-/** Renvoie le paneId du premier leaf (en profondeur) d'un arbre de panes. */
-export function firstLeafPaneId(node: PaneNode): string | null {
-  if (node.kind === "leaf") return node.paneId;
-  for (const c of node.children) {
-    const r = firstLeafPaneId(c);
-    if (r) return r;
+function saveMeta(cwd: string, meta: { name: string; color: string }) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const all = loadAllMeta();
+    all[cwd] = meta;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  } catch {
+    /* quota dépassé ou localStorage désactivé : on ignore */
   }
-  return null;
 }
 
-export const useWorkspaceStore = create<WorkspaceState>((set) => ({
+export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: [],
   activeId: null,
   panePtys: {},
+  toast: null,
   addWorkspace: (cwd) => {
     const id = uid("ws");
+    const saved = loadAllMeta()[cwd];
+    const name = saved?.name ?? basename(cwd);
+    let color: string;
+    if (saved?.color) {
+      color = saved.color;
+    } else {
+      color = PALETTE[colorIndex % PALETTE.length];
+      colorIndex++;
+    }
+    const paneId = uid("pane");
     const ws: Workspace = {
       id,
       cwd,
+      name,
+      color,
+      panes: [paneId],
+      activePaneId: paneId,
       ports: [],
       unread: false,
-      root: { kind: "leaf", paneId: uid("pane") },
     };
     set((s) => ({ workspaces: [...s.workspaces, ws], activeId: id }));
     return id;
   },
-  splitPane: (wsId, paneId, dir) =>
+  addPane: (wsId) => {
+    const ws = get().workspaces.find((w) => w.id === wsId);
+    if (!ws || ws.panes.length >= MAX_PANES) return false;
+    const paneId = uid("pane");
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
-        w.id === wsId ? { ...w, root: splitNode(w.root, paneId, dir) } : w,
+        w.id === wsId ? { ...w, panes: [...w.panes, paneId], activePaneId: paneId } : w,
       ),
+    }));
+    return true;
+  },
+  closePane: (wsId, paneId) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        if (w.panes.length <= 1) return w; // toujours au moins 1 terminal
+        const panes = w.panes.filter((p) => p !== paneId);
+        if (panes.length === w.panes.length) return w; // paneId inconnu
+        const activePaneId = w.activePaneId === paneId ? panes[0] : w.activePaneId;
+        return { ...w, panes, activePaneId };
+      }),
+    })),
+  setActivePane: (wsId, paneId) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) =>
+        w.id === wsId ? { ...w, activePaneId: paneId } : w,
+      ),
+    })),
+  renameWorkspace: (wsId, name) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        const finalName = name.trim() || basename(w.cwd);
+        saveMeta(w.cwd, { name: finalName, color: w.color });
+        return { ...w, name: finalName };
+      }),
+    })),
+  setColor: (wsId, color) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        saveMeta(w.cwd, { name: w.name, color });
+        return { ...w, color };
+      }),
     })),
   setNotification: (wsId, n) =>
     set((s) => ({
@@ -118,8 +187,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       const { [paneId]: _removed, ...rest } = s.panePtys;
       return { panePtys: rest };
     }),
+  showToast: (msg) => set({ toast: msg }),
+  clearToast: () => set({ toast: null }),
   reset: () => {
     counter = 0;
-    set({ workspaces: [], activeId: null, panePtys: {} });
+    colorIndex = 0;
+    set({ workspaces: [], activeId: null, panePtys: {}, toast: null });
   },
 }));
