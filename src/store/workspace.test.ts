@@ -60,6 +60,17 @@ describe("workspace store", () => {
     expect(ws(id).activePaneId).toBe(ws(id).panes[0]);
   });
 
+  it("recalcule le pane actif en fermant un pane du milieu", () => {
+    const id = store().addWorkspace("/tmp");
+    store().addPane(id); // 2
+    store().addPane(id); // 3 → panes = [p0, p1, p2]
+    const middle = ws(id).panes[1];
+    store().setActivePane(id, middle);
+    store().closePane(id, middle);
+    expect(ws(id).panes).toHaveLength(2);
+    expect(ws(id).activePaneId).toBe(ws(id).panes[0]);
+  });
+
   it("renomme un workspace, nom vide retombe sur le basename", () => {
     const id = store().addWorkspace("/tmp");
     store().renameWorkspace(id, "mon-env");

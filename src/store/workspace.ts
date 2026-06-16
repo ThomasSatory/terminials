@@ -126,6 +126,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         if (w.panes.length <= 1) return w; // toujours au moins 1 terminal
         const panes = w.panes.filter((p) => p !== paneId);
         if (panes.length === w.panes.length) return w; // paneId inconnu
+        // si le pane actif est fermé, on retombe sur le premier pane restant
         const activePaneId = w.activePaneId === paneId ? panes[0] : w.activePaneId;
         return { ...w, panes, activePaneId };
       }),
@@ -133,26 +134,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setActivePane: (wsId, paneId) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
-        w.id === wsId ? { ...w, activePaneId: paneId } : w,
+        w.id === wsId && w.panes.includes(paneId) ? { ...w, activePaneId: paneId } : w,
       ),
     })),
-  renameWorkspace: (wsId, name) =>
+  renameWorkspace: (wsId, name) => {
     set((s) => ({
-      workspaces: s.workspaces.map((w) => {
-        if (w.id !== wsId) return w;
-        const finalName = name.trim() || basename(w.cwd);
-        saveMeta(w.cwd, { name: finalName, color: w.color });
-        return { ...w, name: finalName };
-      }),
-    })),
-  setColor: (wsId, color) =>
+      workspaces: s.workspaces.map((w) =>
+        w.id === wsId ? { ...w, name: name.trim() || basename(w.cwd) } : w,
+      ),
+    }));
+    const w = get().workspaces.find((w) => w.id === wsId);
+    if (w) saveMeta(w.cwd, { name: w.name, color: w.color });
+  },
+  setColor: (wsId, color) => {
     set((s) => ({
-      workspaces: s.workspaces.map((w) => {
-        if (w.id !== wsId) return w;
-        saveMeta(w.cwd, { name: w.name, color });
-        return { ...w, color };
-      }),
-    })),
+      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, color } : w)),
+    }));
+    const w = get().workspaces.find((w) => w.id === wsId);
+    if (w) saveMeta(w.cwd, { name: w.name, color: w.color });
+  },
   setNotification: (wsId, n) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
