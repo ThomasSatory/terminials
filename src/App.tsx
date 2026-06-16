@@ -91,29 +91,42 @@ export default function App() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "4px 8px",
-                background: "#222",
-                color: "#ccc",
-                fontSize: 12,
+                padding: "0 10px",
+                height: 30,
+                background: "#1e1e1e",
+                borderBottom: "1px solid #242424",
+                color: "#ddd",
+                fontSize: 13,
               }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  style={{ width: 8, height: 8, borderRadius: "50%", background: active.color }}
-                />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {active.name}
-                <span style={{ color: "#666" }}>
-                  {active.panes.length}/{MAX_PANES}
-                </span>
               </span>
-              <button
-                onClick={() => {
-                  if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
-                }}
-                title="Nouveau terminal (Ctrl+T)"
-              >
-                + Terminal
-              </button>
+              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
+                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  {active.panes.map((paneId) => (
+                    <span
+                      key={paneId}
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: "50%",
+                        background: paneId === active.activePaneId ? active.color : "#3a3a3a",
+                      }}
+                    />
+                  ))}
+                </span>
+                <button
+                  className="icon-btn"
+                  onClick={() => {
+                    if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
+                  }}
+                  title="Nouveau terminal (Ctrl+T)"
+                >
+                  +
+                </button>
+              </span>
             </div>
             <div style={{ flex: 1, minHeight: 0 }}>
               <PaneTree ws={active} />

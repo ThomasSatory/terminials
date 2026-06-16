@@ -4,6 +4,15 @@ import { PALETTE, ALERT_COLOR } from "../lib/palette";
 
 const HOME = "/home/user";
 
+/** Métadonnées git/ports condensées en une ligne discrète : `branch • · :ports`.
+   Le `•` (dirty) et les ports sont optionnels ; hors repo, renvoie "". */
+function metaLine(branch: string | undefined, dirty: boolean | undefined, ports: number[]): string {
+  const parts: string[] = [];
+  if (branch) parts.push(dirty ? `${branch} •` : branch);
+  if (ports.length) parts.push(`:${ports.join(",")}`);
+  return parts.join(" · ");
+}
+
 export function Sidebar() {
   const { workspaces, activeId, addWorkspace, setActive, markRead, renameWorkspace, setColor } =
     useWorkspaceStore();
@@ -16,16 +25,14 @@ export function Sidebar() {
     <div
       style={{
         width: 240,
-        background: "#181818",
+        background: "#141414",
         color: "#ddd",
         display: "flex",
         flexDirection: "column",
         overflowY: "auto",
+        borderRight: "1px solid #242424",
       }}
     >
-      <button onClick={() => addWorkspace(HOME)} style={{ margin: 8 }}>
-        + Workspace
-      </button>
       {workspaces.map((w) => (
         <div
           key={w.id}
@@ -34,13 +41,15 @@ export function Sidebar() {
             markRead(w.id);
           }}
           style={{
-            padding: "8px 12px",
+            padding: "7px 10px",
+            margin: "1px 6px",
+            borderRadius: 6,
             cursor: "pointer",
-            background: w.id === activeId ? "#2a2a2a" : "transparent",
-            borderLeft: `3px solid ${w.unread ? ALERT_COLOR : w.color}`,
+            background: w.id === activeId ? "#242424" : "transparent",
+            borderLeft: `3px solid ${w.unread ? ALERT_COLOR : "transparent"}`,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <span
               onClick={(e) => {
                 e.stopPropagation();
@@ -54,6 +63,7 @@ export function Sidebar() {
                 background: w.color,
                 flexShrink: 0,
                 cursor: "pointer",
+                boxShadow: w.unread ? `0 0 0 3px ${ALERT_COLOR}40` : "none",
               }}
             />
             {editingId === w.id ? (
@@ -106,13 +116,12 @@ export function Sidebar() {
                 {w.name}
               </span>
             )}
-            {w.unread && <span style={{ color: ALERT_COLOR }}>●</span>}
           </div>
 
           {paletteFor === w.id && (
             <div
               onClick={(e) => e.stopPropagation()}
-              style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}
+              style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "6px 0 2px 17px" }}
             >
               {PALETTE.map((c) => (
                 <span
@@ -134,15 +143,18 @@ export function Sidebar() {
             </div>
           )}
 
-          <div style={{ fontSize: 11, color: "#888" }}>
-            {w.branch ? `⎇ ${w.branch}${w.dirty ? " *" : ""}` : ""}{" "}
-            {w.ports.length ? `:${w.ports.join(",")}` : ""}
-          </div>
+          {metaLine(w.branch, w.dirty, w.ports) && (
+            <div style={{ fontSize: 11, color: "#6f6f6f", marginLeft: 17, marginTop: 3 }}>
+              {metaLine(w.branch, w.dirty, w.ports)}
+            </div>
+          )}
           {w.status && (
-            <div style={{ fontSize: 11, color: w.status.color ?? "#aaa" }}>{w.status.label}</div>
+            <div style={{ fontSize: 11, color: w.status.color ?? "#8a8a8a", marginLeft: 17, marginTop: 2 }}>
+              {w.status.label}
+            </div>
           )}
           {w.progress && (
-            <div style={{ height: 3, background: "#333", marginTop: 4 }}>
+            <div style={{ height: 3, background: "#2a2a2a", borderRadius: 2, marginLeft: 17, marginTop: 5 }}>
               <div
                 style={{ height: 3, width: `${w.progress.value * 100}%`, background: ALERT_COLOR }}
               />
@@ -150,6 +162,12 @@ export function Sidebar() {
           )}
         </div>
       ))}
+
+      <div style={{ marginTop: "auto", padding: "6px 10px" }}>
+        <button className="icon-btn" onClick={() => addWorkspace(HOME)} title="Nouveau workspace">
+          +
+        </button>
+      </div>
     </div>
   );
 }
