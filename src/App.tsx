@@ -27,7 +27,7 @@ export default function App() {
     };
   }, []);
 
-  // Auto-dismiss du toast après 2 s.
+  // Auto-dismiss du toast après 2 s. (clearToast est stable : défini une fois par Zustand.)
   useEffect(() => {
     if (!toast) return;
     const h = setTimeout(() => clearToast(), 2000);
@@ -55,21 +55,22 @@ export default function App() {
   }, []);
 
   // Poller ports (~2s) : union des ports ouverts par tous les panes de chaque workspace.
+  // Les requêtes des panes d'un workspace partent en parallèle (Promise.all) pour réduire
+  // la latence du tick et la fenêtre de recouvrement entre deux ticks ; une erreur sur un
+  // pane (backend pas prêt) renvoie [] sans avorter l'union.
   useEffect(() => {
     const tick = async () => {
       const s = useWorkspaceStore.getState();
       for (const w of s.workspaces) {
-        const ports = new Set<number>();
-        for (const paneId of w.panes) {
-          const ptyId = s.panePtys[paneId];
-          if (ptyId === undefined) continue;
-          try {
-            const p = await invoke<number[]>("workspace_ports", { ptyId });
-            for (const port of p) ports.add(port);
-          } catch {
-            /* backend pas prêt */
-          }
-        }
+        const ptyIds = w.panes
+          .map((paneId) => s.panePtys[paneId])
+          .filter((id): id is number => id !== undefined);
+        const results = await Promise.all(
+          ptyIds.map((ptyId) =>
+            invoke<number[]>("workspace_ports", { ptyId }).catch(() => [] as number[]),
+          ),
+        );
+        const ports = new Set<number>(results.flat());
         s.setPorts(w.id, [...ports].sort((a, b) => a - b));
       }
     };
