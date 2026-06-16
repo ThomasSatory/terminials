@@ -1,9 +1,14 @@
 import { useEffect } from "react";
-import { useWorkspaceStore, firstLeafPaneId } from "../store/workspace";
+import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
 
 const HOME = "/home/user";
 
-/** Raccourcis globaux : Ctrl+N nouveau workspace, Ctrl+D / Ctrl+Shift+D split. */
+/**
+ * Raccourcis globaux :
+ *  - Ctrl+N : nouveau workspace
+ *  - Ctrl+T : nouveau terminal dans le workspace actif (bloqué à MAX_PANES → toast)
+ *  - Ctrl+W : ferme le terminal actif du workspace actif (min 1)
+ */
 export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -12,11 +17,12 @@ export function useShortcuts() {
       if (e.ctrlKey && e.key === "n") {
         e.preventDefault();
         s.addWorkspace(HOME);
-      }
-      if (active && e.ctrlKey && e.key === "d") {
+      } else if (active && e.ctrlKey && e.key === "t") {
         e.preventDefault();
-        const leaf = firstLeafPaneId(active.root);
-        if (leaf) s.splitPane(active.id, leaf, e.shiftKey ? "vertical" : "horizontal");
+        if (!s.addPane(active.id)) s.showToast(`max ${MAX_PANES} terminaux`);
+      } else if (active && e.ctrlKey && e.key === "w") {
+        e.preventDefault();
+        if (active.activePaneId) s.closePane(active.id, active.activePaneId);
       }
     };
     window.addEventListener("keydown", onKey);
