@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { PALETTE, ALERT_COLOR } from "../lib/palette";
 
@@ -10,6 +10,7 @@ export function Sidebar() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
+  const blurShouldCommit = useRef(true);
 
   return (
     <div
@@ -62,14 +63,17 @@ export function Sidebar() {
                 onChange={(e) => setDraft(e.target.value)}
                 onClick={(e) => e.stopPropagation()}
                 onBlur={() => {
-                  renameWorkspace(w.id, draft);
+                  if (blurShouldCommit.current) renameWorkspace(w.id, draft);
+                  blurShouldCommit.current = true;
                   setEditingId(null);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     renameWorkspace(w.id, draft);
+                    blurShouldCommit.current = false;
                     setEditingId(null);
                   } else if (e.key === "Escape") {
+                    blurShouldCommit.current = false;
                     setEditingId(null);
                   }
                 }}
@@ -87,6 +91,7 @@ export function Sidebar() {
                 onDoubleClick={(e) => {
                   e.stopPropagation();
                   setDraft(w.name);
+                  setPaletteFor(null);
                   setEditingId(w.id);
                 }}
                 style={{
