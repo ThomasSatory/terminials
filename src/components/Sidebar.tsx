@@ -1,8 +1,7 @@
 import { useState, useRef } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
-
-const HOME = "/home/user";
+import { openFolderDialog } from "../lib/openFolder";
 
 /** Métadonnées git/ports condensées en une ligne discrète : `branch • · :ports`.
    Le `•` (dirty) et les ports sont optionnels ; hors repo, renvoie "". */
@@ -14,8 +13,7 @@ function metaLine(branch: string | undefined, dirty: boolean | undefined, ports:
 }
 
 export function Sidebar() {
-  const { workspaces, activeId, addWorkspace, setActive, renameWorkspace, setColor } =
-    useWorkspaceStore();
+  const { workspaces, activeId, setActive, renameWorkspace, setColor } = useWorkspaceStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
@@ -161,7 +159,11 @@ export function Sidebar() {
       ))}
 
       <div style={{ marginTop: "auto", padding: "6px 10px" }}>
-        <button className="icon-btn" onClick={() => addWorkspace(HOME)} title="Nouveau workspace">
+        <button
+          className="icon-btn"
+          onClick={() => void openFolderDialog()}
+          title="Ouvrir un dossier (Ctrl+Shift+O)"
+        >
           +
         </button>
       </div>

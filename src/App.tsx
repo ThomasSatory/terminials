@@ -4,20 +4,13 @@ import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { registerSocketEvents } from "./lib/socketEvents";
+import { openFolderDialog } from "./lib/openFolder";
 import { useWorkspaceStore, MAX_PANES } from "./store/workspace";
 import "./App.css";
 
-const HOME = "/home/user";
-
 export default function App() {
   useShortcuts();
-  const { workspaces, activeId, addWorkspace, addPane, showToast, toast, clearToast } =
-    useWorkspaceStore();
-
-  // Crée un workspace initial au premier montage.
-  useEffect(() => {
-    if (useWorkspaceStore.getState().workspaces.length === 0) addWorkspace(HOME);
-  }, [addWorkspace]);
+  const { workspaces, activeId, addPane, showToast, toast, clearToast } = useWorkspaceStore();
 
   // Branche les events backend (socket-command, agent-notification).
   useEffect(() => {
@@ -84,67 +77,89 @@ export default function App() {
     <div style={{ display: "flex", width: "100vw", height: "100vh", background: "#1e1e1e" }}>
       <Sidebar />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {active && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "0 10px",
-              height: 30,
-              background: "#1e1e1e",
-              borderBottom: "1px solid #242424",
-              color: "#ddd",
-              fontSize: 13,
-            }}
-          >
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {active.name}
-            </span>
-            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
-              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                {active.panes.map((paneId) => (
-                  <span
-                    key={paneId}
-                    style={{
-                      width: 7,
-                      height: 7,
-                      borderRadius: "50%",
-                      background: paneId === active.activePaneId ? active.color : "#3a3a3a",
-                    }}
-                  />
-                ))}
-              </span>
-              <button
-                className="icon-btn"
-                onClick={() => {
-                  if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
-                }}
-                title="Nouveau terminal (Ctrl+T)"
-              >
-                +
-              </button>
-            </span>
-          </div>
-        )}
-        {/* Keep-alive : TOUS les workspaces restent montés en permanence, empilés.
-            Les inactifs sont masqués en visibility:hidden — JAMAIS display:none
-            (un conteneur 0×0 ferait fit() → resize_pty(0) → reflow shell cassé). */}
-        <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-          {workspaces.map((w) => (
-            <div
-              key={w.id}
+        {workspaces.length === 0 ? (
+          /* État vide : aucun workspace — l'utilisateur choisit un dossier réel. */
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button
+              onClick={() => void openFolderDialog()}
               style={{
-                position: "absolute",
-                inset: 0,
-                visibility: w.id === activeId ? "visible" : "hidden",
+                padding: "10px 18px",
+                fontSize: 14,
+                background: "#242424",
+                color: "#ddd",
+                border: "1px solid #3a3a3a",
+                borderRadius: 6,
+                cursor: "pointer",
               }}
             >
-              <PaneTree ws={w} visible={w.id === activeId} />
+              Open folder (Ctrl+Shift+O)
+            </button>
+          </div>
+        ) : (
+          <>
+            {active && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "0 10px",
+                  height: 30,
+                  background: "#1e1e1e",
+                  borderBottom: "1px solid #242424",
+                  color: "#ddd",
+                  fontSize: 13,
+                }}
+              >
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {active.name}
+                </span>
+                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
+                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    {active.panes.map((paneId) => (
+                      <span
+                        key={paneId}
+                        style={{
+                          width: 7,
+                          height: 7,
+                          borderRadius: "50%",
+                          background: paneId === active.activePaneId ? active.color : "#3a3a3a",
+                        }}
+                      />
+                    ))}
+                  </span>
+                  <button
+                    className="icon-btn"
+                    onClick={() => {
+                      if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
+                    }}
+                    title="Nouveau terminal (Ctrl+T)"
+                  >
+                    +
+                  </button>
+                </span>
+              </div>
+            )}
+            {/* Keep-alive : TOUS les workspaces restent montés en permanence, empilés.
+                Les inactifs sont masqués en visibility:hidden — JAMAIS display:none
+                (un conteneur 0×0 ferait fit() → resize_pty(0) → reflow shell cassé). */}
+            <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+              {workspaces.map((w) => (
+                <div
+                  key={w.id}
+                  style={{
+                    position: "absolute",
+                    inset: 0,
+                    visibility: w.id === activeId ? "visible" : "hidden",
+                  }}
+                >
+                  <PaneTree ws={w} visible={w.id === activeId} />
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
       {toast && (
         <div

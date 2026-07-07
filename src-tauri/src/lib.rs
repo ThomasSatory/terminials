@@ -117,6 +117,7 @@ fn workspace_ports(reg: State<'_, Arc<PtyRegistry>>, pty_id: PtyId) -> Vec<u16> 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(PtyRegistry::new()))
         .invoke_handler(tauri::generate_handler![
             spawn_pty,

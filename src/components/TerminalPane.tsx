@@ -84,6 +84,10 @@ export function TerminalPane({
         if (disposed) un();
         else unlistenExit = un;
       });
+    }).catch((err) => {
+      // Échec du spawn (shell introuvable, cwd disparu…) : visible dans le
+      // terminal plutôt qu'un pane muet.
+      term.write(`\r\n\x1b[31m[terminials] échec du lancement du shell : ${String(err)}\x1b[0m\r\n`);
     });
 
     const ro = new ResizeObserver(refit);
