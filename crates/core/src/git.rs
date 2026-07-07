@@ -167,27 +167,44 @@ fn parse_numstat_z(raw: &[u8]) -> Vec<(String, Option<u32>, Option<u32>)> {
     out
 }
 
+/// Racine du repo contenant `cwd` (`git rev-parse --show-toplevel`), ou None hors repo.
+/// `status`/`numstat` renvoient des chemins racine-relatifs quel que soit le cwd, alors
+/// qu'un pathspec `git diff -- <path>` est interprété relativement au cwd : les commandes
+/// qui reçoivent un tel chemin racine-relatif doivent donc s'exécuter depuis cette racine.
+fn repo_root(cwd: &str) -> Option<String> {
+    git_out(cwd, &["rev-parse", "--show-toplevel"])
+        .map(|o| String::from_utf8_lossy(&o).trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Diff unifié d'un fichier : `git diff [--cached] --no-color -- <path>`.
 /// Si le diff est vide et que le fichier n'est pas suivi, repli sur
 /// `git diff --no-index /dev/null <path>` (untracked → diff « tout ajouté »).
 /// `--no-index` sort avec le code 1 quand il y a des différences : normal, pas une erreur.
 /// Fichier binaire : git émet « Binary files ... differ », renvoyé tel quel.
+///
+/// `path` est racine-relatif (fourni par `changed_files`) : on exécute depuis la racine
+/// du repo pour que le pathspec (et le `<path>` du repli `--no-index`) corresponde même
+/// si le workspace est ouvert sur un sous-dossier. Hors repo → comportement inchangé
+/// (racine None ⇒ exécution dans `cwd`).
 pub fn file_diff(cwd: &str, path: &str, staged: bool) -> String {
+    let root = repo_root(cwd);
+    let base = root.as_deref().unwrap_or(cwd);
     let mut args: Vec<&str> = vec!["diff"];
     if staged {
         args.push("--cached");
     }
     args.extend_from_slice(&["--no-color", "--", path]);
-    if let Some(out) = git_out(cwd, &args) {
+    if let Some(out) = git_out(base, &args) {
         if !out.is_empty() {
             return String::from_utf8_lossy(&out).into_owned();
         }
     }
-    if !staged && is_untracked(cwd, path) {
+    if !staged && is_untracked(base, path) {
         // Pas de filtre sur le code de sortie : 1 = différences trouvées.
         if let Ok(o) = Command::new("git")
             .args(["diff", "--no-color", "--no-index", "--", "/dev/null", path])
-            .current_dir(cwd)
+            .current_dir(base)
             .env("GIT_OPTIONAL_LOCKS", "0")
             .output()
         {
@@ -197,7 +214,9 @@ pub fn file_diff(cwd: &str, path: &str, staged: bool) -> String {
     String::new()
 }
 
-/// Vrai si `path` n'est pas dans l'index (fichier untracked).
+/// Vrai si `path` n'est pas dans l'index (fichier untracked). `path` étant racine-relatif,
+/// l'appelant doit passer la racine du repo en `cwd` (sinon un fichier suivi hors du cwd
+/// serait faussement classé untracked).
 fn is_untracked(cwd: &str, path: &str) -> bool {
     Command::new("git")
         .args(["ls-files", "--error-unmatch", "--", path])
@@ -449,6 +468,43 @@ mod tests {
         write_file(&dir, "bin.dat", &[0u8, 1, 2, 3, 4]);
         let d = file_diff(dir.to_str().unwrap(), "bin.dat", false);
         assert!(d.contains("Binary files"), "diff: {d}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_diff_depuis_un_sous_dossier_du_repo() {
+        // status/numstat renvoient des chemins racine-relatifs quel que soit le cwd,
+        // mais `git diff -- <path>` interprète le pathspec relativement au cwd :
+        // ouvert sur un sous-dossier, le diff d'un fichier racine doit rester non vide.
+        let dir = tmp_repo("fd-subdir");
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        write_file(&dir, "a.txt", b"ligne1\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        write_file(&dir, "a.txt", b"ligne2\n");
+        let sub = dir.join("sub");
+        let d = file_diff(sub.to_str().unwrap(), "a.txt", false);
+        assert!(d.contains("-ligne1"), "diff: {d}");
+        assert!(d.contains("+ligne2"), "diff: {d}");
+        assert!(d.contains("@@"), "diff: {d}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_diff_untracked_depuis_un_sous_dossier_du_repo() {
+        // Untracked à la racine, workspace ouvert sur un sous-dossier : le repli
+        // `--no-index -- /dev/null <path>` doit résoudre le <path> racine-relatif
+        // depuis la racine (sinon le fichier est introuvable → diff vide).
+        let dir = tmp_repo("fd-subdir-untracked");
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        write_file(&dir, "garde.txt", b"x\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        write_file(&dir, "nouveau.txt", b"contenu\n");
+        let sub = dir.join("sub");
+        let d = file_diff(sub.to_str().unwrap(), "nouveau.txt", false);
+        assert!(d.contains("+contenu"), "diff: {d}");
+        assert!(d.contains("/dev/null"), "diff: {d}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
