@@ -1,9 +1,36 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { useWorkspaceStore, MAX_PANES, hasAttention } from "./workspace";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import {
+  useWorkspaceStore,
+  MAX_PANES,
+  hasAttention,
+  loadSavedWorkspaces,
+  getLastFolder,
+  setLastFolder,
+  type SavedWorkspace,
+} from "./workspace";
 import { PALETTE, basename } from "../lib/palette";
 
 const store = () => useWorkspaceStore.getState();
 const ws = (id: string) => store().workspaces.find((w) => w.id === id)!;
+
+/** Stub localStorage minimal (les tests tournent en environnement node, sans DOM). */
+function localStorageStub(): Storage {
+  const data = new Map<string, string>();
+  return {
+    getItem: (k: string) => data.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      data.set(k, v);
+    },
+    removeItem: (k: string) => {
+      data.delete(k);
+    },
+    clear: () => data.clear(),
+    key: (i: number) => [...data.keys()][i] ?? null,
+    get length() {
+      return data.size;
+    },
+  };
+}
 
 describe("workspace store", () => {
   beforeEach(() => store().reset());
@@ -256,5 +283,130 @@ describe("workspace store", () => {
     store().closeWorkspace("ws:fantome");
     expect(store().workspaces.map((w) => w.id)).toEqual([a]);
     expect(store().activeId).toBe(a);
+  });
+});
+
+describe("persistance v2", () => {
+  const V2_KEY = "terminials:workspaces:v2";
+  const saved = (): SavedWorkspace[] =>
+    JSON.parse(localStorage.getItem(V2_KEY) ?? "[]") as SavedWorkspace[];
+
+  beforeEach(() => {
+    (globalThis as { localStorage?: Storage }).localStorage = localStorageStub();
+    store().reset();
+  });
+
+  afterEach(() => {
+    delete (globalThis as { localStorage?: Storage }).localStorage;
+  });
+
+  it("addWorkspace écrit la liste ordonnée {cwd,name,color,paneCount}", () => {
+    store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    expect(saved()).toEqual([
+      { cwd: "/a", name: "a", color: PALETTE[0], paneCount: 1 },
+      { cwd: "/b", name: "b", color: PALETTE[1], paneCount: 1 },
+    ]);
+  });
+
+  it("addPane et closePane réécrivent paneCount", () => {
+    const id = store().addWorkspace("/a");
+    store().addPane(id);
+    expect(saved()[0].paneCount).toBe(2);
+    store().closePane(id, ws(id).panes[1]);
+    expect(saved()[0].paneCount).toBe(1);
+  });
+
+  it("renameWorkspace et setColor réécrivent la sauvegarde", () => {
+    const id = store().addWorkspace("/a");
+    store().renameWorkspace(id, "agent");
+    store().setColor(id, "#123456");
+    expect(saved()[0]).toEqual({ cwd: "/a", name: "agent", color: "#123456", paneCount: 1 });
+  });
+
+  it("closeWorkspace retire l'entrée persistée", () => {
+    const a = store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    store().closeWorkspace(a);
+    expect(saved().map((e) => e.cwd)).toEqual(["/b"]);
+  });
+
+  it("l'ancienne clé v1 n'est plus écrite", () => {
+    const id = store().addWorkspace("/a");
+    store().renameWorkspace(id, "agent");
+    store().setColor(id, "#123456");
+    expect(localStorage.getItem("terminials:workspaces")).toBeNull();
+  });
+
+  it("loadSavedWorkspaces relit la sauvegarde et filtre le JSON invalide", () => {
+    store().addWorkspace("/a");
+    expect(loadSavedWorkspaces()).toEqual([
+      { cwd: "/a", name: "a", color: PALETTE[0], paneCount: 1 },
+    ]);
+    localStorage.setItem(V2_KEY, "{pas du json");
+    expect(loadSavedWorkspaces()).toEqual([]);
+    localStorage.setItem(
+      V2_KEY,
+      JSON.stringify([{ cwd: "/ok", name: "ok", color: "#111111", paneCount: 2 }, { n: 1 }]),
+    );
+    expect(loadSavedWorkspaces()).toEqual([
+      { cwd: "/ok", name: "ok", color: "#111111", paneCount: 2 },
+    ]);
+  });
+
+  it("restoreWorkspaces recrée les workspaces : ids frais, paneCount clampé, actif = premier", () => {
+    store().restoreWorkspaces([
+      { cwd: "/a", name: "agent", color: "#123456", paneCount: 2 },
+      { cwd: "/b", name: "b", color: "#654321", paneCount: 9 },
+      { cwd: "/c", name: "c", color: "#111111", paneCount: 0 },
+    ]);
+    const [a, b, c] = store().workspaces;
+    expect(store().activeId).toBe(a.id);
+    expect(a).toMatchObject({
+      cwd: "/a",
+      name: "agent",
+      color: "#123456",
+      unread: false,
+      unreadPanes: [],
+      diffOpen: false,
+      ports: [],
+    });
+    expect(a.panes).toHaveLength(2);
+    expect(a.activePaneId).toBe(a.panes[0]);
+    expect(b.panes).toHaveLength(MAX_PANES); // paneCount aberrant clampé à MAX_PANES
+    expect(c.panes).toHaveLength(1); // et au minimum 1
+    expect(new Set(store().workspaces.map((w) => w.id)).size).toBe(3); // ids frais uniques
+    expect(saved().map((e) => e.paneCount)).toEqual([2, 4, 1]); // sauvegarde réécrite normalisée
+  });
+
+  it("restoreWorkspaces([]) laisse l'état vide", () => {
+    store().restoreWorkspaces([]);
+    expect(store().workspaces).toEqual([]);
+    expect(store().activeId).toBeNull();
+  });
+
+  it("le round-robin de couleurs continue après les workspaces restaurés", () => {
+    store().restoreWorkspaces([
+      { cwd: "/a", name: "a", color: "#111111", paneCount: 1 },
+      { cwd: "/b", name: "b", color: "#222222", paneCount: 1 },
+    ]);
+    const d = store().addWorkspace("/d");
+    expect(ws(d).color).toBe(PALETTE[2]);
+  });
+
+  it("getLastFolder/setLastFolder font l'aller-retour, absent → undefined", () => {
+    expect(getLastFolder()).toBeUndefined();
+    setLastFolder("/home/x/dev");
+    expect(getLastFolder()).toBe("/home/x/dev");
+    expect(localStorage.getItem("terminials:lastFolder")).toBe("/home/x/dev");
+  });
+
+  it("sans localStorage : helpers no-op, actions du store inchangées", () => {
+    delete (globalThis as { localStorage?: Storage }).localStorage;
+    expect(loadSavedWorkspaces()).toEqual([]);
+    expect(getLastFolder()).toBeUndefined();
+    setLastFolder("/x"); // ne jette pas
+    const id = store().addWorkspace("/a"); // ne jette pas
+    expect(ws(id).cwd).toBe("/a");
   });
 });

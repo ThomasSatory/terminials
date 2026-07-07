@@ -27,6 +27,10 @@ export interface Workspace {
   progress?: { value: number; label?: string };
 }
 
+/** Entrée de persistance v2 : liste ORDONNÉE réécrite en bloc à chaque mutation
+    (pas de clé par cwd : deux workspaces sur le même dossier — worktrees — coexistent). */
+export type SavedWorkspace = { cwd: string; name: string; color: string; paneCount: number };
+
 export const MAX_PANES = 4;
 
 interface WorkspaceState {
@@ -57,6 +61,7 @@ interface WorkspaceState {
   toggleDiff: (wsId: string) => void;
   toggleSidebar: () => void;
   requestRename: (wsId: string | null) => void;
+  restoreWorkspaces: (entries: SavedWorkspace[]) => void;
   showToast: (msg: string) => void;
   clearToast: () => void;
   reset: () => void;
@@ -66,25 +71,62 @@ let counter = 0;
 let colorIndex = 0;
 const uid = (prefix: string) => `${prefix}:${counter++}`;
 
-// --- Persistance localStorage (gardée : absente en environnement de test node) ---
-const STORAGE_KEY = "terminials:workspaces";
-type SavedMeta = Record<string, { name: string; color: string }>;
+// --- Persistance localStorage v2 (I/O hors réducteurs ; no-op si localStorage absent,
+//     cas des tests node). L'ancienne clé v1 "terminials:workspaces" est abandonnée
+//     sans migration. ---
+const STORAGE_KEY = "terminials:workspaces:v2";
+const LAST_FOLDER_KEY = "terminials:lastFolder";
 
-function loadAllMeta(): SavedMeta {
-  if (typeof localStorage === "undefined") return {};
+/** Liste ordonnée des workspaces sauvegardés (pour la restauration au boot). */
+export function loadSavedWorkspaces(): SavedWorkspace[] {
+  if (typeof localStorage === "undefined") return [];
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}") as SavedMeta;
+    const raw: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]");
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(
+      (e): e is SavedWorkspace =>
+        typeof e === "object" &&
+        e !== null &&
+        typeof (e as Record<string, unknown>).cwd === "string" &&
+        typeof (e as Record<string, unknown>).name === "string" &&
+        typeof (e as Record<string, unknown>).color === "string" &&
+        typeof (e as Record<string, unknown>).paneCount === "number",
+    );
   } catch {
-    return {};
+    return [];
   }
 }
 
-function saveMeta(cwd: string, meta: { name: string; color: string }) {
+/** Dernier dossier ouvert via le dialog (sert de defaultPath au prochain dialog). */
+export function getLastFolder(): string | undefined {
+  if (typeof localStorage === "undefined") return undefined;
+  try {
+    return localStorage.getItem(LAST_FOLDER_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function setLastFolder(path: string): void {
   if (typeof localStorage === "undefined") return;
   try {
-    const all = loadAllMeta();
-    all[cwd] = meta;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    localStorage.setItem(LAST_FOLDER_KEY, path);
+  } catch {
+    /* quota dépassé ou localStorage désactivé : on ignore */
+  }
+}
+
+/** Réécrit la sauvegarde complète (après chaque action qui change la liste des workspaces). */
+function persistWorkspaces(workspaces: Workspace[]): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const saved: SavedWorkspace[] = workspaces.map((w) => ({
+      cwd: w.cwd,
+      name: w.name,
+      color: w.color,
+      paneCount: w.panes.length,
+    }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(saved));
   } catch {
     /* quota dépassé ou localStorage désactivé : on ignore */
   }
@@ -99,20 +141,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   renameRequestId: null,
   addWorkspace: (cwd) => {
     const id = uid("ws");
-    const saved = loadAllMeta()[cwd];
-    const name = saved?.name ?? basename(cwd);
-    let color: string;
-    if (saved?.color) {
-      color = saved.color;
-    } else {
-      color = PALETTE[colorIndex % PALETTE.length];
-      colorIndex++;
-    }
+    const color = PALETTE[colorIndex % PALETTE.length];
+    colorIndex++;
     const paneId = uid("pane");
     const ws: Workspace = {
       id,
       cwd,
-      name,
+      name: basename(cwd),
       color,
       panes: [paneId],
       activePaneId: paneId,
@@ -122,6 +157,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       diffOpen: false,
     };
     set((s) => ({ workspaces: [...s.workspaces, ws], activeId: id }));
+    persistWorkspaces(get().workspaces);
     return id;
   },
   addPane: (wsId) => {
@@ -133,9 +169,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         w.id === wsId ? { ...w, panes: [...w.panes, paneId], activePaneId: paneId } : w,
       ),
     }));
+    persistWorkspaces(get().workspaces);
     return true;
   },
-  closePane: (wsId, paneId) =>
+  closePane: (wsId, paneId) => {
     set((s) => ({
       workspaces: s.workspaces.map((w) => {
         if (w.id !== wsId) return w;
@@ -148,8 +185,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         const unreadPanes = w.unreadPanes.filter((p) => p !== paneId);
         return { ...w, panes, activePaneId, unreadPanes };
       }),
-    })),
-  closeWorkspace: (wsId) =>
+    }));
+    persistWorkspaces(get().workspaces);
+  },
+  closeWorkspace: (wsId) => {
     set((s) => {
       const idx = s.workspaces.findIndex((w) => w.id === wsId);
       if (idx === -1) return {};
@@ -165,7 +204,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ? (workspaces[idx - 1]?.id ?? workspaces[idx]?.id ?? null)
           : s.activeId;
       return { workspaces, panePtys, activeId };
-    }),
+    });
+    persistWorkspaces(get().workspaces);
+  },
   setActivePane: (wsId, paneId) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
@@ -185,15 +226,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         w.id === wsId ? { ...w, name: name.trim() || basename(w.cwd) } : w,
       ),
     }));
-    const w = get().workspaces.find((w) => w.id === wsId);
-    if (w) saveMeta(w.cwd, { name: w.name, color: w.color });
+    persistWorkspaces(get().workspaces);
   },
   setColor: (wsId, color) => {
     set((s) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, color } : w)),
     }));
-    const w = get().workspaces.find((w) => w.id === wsId);
-    if (w) saveMeta(w.cwd, { name: w.name, color: w.color });
+    persistWorkspaces(get().workspaces);
   },
   setNotification: (wsId, n, paneId) =>
     set((s) => ({
@@ -245,6 +284,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   requestRename: (wsId) => set({ renameRequestId: wsId }),
+  restoreWorkspaces: (entries) => {
+    const workspaces = entries.map((e): Workspace => {
+      // paneCount vient du disque : clamp défensif dans [1, MAX_PANES] (la grille fixe a 4 cellules)
+      const paneCount = Math.min(MAX_PANES, Math.max(1, Math.floor(e.paneCount)));
+      const panes = Array.from({ length: paneCount }, () => uid("pane"));
+      colorIndex++; // le round-robin des prochaines créations continue après les restaurés
+      return {
+        id: uid("ws"),
+        cwd: e.cwd,
+        name: e.name,
+        color: e.color,
+        panes,
+        activePaneId: panes[0],
+        ports: [],
+        unread: false,
+        unreadPanes: [],
+        diffOpen: false,
+      };
+    });
+    set({ workspaces, activeId: workspaces[0]?.id ?? null });
+    persistWorkspaces(get().workspaces);
+  },
   showToast: (msg) => set({ toast: msg }),
   clearToast: () => set({ toast: null }),
   reset: () => {
