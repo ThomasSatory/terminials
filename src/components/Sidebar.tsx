@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { useWorkspaceStore } from "../store/workspace";
+import { useWorkspaceStore, hasAttention } from "../store/workspace";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 import { openFolderDialog } from "../lib/openFolder";
 
@@ -57,7 +57,7 @@ export function Sidebar() {
             borderRadius: 6,
             cursor: "pointer",
             background: w.id === activeId ? "#242424" : "transparent",
-            borderLeft: `3px solid ${w.unread ? ATTENTION_COLOR : "transparent"}`,
+            borderLeft: `3px solid ${hasAttention(w) ? ATTENTION_COLOR : "transparent"}`,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -74,7 +74,7 @@ export function Sidebar() {
                 background: w.color,
                 flexShrink: 0,
                 cursor: "pointer",
-                boxShadow: w.unread ? `0 0 0 3px ${ATTENTION_COLOR}40` : "none",
+                boxShadow: hasAttention(w) ? `0 0 0 3px ${ATTENTION_COLOR}40` : "none",
               }}
             />
             {editingId === w.id ? (
