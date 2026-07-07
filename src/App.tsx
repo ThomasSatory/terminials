@@ -149,7 +149,7 @@ export default function App() {
                 cursor: "pointer",
               }}
             >
-              Open folder (Ctrl+Shift+O)
+              Ouvrir un dossier (Ctrl+Shift+O)
             </button>
           </div>
         ) : (

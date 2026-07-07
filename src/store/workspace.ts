@@ -285,7 +285,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   requestRename: (wsId) => set({ renameRequestId: wsId }),
   restoreWorkspaces: (entries) => {
-    const workspaces = entries.map((e): Workspace => {
+    const restored = entries.map((e): Workspace => {
       // paneCount vient du disque : clamp défensif dans [1, MAX_PANES] (la grille fixe a 4 cellules)
       const paneCount = Math.min(MAX_PANES, Math.max(1, Math.floor(e.paneCount)));
       const panes = Array.from({ length: paneCount }, () => uid("pane"));
@@ -303,7 +303,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         diffOpen: false,
       };
     });
-    set({ workspaces, activeId: workspaces[0]?.id ?? null });
+    // Concaténation (jamais remplacement) : un workspace créé pendant la fenêtre des
+    // invoke dir_exists du boot (bouton +, commande socket new-workspace) ne doit pas
+    // être détruit avec son PTY. Les workspaces déjà présents gardent la priorité
+    // d'activation ; sinon on active le premier restauré.
+    set((s) => ({
+      workspaces: [...s.workspaces, ...restored],
+      activeId: s.activeId ?? restored[0]?.id ?? null,
+    }));
     persistWorkspaces(get().workspaces);
   },
   showToast: (msg) => set({ toast: msg }),

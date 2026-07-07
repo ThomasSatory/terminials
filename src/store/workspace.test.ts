@@ -379,6 +379,23 @@ describe("persistance v2", () => {
     expect(saved().map((e) => e.paneCount)).toEqual([2, 4, 1]); // sauvegarde réécrite normalisée
   });
 
+  it("restoreWorkspaces concatène sans écraser les workspaces créés pendant le boot", () => {
+    // Un workspace créé pendant la fenêtre des invoke dir_exists du boot (bouton +,
+    // commande socket) ne doit pas être détruit par la restauration.
+    const live = store().addWorkspace("/live");
+    store().restoreWorkspaces([
+      { cwd: "/a", name: "a", color: "#111111", paneCount: 1 },
+      { cwd: "/b", name: "b", color: "#222222", paneCount: 1 },
+    ]);
+    const workspaces = store().workspaces;
+    expect(workspaces).toHaveLength(3);
+    expect(workspaces[0].id).toBe(live); // l'existant reste en tête
+    expect(workspaces.map((w) => w.cwd)).toEqual(["/live", "/a", "/b"]);
+    expect(store().activeId).toBe(live); // et toujours actif (priorité à l'existant)
+    // La sauvegarde réécrite reflète bien les 3 workspaces.
+    expect(saved().map((e) => e.cwd)).toEqual(["/live", "/a", "/b"]);
+  });
+
   it("restoreWorkspaces([]) laisse l'état vide", () => {
     store().restoreWorkspaces([]);
     expect(store().workspaces).toEqual([]);

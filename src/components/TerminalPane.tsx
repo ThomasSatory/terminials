@@ -97,6 +97,9 @@ export function TerminalPane({
         else unlistenExit = un;
       });
     }).catch((err) => {
+      // Le pane a pu être démonté avant la résolution de la promesse : ne pas
+      // écrire dans un terminal déjà disposé (même garde que le .then voisin).
+      if (disposed) return;
       // Échec du spawn (shell introuvable, cwd disparu…) : visible dans le
       // terminal plutôt qu'un pane muet.
       term.write(`\r\n\x1b[31m[terminials] échec du lancement du shell : ${String(err)}\x1b[0m\r\n`);
