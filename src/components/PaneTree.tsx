@@ -69,7 +69,7 @@ function PaneCell({
             e.preventDefault();
           }}
           onClick={() => closePane(ws.id, paneId)}
-          title="Fermer le terminal (Ctrl+W)"
+          title="Fermer le terminal (Ctrl+Shift+W)"
           style={{
             position: "absolute",
             top: 3,

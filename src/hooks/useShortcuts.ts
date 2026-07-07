@@ -1,28 +1,23 @@
 import { useEffect } from "react";
-import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
-import { openFolderDialog } from "../lib/openFolder";
+import { matchShortcut } from "../lib/shortcuts";
+import { dispatchShortcut } from "../lib/shortcutDispatch";
 
 /**
- * Raccourcis globaux :
- *  - Ctrl+N : nouveau workspace
- *  - Ctrl+T : nouveau terminal dans le workspace actif (bloqué à MAX_PANES → toast)
- *  - Ctrl+W : ferme le terminal actif du workspace actif (min 1)
+ * Couche window des raccourcis : matche sur la table unique (lib/shortcuts)
+ * et fait l'UNIQUE dispatch de l'app. Les keydown nés dans un xterm bullent
+ * jusqu'ici (la couche terminal retourne false à xterm sans stopPropagation).
+ * Plus aucun Ctrl+lettre nu : ^W kill-word, ^T transpose, ^N next-history
+ * repartent au shell.
  */
 export function useShortcuts() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const s = useWorkspaceStore.getState();
-      const active = s.workspaces.find((w) => w.id === s.activeId);
-      if (e.ctrlKey && e.key === "n") {
-        e.preventDefault();
-        void openFolderDialog(); // transitoire : migré vers Ctrl+Shift dans le refactor du dispatch
-      } else if (active && e.ctrlKey && e.key === "t") {
-        e.preventDefault();
-        if (!s.addPane(active.id)) s.showToast(`max ${MAX_PANES} terminaux`);
-      } else if (active && e.ctrlKey && e.key === "w") {
-        e.preventDefault();
-        if (active.activePaneId) s.closePane(active.id, active.activePaneId);
-      }
+      const action = matchShortcut(e);
+      if (!action) return;
+      // preventDefault systématique : WebKitGTK mappe Alt+←/→ sur l'historique
+      // du webview, et Ctrl+PageUp/Down peut scroller le document.
+      e.preventDefault();
+      dispatchShortcut(action);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

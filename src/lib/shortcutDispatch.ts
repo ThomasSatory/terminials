@@ -1,0 +1,78 @@
+import { closePty } from "./pty";
+import { openFolderDialog } from "./openFolder";
+import { focusPane } from "./paneFocus";
+import { paneNavTarget, type ShortcutAction } from "./shortcuts";
+import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
+
+/**
+ * Exécute une action de raccourci sur le store. Point UNIQUE de dispatch :
+ * seule la couche window (useShortcuts) l'appelle. La couche terminal
+ * (attachCustomKeyEventHandler) se contente de retourner false à xterm ;
+ * le keydown bulle ensuite jusqu'au listener window — dispatcher aux deux
+ * niveaux exécuterait chaque action deux fois.
+ */
+export function dispatchShortcut(action: ShortcutAction): void {
+  const s = useWorkspaceStore.getState();
+  const active = s.workspaces.find((w) => w.id === s.activeId);
+  switch (action.type) {
+    case "open-folder":
+      void openFolderDialog();
+      return;
+    case "new-pane":
+      if (active && !s.addPane(active.id)) s.showToast(`max ${MAX_PANES} terminaux`);
+      return;
+    case "close-pane":
+      // Le PTY est fermé par le cleanup du TerminalPane démonté.
+      if (active?.activePaneId) s.closePane(active.id, active.activePaneId);
+      return;
+    case "close-workspace": {
+      if (!active) return;
+      // Ferme explicitement les PTYs AVANT de retirer le workspace :
+      // closeWorkspace purge panePtys, on ne dépend pas de l'ordre de
+      // démontage React pour tuer les shells.
+      for (const paneId of active.panes) {
+        const ptyId = s.panePtys[paneId];
+        if (ptyId !== undefined) closePty(ptyId);
+      }
+      s.closeWorkspace(active.id);
+      return;
+    }
+    case "rename-workspace":
+      if (active) s.requestRename(active.id);
+      return;
+    case "toggle-diff":
+      // Uniquement si le workspace a un dossier : le diff s'appuie sur git dans cwd.
+      if (active?.cwd) s.toggleDiff(active.id);
+      return;
+    case "toggle-sidebar":
+      s.toggleSidebar();
+      return;
+    case "prev-workspace":
+    case "next-workspace": {
+      if (s.workspaces.length === 0) return;
+      const idx = s.workspaces.findIndex((w) => w.id === s.activeId);
+      const delta = action.type === "next-workspace" ? 1 : -1;
+      const next =
+        idx === -1
+          ? s.workspaces[0]
+          : s.workspaces[(idx + delta + s.workspaces.length) % s.workspaces.length];
+      s.setActive(next.id);
+      return;
+    }
+    case "select-workspace": {
+      const target = s.workspaces[action.index];
+      if (target) s.setActive(target.id);
+      return;
+    }
+    case "focus-pane": {
+      if (!active || !active.activePaneId) return;
+      const current = active.panes.indexOf(active.activePaneId);
+      const target = paneNavTarget(active.panes.length, current, action.dir);
+      if (target === null) return;
+      const targetPaneId = active.panes[target];
+      s.setActivePane(active.id, targetPaneId);
+      focusPane(targetPaneId);
+      return;
+    }
+  }
+}

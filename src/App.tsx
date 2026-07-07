@@ -134,7 +134,7 @@ export default function App() {
                     onClick={() => {
                       if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
                     }}
-                    title="Nouveau terminal (Ctrl+T)"
+                    title="Nouveau terminal (Ctrl+Shift+T)"
                   >
                     +
                   </button>
