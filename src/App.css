@@ -218,3 +218,23 @@ body {
   color: #6f6f6f;
   font-style: italic;
 }
+
+/* Input de filtre de l'aside Files du diff viewer (touche « / »). */
+.diff-filter {
+  display: block;
+  width: calc(100% - 20px);
+  margin: 4px 10px 6px;
+  box-sizing: border-box;
+  background: #111;
+  color: #eee;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.diff-filter:focus {
+  border-color: #555;
+}

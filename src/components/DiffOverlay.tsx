@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useWorkspaceStore, type Workspace } from "../store/workspace";
 import { focusPane } from "../lib/paneFocus";
@@ -102,6 +102,9 @@ function DiffOverlayInner({ ws }: { ws: Workspace }) {
 
   const [files, setFiles] = useState<ChangedFile[] | null>(null); // null = chargement
   const [diffs, setDiffs] = useState<Record<string, DiffLine[]>>({});
+  const [filter, setFilter] = useState(""); // filtre sous-chaîne de l'aside Files (touche « / »)
+  const filterRef = useRef<HTMLInputElement>(null);
+  const lastG = useRef(0); // timestamp du dernier « g » (chord « g g » < 500 ms)
 
   // Fetch de la liste des fichiers : à l'ouverture + bouton reload. Jamais pollé (spec §4).
   const loadFiles = useCallback(async () => {
@@ -152,8 +155,52 @@ function DiffOverlayInner({ ws }: { ws: Workspace }) {
   const totalAdded = (files ?? []).reduce((n, f) => n + (f.added ?? 0), 0);
   const totalDeleted = (files ?? []).reduce((n, f) => n + (f.deleted ?? 0), 0);
 
+  // Le filtre ne s'applique qu'à l'aside Files ; le main garde toutes les sections.
+  const shownFiles = (files ?? []).filter((f) =>
+    f.path.toLowerCase().includes(filter.toLowerCase()),
+  );
+
+  // Clavier de l'overlay — uniquement sur le conteneur focusé, aucun listener window (spec §4).
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    // Événements venant de l'input de filtre : seul Escape est géré (retour du focus à l'overlay).
+    if (e.target === filterRef.current) {
+      if (e.key === "Escape") containerRef.current?.focus();
+      return;
+    }
+    const main = mainRef.current;
+    switch (e.key) {
+      case "j":
+        main?.scrollBy({ top: 60 });
+        break;
+      case "k":
+        main?.scrollBy({ top: -60 });
+        break;
+      case "G": // Shift+G : bas du diff
+        if (main) main.scrollTop = main.scrollHeight;
+        break;
+      case "g": {
+        // Chord « g g » (deux g en < 500 ms) : haut du diff.
+        const now = Date.now();
+        if (now - lastG.current < 500) {
+          if (main) main.scrollTop = 0;
+          lastG.current = 0;
+        } else {
+          lastG.current = now;
+        }
+        break;
+      }
+      case "/":
+        e.preventDefault(); // sinon le « / » serait tapé dans l'input fraîchement focusé
+        filterRef.current?.focus();
+        break;
+      case "Escape":
+        toggleDiff(wsId);
+        break;
+    }
+  };
+
   return (
-    <div ref={containerRef} tabIndex={-1} className="diff-overlay">
+    <div ref={containerRef} tabIndex={-1} className="diff-overlay" onKeyDown={onKeyDown}>
       <div className="diff-toolbar">
         <span className="diff-toolbar-title">
           {name}
@@ -184,7 +231,14 @@ function DiffOverlayInner({ ws }: { ws: Workspace }) {
       ) : (
         <div className="diff-body">
           <div className="diff-aside">
-            {files.map((f) => (
+            <input
+              ref={filterRef}
+              className="diff-filter"
+              placeholder="filtrer ( / )"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+            {shownFiles.map((f) => (
               <div
                 key={f.path}
                 className="diff-aside-row"
