@@ -168,4 +168,40 @@ describe("workspace store", () => {
     store().clearToast();
     expect(store().toast).toBeNull();
   });
+
+  it("toggleDiff bascule diffOpen du workspace visé uniquement", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    expect(ws(a).diffOpen).toBe(false);
+    store().toggleDiff(a);
+    expect(ws(a).diffOpen).toBe(true);
+    expect(ws(b).diffOpen).toBe(false);
+    store().toggleDiff(a);
+    expect(ws(a).diffOpen).toBe(false);
+  });
+
+  it("toggleSidebar bascule sidebarVisible (défaut true)", () => {
+    expect(store().sidebarVisible).toBe(true);
+    store().toggleSidebar();
+    expect(store().sidebarVisible).toBe(false);
+    store().toggleSidebar();
+    expect(store().sidebarVisible).toBe(true);
+  });
+
+  it("requestRename pose et efface renameRequestId", () => {
+    const id = store().addWorkspace("/tmp");
+    expect(store().renameRequestId).toBeNull();
+    store().requestRename(id);
+    expect(store().renameRequestId).toBe(id);
+    store().requestRename(null);
+    expect(store().renameRequestId).toBeNull();
+  });
+
+  it("reset restaure sidebarVisible et renameRequestId", () => {
+    store().toggleSidebar();
+    store().requestRename("ws:0");
+    store().reset();
+    expect(store().sidebarVisible).toBe(true);
+    expect(store().renameRequestId).toBeNull();
+  });
 });

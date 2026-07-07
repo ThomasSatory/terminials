@@ -20,6 +20,8 @@ export interface Workspace {
   unread: boolean;
   /** Panes avec notification non lue (anneau bleu cmux). */
   unreadPanes: string[];
+  /** Overlay diff ouvert sur ce workspace (état UI, jamais persisté). */
+  diffOpen: boolean;
   lastNotification?: Notification;
   status?: { label: string; color?: string };
   progress?: { value: number; label?: string };
@@ -33,6 +35,10 @@ interface WorkspaceState {
   /** paneId -> id du PTY backend (pour interroger les ports). */
   panePtys: Record<string, number>;
   toast: string | null;
+  /** Sidebar visible (toggle Ctrl+Shift+B). */
+  sidebarVisible: boolean;
+  /** Workspace dont la Sidebar doit ouvrir l'édition inline du nom (null = aucune demande). */
+  renameRequestId: string | null;
   addWorkspace: (cwd: string) => string;
   addPane: (wsId: string) => boolean;
   closePane: (wsId: string, paneId: string) => void;
@@ -47,6 +53,9 @@ interface WorkspaceState {
   setProgress: (wsId: string, progress: { value: number; label?: string }) => void;
   setPanePty: (paneId: string, ptyId: number) => void;
   removePanePty: (paneId: string) => void;
+  toggleDiff: (wsId: string) => void;
+  toggleSidebar: () => void;
+  requestRename: (wsId: string | null) => void;
   showToast: (msg: string) => void;
   clearToast: () => void;
   reset: () => void;
@@ -85,6 +94,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   activeId: null,
   panePtys: {},
   toast: null,
+  sidebarVisible: true,
+  renameRequestId: null,
   addWorkspace: (cwd) => {
     const id = uid("ws");
     const saved = loadAllMeta()[cwd];
@@ -107,6 +118,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ports: [],
       unread: false,
       unreadPanes: [],
+      diffOpen: false,
     };
     set((s) => ({ workspaces: [...s.workspaces, ws], activeId: id }));
     return id;
@@ -209,12 +221,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const { [paneId]: _removed, ...rest } = s.panePtys;
       return { panePtys: rest };
     }),
+  toggleDiff: (wsId) =>
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, diffOpen: !w.diffOpen } : w)),
+    })),
+  toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
+  requestRename: (wsId) => set({ renameRequestId: wsId }),
   showToast: (msg) => set({ toast: msg }),
   clearToast: () => set({ toast: null }),
   reset: () => {
     counter = 0;
     colorIndex = 0;
-    set({ workspaces: [], activeId: null, panePtys: {}, toast: null });
+    set({
+      workspaces: [],
+      activeId: null,
+      panePtys: {},
+      toast: null,
+      sidebarVisible: true,
+      renameRequestId: null,
+    });
   },
 }));
 
