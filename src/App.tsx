@@ -11,6 +11,8 @@ import "./App.css";
 export default function App() {
   useShortcuts();
   const { workspaces, activeId, addPane, showToast, toast, clearToast } = useWorkspaceStore();
+  // Ctrl+Shift+B : consommation au rendu du booléen basculé par toggleSidebar (K.5).
+  const sidebarVisible = useWorkspaceStore((s) => s.sidebarVisible);
 
   // true tant que la restauration n'a pas statué : évite le flash de l'état
   // vide « Open folder » pendant les invoke dir_exists.
@@ -128,7 +130,8 @@ export default function App() {
   const active = workspaces.find((w) => w.id === activeId);
   return (
     <div style={{ display: "flex", width: "100vw", height: "100vh", background: "#1e1e1e" }}>
-      <Sidebar />
+      {/* Ctrl+Shift+B : démonter la Sidebar est sans risque PTY (aucun TerminalPane dedans). */}
+      {sidebarVisible && <Sidebar />}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {booting ? null : workspaces.length === 0 ? (
           /* État vide : aucun workspace — l'utilisateur choisit un dossier réel. */

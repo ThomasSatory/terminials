@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useWorkspaceStore } from "../store/workspace";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 import { openFolderDialog } from "../lib/openFolder";
@@ -18,6 +18,22 @@ export function Sidebar() {
   const [draft, setDraft] = useState("");
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
   const blurShouldCommit = useRef(true);
+
+  // Ctrl+Shift+R : le dispatch (K.5) pose renameRequestId sur le workspace actif.
+  // Quand il matche un workspace, on ouvre l'édition inline (même chemin que le
+  // double-clic sur le nom), puis on consomme la demande (requestRename(null)) —
+  // sinon un second Ctrl+Shift+R sur le même workspace ne redéclencherait pas l'effet.
+  const renameRequestId = useWorkspaceStore((s) => s.renameRequestId);
+  useEffect(() => {
+    if (!renameRequestId) return;
+    const w = workspaces.find((x) => x.id === renameRequestId);
+    if (w) {
+      setDraft(w.name);
+      setPaletteFor(null);
+      setEditingId(w.id);
+    }
+    useWorkspaceStore.getState().requestRename(null);
+  }, [renameRequestId]);
 
   return (
     <div
