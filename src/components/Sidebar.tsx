@@ -4,6 +4,7 @@ import { useWorkspaceStore, hasAttention } from "../store/workspace";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 import { abbreviateHome } from "../lib/paths";
 import { openFolderDialog } from "../lib/openFolder";
+import { closePty } from "../lib/pty";
 
 /** Métadonnées git/ports condensées en une ligne discrète : `branch • · :ports`.
    Le `•` (dirty) et les ports sont optionnels ; hors repo, renvoie "". */
@@ -15,11 +16,12 @@ function metaLine(branch: string | undefined, dirty: boolean | undefined, ports:
 }
 
 export function Sidebar() {
-  const { workspaces, activeId, setActive, toggleDiff, renameWorkspace, setColor } =
+  const { workspaces, activeId, setActive, toggleDiff, closeWorkspace, panePtys, renameWorkspace, setColor } =
     useWorkspaceStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
+  const [hoverId, setHoverId] = useState<string | null>(null);
   const blurShouldCommit = useRef(true);
 
   // Home résolu une fois via Tauri ; tant qu'il est vide, abbreviateHome est un no-op.
@@ -62,6 +64,8 @@ export function Sidebar() {
         <div
           key={w.id}
           onClick={() => setActive(w.id)}
+          onMouseEnter={() => setHoverId(w.id)}
+          onMouseLeave={() => setHoverId((cur) => (cur === w.id ? null : cur))}
           style={{
             padding: "7px 10px",
             margin: "1px 6px",
@@ -138,6 +142,39 @@ export function Sidebar() {
                 {w.name}
               </span>
             )}
+            <button
+              onMouseDown={(e) => {
+                // Comme le × de PaneCell : ne pas voler le mousedown (pas d'activation de la ligne).
+                e.stopPropagation();
+                e.preventDefault();
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                // Ferme d'abord les PTYs backend de tous les panes (même chemin que Ctrl+Shift+Q),
+                // puis retire le workspace du store (closeWorkspace purge panePtys et réactive un voisin).
+                for (const paneId of w.panes) {
+                  const ptyId = panePtys[paneId];
+                  if (ptyId !== undefined) closePty(ptyId);
+                }
+                closeWorkspace(w.id);
+              }}
+              title="Fermer le workspace (Ctrl+Shift+Q)"
+              style={{
+                width: 16,
+                height: 16,
+                padding: 0,
+                lineHeight: "14px",
+                flexShrink: 0,
+                border: "none",
+                borderRadius: 3,
+                background: "transparent",
+                color: "#8a8a8a",
+                cursor: "pointer",
+                visibility: hoverId === w.id ? "visible" : "hidden",
+              }}
+            >
+              ×
+            </button>
           </div>
 
           {paletteFor === w.id && (
