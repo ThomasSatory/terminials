@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
+import { DiffOverlay } from "./components/DiffOverlay";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { registerSocketEvents } from "./lib/socketEvents";
 import { openFolderDialog } from "./lib/openFolder";
@@ -214,6 +215,9 @@ export default function App() {
                   <PaneTree ws={w} visible={w.id === activeId} />
                 </div>
               ))}
+              {/* Diff viewer : overlay au-dessus de la grille seule — sidebar et top bar restent visibles.
+                  La grille reste montée dessous (keep-alive) : risque PTY nul (spec §4). */}
+              {active?.diffOpen && <DiffOverlay ws={active} />}
             </div>
           </>
         )}
