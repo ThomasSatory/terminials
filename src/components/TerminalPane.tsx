@@ -6,6 +6,8 @@ import "@xterm/xterm/css/xterm.css";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { spawnPty, closePty, type Pty } from "../lib/pty";
 import { useWorkspaceStore } from "../store/workspace";
+import { matchShortcut } from "../lib/shortcuts";
+import { registerPaneFocus, unregisterPaneFocus } from "../lib/paneFocus";
 
 const SHELL = "/bin/bash";
 
@@ -31,6 +33,16 @@ export function TerminalPane({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
+
+    // Couche terminal des raccourcis : return false = xterm n'avale pas la
+    // combinaison (rien ne part au PTY). Pas de dispatch ici : le keydown
+    // bulle jusqu'au listener window (useShortcuts) qui fait l'unique
+    // preventDefault + dispatch. Ctrl+W nu ne matche pas → part au shell
+    // (kill-word readline préservé). Ctrl+Shift+C/V ne matchent jamais.
+    term.attachCustomKeyEventHandler((e) => matchShortcut(e) === null);
+
+    // Focus programmatique (Alt+flèches via focusPane) : ce pane expose son focus.
+    registerPaneFocus(paneId, () => term.focus());
 
     // Renderer WebGL avec fallback DOM (xterm 6 : le renderer canvas a été supprimé).
     try {
@@ -102,6 +114,7 @@ export function TerminalPane({
         closePty(pty.id);
         useWorkspaceStore.getState().removePanePty(paneId);
       }
+      unregisterPaneFocus(paneId);
       term.dispose();
     };
   }, [wsId, paneId, cwd]);
