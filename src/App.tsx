@@ -85,54 +85,66 @@ export default function App() {
       <Sidebar />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {active && (
-          <>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "0 10px",
+              height: 30,
+              background: "#1e1e1e",
+              borderBottom: "1px solid #242424",
+              color: "#ddd",
+              fontSize: 13,
+            }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {active.name}
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                {active.panes.map((paneId) => (
+                  <span
+                    key={paneId}
+                    style={{
+                      width: 7,
+                      height: 7,
+                      borderRadius: "50%",
+                      background: paneId === active.activePaneId ? active.color : "#3a3a3a",
+                    }}
+                  />
+                ))}
+              </span>
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
+                }}
+                title="Nouveau terminal (Ctrl+T)"
+              >
+                +
+              </button>
+            </span>
+          </div>
+        )}
+        {/* Keep-alive : TOUS les workspaces restent montés en permanence, empilés.
+            Les inactifs sont masqués en visibility:hidden — JAMAIS display:none
+            (un conteneur 0×0 ferait fit() → resize_pty(0) → reflow shell cassé). */}
+        <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+          {workspaces.map((w) => (
             <div
+              key={w.id}
               style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "0 10px",
-                height: 30,
-                background: "#1e1e1e",
-                borderBottom: "1px solid #242424",
-                color: "#ddd",
-                fontSize: 13,
+                position: "absolute",
+                inset: 0,
+                visibility: w.id === activeId ? "visible" : "hidden",
               }}
             >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {active.name}
-              </span>
-              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
-                <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  {active.panes.map((paneId) => (
-                    <span
-                      key={paneId}
-                      style={{
-                        width: 7,
-                        height: 7,
-                        borderRadius: "50%",
-                        background: paneId === active.activePaneId ? active.color : "#3a3a3a",
-                      }}
-                    />
-                  ))}
-                </span>
-                <button
-                  className="icon-btn"
-                  onClick={() => {
-                    if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
-                  }}
-                  title="Nouveau terminal (Ctrl+T)"
-                >
-                  +
-                </button>
-              </span>
+              <PaneTree ws={w} visible={w.id === activeId} />
             </div>
-            <div style={{ flex: 1, minHeight: 0 }}>
-              <PaneTree ws={active} />
-            </div>
-          </>
-        )}
+          ))}
+        </div>
       </div>
       {toast && (
         <div

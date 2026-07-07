@@ -32,7 +32,17 @@ function gridStyle(count: number): CSSProperties {
   }
 }
 
-function PaneCell({ ws, paneId, area }: { ws: Workspace; paneId: string; area: string }) {
+function PaneCell({
+  ws,
+  paneId,
+  area,
+  visible,
+}: {
+  ws: Workspace;
+  paneId: string;
+  area: string;
+  visible: boolean;
+}) {
   const setActivePane = useWorkspaceStore((s) => s.setActivePane);
   const closePane = useWorkspaceStore((s) => s.closePane);
   const [hover, setHover] = useState(false);
@@ -79,12 +89,12 @@ function PaneCell({ ws, paneId, area }: { ws: Workspace; paneId: string; area: s
           ×
         </button>
       )}
-      <TerminalPane wsId={ws.id} paneId={paneId} cwd={ws.cwd} />
+      <TerminalPane wsId={ws.id} paneId={paneId} cwd={ws.cwd} visible={visible} />
     </div>
   );
 }
 
-export function PaneTree({ ws }: { ws: Workspace }) {
+export function PaneTree({ ws, visible }: { ws: Workspace; visible: boolean }) {
   return (
     <div
       style={{
@@ -104,7 +114,7 @@ export function PaneTree({ ws }: { ws: Workspace }) {
         }}
       >
         {ws.panes.map((paneId, i) => (
-          <PaneCell key={paneId} ws={ws} paneId={paneId} area={AREAS[i]} />
+          <PaneCell key={paneId} ws={ws} paneId={paneId} area={AREAS[i]} visible={visible} />
         ))}
       </div>
     </div>

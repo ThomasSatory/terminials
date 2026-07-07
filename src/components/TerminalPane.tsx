@@ -9,8 +9,20 @@ import { useWorkspaceStore } from "../store/workspace";
 
 const SHELL = "/bin/bash";
 
-export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: string; cwd: string }) {
+export function TerminalPane({
+  wsId,
+  paneId,
+  cwd,
+  visible,
+}: {
+  wsId: string;
+  paneId: string;
+  cwd: string;
+  visible: boolean;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // Refit courant, rempli par l'effet principal ; rappelé à la révélation du workspace.
+  const refitRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     const host = hostRef.current;
@@ -28,9 +40,18 @@ export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: stri
     } catch {
       /* fallback DOM implicite */
     }
-    fit.fit();
 
     let pty: Pty | null = null;
+    // Garde-fou keep-alive : ne jamais fit/resize un conteneur sans dimensions
+    // (fit() à 0×0 → resize_pty(0) → reflow du shell cassé).
+    const refit = () => {
+      if (host.clientWidth === 0 || host.clientHeight === 0) return;
+      fit.fit();
+      pty?.resize(term.cols, term.rows);
+    };
+    refitRef.current = refit;
+    refit();
+
     let disposed = false;
     let unlistenExit: UnlistenFn | null = null;
     let buffer: Uint8Array[] = [];
@@ -65,14 +86,12 @@ export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: stri
       });
     });
 
-    const ro = new ResizeObserver(() => {
-      fit.fit();
-      pty?.resize(term.cols, term.rows);
-    });
+    const ro = new ResizeObserver(refit);
     ro.observe(host);
 
     return () => {
       disposed = true;
+      refitRef.current = () => {};
       ro.disconnect();
       unlistenExit?.();
       if (pty) {
@@ -82,6 +101,13 @@ export function TerminalPane({ wsId, paneId, cwd }: { wsId: string; paneId: stri
       term.dispose();
     };
   }, [wsId, paneId, cwd]);
+
+  // Révélation du workspace (visibility hidden → visible) : les dimensions ont pu
+  // changer pendant la période masquée → refit explicite (le garde-fou dans refit
+  // rend l'appel inoffensif si le conteneur n'est pas encore dimensionné).
+  useEffect(() => {
+    if (visible) refitRef.current();
+  }, [visible]);
 
   return <div ref={hostRef} style={{ width: "100%", height: "100%" }} />;
 }
