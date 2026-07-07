@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use terminials_cli::{send_request, socket_path};
+use terminials_cli::{send_request, socket_path, with_workspace_id};
 
 #[derive(Parser)]
 #[command(name = "terminials", about = "CLI de pilotage de l'app terminials")]
@@ -79,15 +79,19 @@ fn main() {
         Cmd::Ping => ("ping", serde_json::Value::Null),
         Cmd::Notify { title, subtitle, body } => (
             "notify",
-            serde_json::json!({"title": title, "subtitle": subtitle, "body": body}),
+            with_workspace_id(
+                serde_json::json!({"title": title, "subtitle": subtitle, "body": body}),
+            ),
         ),
         Cmd::NewWorkspace { cwd } => ("new-workspace", serde_json::json!({"cwd": cwd})),
-        Cmd::SetStatus { label, color } => {
-            ("set-status", serde_json::json!({"label": label, "color": color}))
-        }
-        Cmd::SetProgress { value, label } => {
-            ("set-progress", serde_json::json!({"value": value, "label": label}))
-        }
+        Cmd::SetStatus { label, color } => (
+            "set-status",
+            with_workspace_id(serde_json::json!({"label": label, "color": color})),
+        ),
+        Cmd::SetProgress { value, label } => (
+            "set-progress",
+            with_workspace_id(serde_json::json!({"value": value, "label": label})),
+        ),
         Cmd::Hooks { .. } => unreachable!("traité plus haut"),
     };
 
