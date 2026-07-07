@@ -88,6 +88,22 @@ fn git_info(cwd: String) -> terminials_core::git::GitInfo {
 }
 
 #[tauri::command]
+fn git_changed_files(cwd: String) -> Vec<terminials_core::git::ChangedFile> {
+    terminials_core::git::changed_files(&cwd)
+}
+
+#[tauri::command]
+fn git_file_diff(cwd: String, path: String, staged: bool) -> String {
+    terminials_core::git::file_diff(&cwd, &path, staged)
+}
+
+/// Existence d'un dossier (validation des cwd restaurés au boot).
+#[tauri::command]
+fn dir_exists(path: String) -> bool {
+    std::path::Path::new(&path).is_dir()
+}
+
+#[tauri::command]
 fn workspace_ports(reg: State<'_, Arc<PtyRegistry>>, pty_id: PtyId) -> Vec<u16> {
     let handles = reg.handles.lock().unwrap();
     match handles.get(&pty_id).and_then(|h| h.pid) {
@@ -107,6 +123,9 @@ pub fn run() {
             resize_pty,
             close_pty,
             git_info,
+            git_changed_files,
+            git_file_diff,
+            dir_exists,
             workspace_ports
         ])
         .setup(|app| {
