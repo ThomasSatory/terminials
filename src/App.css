@@ -48,3 +48,173 @@ body {
   background: #2c2c2c;
   color: #ccc;
 }
+
+/* ---- Diff viewer : overlay au-dessus de la zone de grille (spec §4) ---- */
+.diff-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 500; /* sous le toast (1000) */
+  background: #1e1e1e;
+  display: flex;
+  flex-direction: column;
+  outline: none; /* le conteneur est focusé (tabIndex=-1) : pas d'anneau natif */
+}
+
+.diff-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0 10px;
+  border-bottom: 1px solid #242424;
+  color: #ddd;
+  font-size: 13px;
+}
+
+.diff-toolbar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.diff-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6f6f6f;
+  font-size: 13px;
+}
+
+.diff-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* Aside « Files » ~220px, fidèle cmux. */
+.diff-aside {
+  width: 220px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  border-right: 1px solid #242424;
+  padding: 4px 0;
+}
+
+.diff-aside-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.diff-aside-row:hover {
+  background: #242424;
+}
+
+.diff-status-letter {
+  width: 12px;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+/* Path ellipsé à gauche (direction rtl) : la fin du chemin reste lisible. */
+.diff-aside-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  color: #cfcfcf;
+}
+
+.diff-stats {
+  display: flex;
+  gap: 5px;
+  font-family: monospace;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.diff-main {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.diff-file-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 10px;
+  background: #1e1e1e;
+  border-top: 1px solid #242424;
+  border-bottom: 1px solid #242424;
+  font-size: 12px;
+  color: #ddd;
+}
+
+.diff-file-path {
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-line {
+  display: flex;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-gutter {
+  width: 44px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 8px;
+  color: #565656;
+  user-select: none;
+}
+
+.diff-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.diff-line-add {
+  background: rgba(46, 204, 113, 0.12);
+}
+
+.diff-line-del {
+  background: rgba(231, 76, 60, 0.12);
+}
+
+.diff-line-hunk {
+  color: #6f6f6f;
+  background: #242424;
+}
+
+/* Seules les meta « Binary files … differ » sont rendues. */
+.diff-line-meta {
+  color: #6f6f6f;
+  font-style: italic;
+}
