@@ -14,7 +14,7 @@ function metaLine(branch: string | undefined, dirty: boolean | undefined, ports:
 }
 
 export function Sidebar() {
-  const { workspaces, activeId, addWorkspace, setActive, markRead, renameWorkspace, setColor } =
+  const { workspaces, activeId, addWorkspace, setActive, renameWorkspace, setColor } =
     useWorkspaceStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -36,10 +36,7 @@ export function Sidebar() {
       {workspaces.map((w) => (
         <div
           key={w.id}
-          onClick={() => {
-            setActive(w.id);
-            markRead(w.id);
-          }}
+          onClick={() => setActive(w.id)}
           style={{
             padding: "7px 10px",
             margin: "1px 6px",

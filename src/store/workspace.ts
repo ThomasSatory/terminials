@@ -16,7 +16,10 @@ export interface Workspace {
   branch?: string;
   dirty?: boolean;
   ports: number[];
+  /** Fallback niveau workspace : notification sans pane identifiable. */
   unread: boolean;
+  /** Panes avec notification non lue (anneau bleu cmux). */
+  unreadPanes: string[];
   lastNotification?: Notification;
   status?: { label: string; color?: string };
   progress?: { value: number; label?: string };
@@ -36,8 +39,7 @@ interface WorkspaceState {
   setActivePane: (wsId: string, paneId: string) => void;
   renameWorkspace: (wsId: string, name: string) => void;
   setColor: (wsId: string, color: string) => void;
-  setNotification: (wsId: string, n: Notification) => void;
-  markRead: (wsId: string) => void;
+  setNotification: (wsId: string, n: Notification, paneId?: string) => void;
   setActive: (wsId: string) => void;
   setGit: (wsId: string, branch: string, dirty: boolean) => void;
   setPorts: (wsId: string, ports: number[]) => void;
@@ -104,6 +106,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activePaneId: paneId,
       ports: [],
       unread: false,
+      unreadPanes: [],
     };
     set((s) => ({ workspaces: [...s.workspaces, ws], activeId: id }));
     return id;
@@ -128,13 +131,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         if (panes.length === w.panes.length) return w; // paneId inconnu
         // si le pane actif est fermé, on retombe sur le premier pane restant
         const activePaneId = w.activePaneId === paneId ? panes[0] : w.activePaneId;
-        return { ...w, panes, activePaneId };
+        // un pane fermé ne peut plus réclamer l'attention
+        const unreadPanes = w.unreadPanes.filter((p) => p !== paneId);
+        return { ...w, panes, activePaneId, unreadPanes };
       }),
     })),
   setActivePane: (wsId, paneId) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
-        w.id === wsId && w.panes.includes(paneId) ? { ...w, activePaneId: paneId } : w,
+        w.id === wsId && w.panes.includes(paneId)
+          ? {
+              ...w,
+              activePaneId: paneId,
+              // focus = lu : l'anneau bleu de ce pane s'éteint
+              unreadPanes: w.unreadPanes.filter((p) => p !== paneId),
+            }
+          : w,
       ),
     })),
   renameWorkspace: (wsId, name) => {
@@ -153,17 +165,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const w = get().workspaces.find((w) => w.id === wsId);
     if (w) saveMeta(w.cwd, { name: w.name, color: w.color });
   },
-  setNotification: (wsId, n) =>
+  setNotification: (wsId, n, paneId) =>
     set((s) => ({
-      workspaces: s.workspaces.map((w) =>
-        w.id === wsId ? { ...w, unread: true, lastNotification: n } : w,
-      ),
+      workspaces: s.workspaces.map((w) => {
+        if (w.id !== wsId) return w;
+        if (paneId !== undefined && w.panes.includes(paneId)) {
+          // anneau bleu sur le pane émetteur, pas de fallback workspace
+          const unreadPanes = w.unreadPanes.includes(paneId)
+            ? w.unreadPanes
+            : [...w.unreadPanes, paneId];
+          return { ...w, unreadPanes, lastNotification: n };
+        }
+        // pane inconnu ou non fourni (CLI hors pane, pane fermé) : fallback workspace
+        return { ...w, unread: true, lastNotification: n };
+      }),
     })),
-  markRead: (wsId) =>
+  setActive: (wsId) =>
     set((s) => ({
+      activeId: wsId,
+      // activer le workspace lit le fallback, PAS les anneaux par pane
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, unread: false } : w)),
     })),
-  setActive: (wsId) => set({ activeId: wsId }),
   setGit: (wsId, branch, dirty) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, branch, dirty } : w)),
@@ -195,3 +217,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set({ workspaces: [], activeId: null, panePtys: {}, toast: null });
   },
 }));
+
+/** Vrai si le workspace réclame l'attention : fallback workspace OU ≥ 1 pane non lu. */
+export function hasAttention(w: Workspace): boolean {
+  return w.unread || w.unreadPanes.length > 0;
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { useWorkspaceStore, MAX_PANES } from "./workspace";
+import { useWorkspaceStore, MAX_PANES, hasAttention } from "./workspace";
 import { PALETTE, basename } from "../lib/palette";
 
 const store = () => useWorkspaceStore.getState();
@@ -85,12 +85,81 @@ describe("workspace store", () => {
     expect(ws(id).color).toBe("#123456");
   });
 
-  it("marque une notification lue", () => {
+  it("setNotification sans paneId pose le fallback unread + lastNotification", () => {
     const id = store().addWorkspace("/tmp");
     store().setNotification(id, { title: "x", body: "y" });
     expect(ws(id).unread).toBe(true);
-    store().markRead(id);
+    expect(ws(id).unreadPanes).toEqual([]);
+    expect(ws(id).lastNotification).toEqual({ title: "x", body: "y" });
+  });
+
+  it("setActive lit le fallback unread du workspace activé", () => {
+    const a = store().addWorkspace("/a");
+    store().addWorkspace("/b"); // actif = /b
+    store().setNotification(a, { title: "x", body: "y" });
+    store().setActive(a);
+    expect(store().activeId).toBe(a);
+    expect(ws(a).unread).toBe(false);
+  });
+
+  it("setNotification avec paneId allume l'anneau du pane sans fallback", () => {
+    const id = store().addWorkspace("/tmp");
+    store().addPane(id); // panes = [p0, p1]
+    const p0 = ws(id).panes[0];
+    store().setNotification(id, { title: "n", body: "" }, p0);
+    expect(ws(id).unreadPanes).toEqual([p0]);
     expect(ws(id).unread).toBe(false);
+    expect(ws(id).lastNotification).toEqual({ title: "n", body: "" });
+    // idempotent : pas de doublon dans unreadPanes
+    store().setNotification(id, { title: "n2", body: "" }, p0);
+    expect(ws(id).unreadPanes).toEqual([p0]);
+  });
+
+  it("setNotification avec un paneId inconnu retombe sur le fallback workspace", () => {
+    const id = store().addWorkspace("/tmp");
+    store().setNotification(id, { title: "n", body: "" }, "pane:fantome");
+    expect(ws(id).unreadPanes).toEqual([]);
+    expect(ws(id).unread).toBe(true);
+  });
+
+  it("setActivePane éteint l'anneau du pane focusé, et seulement lui", () => {
+    const id = store().addWorkspace("/tmp");
+    store().addPane(id);
+    const [p0, p1] = ws(id).panes;
+    store().setNotification(id, { title: "a", body: "" }, p0);
+    store().setNotification(id, { title: "b", body: "" }, p1);
+    store().setActivePane(id, p0);
+    expect(ws(id).unreadPanes).toEqual([p1]);
+    expect(ws(id).activePaneId).toBe(p0);
+  });
+
+  it("setActive ne touche pas aux anneaux par pane", () => {
+    const a = store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    const p0 = ws(a).panes[0];
+    store().setNotification(a, { title: "n", body: "" }, p0);
+    store().setActive(a);
+    expect(ws(a).unreadPanes).toEqual([p0]);
+  });
+
+  it("closePane purge l'anneau du pane fermé", () => {
+    const id = store().addWorkspace("/tmp");
+    store().addPane(id);
+    const p1 = ws(id).panes[1];
+    store().setNotification(id, { title: "n", body: "" }, p1);
+    store().closePane(id, p1);
+    expect(ws(id).unreadPanes).toEqual([]);
+  });
+
+  it("hasAttention dérive fallback OU anneaux par pane", () => {
+    const id = store().addWorkspace("/tmp");
+    expect(hasAttention(ws(id))).toBe(false);
+    store().setNotification(id, { title: "n", body: "" }, ws(id).panes[0]);
+    expect(hasAttention(ws(id))).toBe(true);
+    store().setActivePane(id, ws(id).panes[0]);
+    expect(hasAttention(ws(id))).toBe(false);
+    store().setNotification(id, { title: "n", body: "" });
+    expect(hasAttention(ws(id))).toBe(true);
   });
 
   it("gère un toast transitoire", () => {
