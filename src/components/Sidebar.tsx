@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useWorkspaceStore } from "../store/workspace";
-import { PALETTE, ALERT_COLOR } from "../lib/palette";
+import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 
 const HOME = "/home/user";
 
@@ -46,7 +46,7 @@ export function Sidebar() {
             borderRadius: 6,
             cursor: "pointer",
             background: w.id === activeId ? "#242424" : "transparent",
-            borderLeft: `3px solid ${w.unread ? ALERT_COLOR : "transparent"}`,
+            borderLeft: `3px solid ${w.unread ? ATTENTION_COLOR : "transparent"}`,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -63,7 +63,7 @@ export function Sidebar() {
                 background: w.color,
                 flexShrink: 0,
                 cursor: "pointer",
-                boxShadow: w.unread ? `0 0 0 3px ${ALERT_COLOR}40` : "none",
+                boxShadow: w.unread ? `0 0 0 3px ${ATTENTION_COLOR}40` : "none",
               }}
             />
             {editingId === w.id ? (
@@ -156,7 +156,7 @@ export function Sidebar() {
           {w.progress && (
             <div style={{ height: 3, background: "#2a2a2a", borderRadius: 2, marginLeft: 17, marginTop: 5 }}>
               <div
-                style={{ height: 3, width: `${w.progress.value * 100}%`, background: ALERT_COLOR }}
+                style={{ height: 3, width: `${w.progress.value * 100}%`, background: STATUS_DEFAULT_COLOR }}
               />
             </div>
           )}

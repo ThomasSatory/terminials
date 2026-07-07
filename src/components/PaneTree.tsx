@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from "react";
 import type { Workspace } from "../store/workspace";
 import { useWorkspaceStore } from "../store/workspace";
-import { ALERT_COLOR } from "../lib/palette";
+import { ATTENTION_COLOR } from "../lib/palette";
 import { TerminalPane } from "./TerminalPane";
 
 const AREAS = ["a", "b", "c", "d"];
@@ -91,7 +91,7 @@ export function PaneTree({ ws }: { ws: Workspace }) {
         width: "100%",
         height: "100%",
         boxSizing: "border-box",
-        boxShadow: ws.unread ? `inset 0 0 0 2px ${ALERT_COLOR}` : "none",
+        boxShadow: ws.unread ? `inset 0 0 0 2px ${ATTENTION_COLOR}` : "none",
       }}
     >
       <div
