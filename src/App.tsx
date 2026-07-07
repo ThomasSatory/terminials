@@ -1,16 +1,51 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { registerSocketEvents } from "./lib/socketEvents";
 import { openFolderDialog } from "./lib/openFolder";
-import { useWorkspaceStore, MAX_PANES } from "./store/workspace";
+import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
 import "./App.css";
 
 export default function App() {
   useShortcuts();
   const { workspaces, activeId, addPane, showToast, toast, clearToast } = useWorkspaceStore();
+
+  // true tant que la restauration n'a pas statué : évite le flash de l'état
+  // vide « Open folder » pendant les invoke dir_exists.
+  const [booting, setBooting] = useState(true);
+
+  // Restauration des workspaces persistés au premier montage : chaque cwd est
+  // validé côté Rust ; dossier disparu → skippé + toast (jamais restauré :
+  // unread/status/progress/ports repartent à zéro, cf. contrat SavedWorkspace).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const saved = loadSavedWorkspaces();
+      if (saved.length > 0) {
+        const checks = await Promise.all(
+          saved.map((entry) =>
+            invoke<boolean>("dir_exists", { path: entry.cwd }).catch(() => false),
+          ),
+        );
+        if (cancelled) return;
+        const valid = saved.filter((_, i) => checks[i]);
+        const missing = saved.filter((_, i) => !checks[i]);
+        const s = useWorkspaceStore.getState();
+        if (missing.length > 0) {
+          s.showToast(
+            `dossier introuvable, workspace ignoré : ${missing.map((m) => m.cwd).join(", ")}`,
+          );
+        }
+        if (valid.length > 0) s.restoreWorkspaces(valid);
+      }
+      if (!cancelled) setBooting(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Branche les events backend (socket-command, agent-notification).
   useEffect(() => {
@@ -28,18 +63,29 @@ export default function App() {
   }, [toast, clearToast]);
 
   // Poller git (~2s) : rafraîchit la branche affichée dans la sidebar.
+  // Workspaces interrogés en parallèle (Promise.all) ; garde in-flight : sur un
+  // repo lent (NFS), le tick suivant ne se superpose pas au précédent.
   useEffect(() => {
+    let running = false;
     const tick = async () => {
-      const s = useWorkspaceStore.getState();
-      for (const w of s.workspaces) {
-        try {
-          const info = await invoke<{ branch: string | null; dirty: boolean }>("git_info", {
-            cwd: w.cwd,
-          });
-          if (info.branch) s.setGit(w.id, info.branch, info.dirty);
-        } catch {
-          /* commande indisponible (backend pas prêt) ou cwd hors repo */
-        }
+      if (running) return;
+      running = true;
+      try {
+        const s = useWorkspaceStore.getState();
+        await Promise.all(
+          s.workspaces.map(async (w) => {
+            try {
+              const info = await invoke<{ branch: string | null; dirty: boolean }>("git_info", {
+                cwd: w.cwd,
+              });
+              if (info.branch) s.setGit(w.id, info.branch, info.dirty);
+            } catch {
+              /* commande indisponible (backend pas prêt) ou cwd hors repo */
+            }
+          }),
+        );
+      } finally {
+        running = false;
       }
     };
     const h = setInterval(tick, 2000);
@@ -47,24 +93,31 @@ export default function App() {
     return () => clearInterval(h);
   }, []);
 
-  // Poller ports (~2s) : union des ports ouverts par tous les panes de chaque workspace.
-  // Les requêtes des panes d'un workspace partent en parallèle (Promise.all) pour réduire
-  // la latence du tick et la fenêtre de recouvrement entre deux ticks ; une erreur sur un
-  // pane (backend pas prêt) renvoie [] sans avorter l'union.
+  // Poller ports (~2s) : union des ports ouverts par tous les panes de chaque
+  // workspace. Workspaces ET panes en parallèle ; même garde in-flight.
   useEffect(() => {
+    let running = false;
     const tick = async () => {
-      const s = useWorkspaceStore.getState();
-      for (const w of s.workspaces) {
-        const ptyIds = w.panes
-          .map((paneId) => s.panePtys[paneId])
-          .filter((id): id is number => id !== undefined);
-        const results = await Promise.all(
-          ptyIds.map((ptyId) =>
-            invoke<number[]>("workspace_ports", { ptyId }).catch(() => [] as number[]),
-          ),
+      if (running) return;
+      running = true;
+      try {
+        const s = useWorkspaceStore.getState();
+        await Promise.all(
+          s.workspaces.map(async (w) => {
+            const ptyIds = w.panes
+              .map((paneId) => s.panePtys[paneId])
+              .filter((id): id is number => id !== undefined);
+            const results = await Promise.all(
+              ptyIds.map((ptyId) =>
+                invoke<number[]>("workspace_ports", { ptyId }).catch(() => [] as number[]),
+              ),
+            );
+            const ports = new Set<number>(results.flat());
+            s.setPorts(w.id, [...ports].sort((a, b) => a - b));
+          }),
         );
-        const ports = new Set<number>(results.flat());
-        s.setPorts(w.id, [...ports].sort((a, b) => a - b));
+      } finally {
+        running = false;
       }
     };
     const h = setInterval(tick, 2000);
@@ -77,7 +130,7 @@ export default function App() {
     <div style={{ display: "flex", width: "100vw", height: "100vh", background: "#1e1e1e" }}>
       <Sidebar />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {workspaces.length === 0 ? (
+        {booting ? null : workspaces.length === 0 ? (
           /* État vide : aucun workspace — l'utilisateur choisit un dossier réel. */
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <button
