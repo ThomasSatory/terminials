@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from "react";
+import { homeDir } from "@tauri-apps/api/path";
 import { useWorkspaceStore, hasAttention } from "../store/workspace";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
+import { abbreviateHome } from "../lib/paths";
 import { openFolderDialog } from "../lib/openFolder";
 
 /** Métadonnées git/ports condensées en une ligne discrète : `branch • · :ports`.
@@ -13,11 +15,20 @@ function metaLine(branch: string | undefined, dirty: boolean | undefined, ports:
 }
 
 export function Sidebar() {
-  const { workspaces, activeId, setActive, renameWorkspace, setColor } = useWorkspaceStore();
+  const { workspaces, activeId, setActive, toggleDiff, renameWorkspace, setColor } =
+    useWorkspaceStore();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
   const blurShouldCommit = useRef(true);
+
+  // Home résolu une fois via Tauri ; tant qu'il est vide, abbreviateHome est un no-op.
+  const [home, setHome] = useState("");
+  useEffect(() => {
+    homeDir()
+      .then(setHome)
+      .catch(() => {});
+  }, []);
 
   // Ctrl+Shift+R : le dispatch (K.5) pose renameRequestId sur le workspace actif.
   // Quand il matche un workspace, on ouvre l'édition inline (même chemin que le
@@ -155,8 +166,45 @@ export function Sidebar() {
           )}
 
           {metaLine(w.branch, w.dirty, w.ports) && (
-            <div style={{ fontSize: 11, color: "#6f6f6f", marginLeft: 17, marginTop: 3 }}>
+            <div
+              onClick={(e) => {
+                // Le clic active le workspace ET ouvre son diff (sans déclencher le onClick de la ligne).
+                e.stopPropagation();
+                setActive(w.id);
+                toggleDiff(w.id);
+              }}
+              title="Voir les fichiers modifiés (Ctrl+Shift+D)"
+              style={{ fontSize: 11, color: "#6f6f6f", marginLeft: 17, marginTop: 3, cursor: "pointer" }}
+            >
               {metaLine(w.branch, w.dirty, w.ports)}
+            </div>
+          )}
+          <div
+            style={{
+              fontSize: 11,
+              color: "#6f6f6f",
+              marginLeft: 17,
+              marginTop: 2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {abbreviateHome(w.cwd, home)}
+          </div>
+          {w.lastNotification && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "#8a8a8a",
+                marginLeft: 17,
+                marginTop: 2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {w.lastNotification.title}
             </div>
           )}
           {w.status && (
