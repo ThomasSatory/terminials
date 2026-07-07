@@ -26,8 +26,8 @@ fn spawn_pty(
     rows: u16,
     on_data: Channel<InvokeResponseBody>,
 ) -> Result<PtyId, String> {
-    let (id, mut reader) =
-        pty::spawn_pty(reg.inner(), &shell, &cwd, cols, rows).map_err(|e| e.to_string())?;
+    let (id, mut reader) = pty::spawn_pty(reg.inner(), &shell, &cwd, &workspace_id, cols, rows)
+        .map_err(|e| e.to_string())?;
 
     thread::spawn(move || {
         let mut buf = [0u8; 8192];

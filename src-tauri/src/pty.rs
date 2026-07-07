@@ -36,10 +36,14 @@ impl PtyRegistry {
 
 /// Ouvre un PTY, lance `shell` dans `cwd`, enregistre le handle et retourne (id, reader).
 /// Le reader est destiné à un thread lecteur dédié (lectures bloquantes).
+/// Injecte TERMINIALS_WORKSPACE_ID / TERMINIALS_PTY_ID dans l'env du shell : la CLI
+/// `terminials` les relit pour router notify/set-status/set-progress vers le
+/// workspace émetteur (spec §7).
 pub fn spawn_pty(
     reg: &PtyRegistry,
     shell: &str,
     cwd: &str,
+    workspace_id: &str,
     cols: u16,
     rows: u16,
 ) -> std::io::Result<(PtyId, Box<dyn std::io::Read + Send>)> {
@@ -48,8 +52,13 @@ pub fn spawn_pty(
         .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+    // L'id est réservé AVANT le spawn (simple compteur atomique) pour pouvoir
+    // l'injecter dans l'env du shell. En cas d'échec du spawn, l'id est juste perdu.
+    let id = reg.next_id();
     let mut cmd = CommandBuilder::new(shell);
     cmd.cwd(cwd);
+    cmd.env("TERMINIALS_WORKSPACE_ID", workspace_id);
+    cmd.env("TERMINIALS_PTY_ID", id.to_string());
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -66,7 +75,6 @@ pub fn spawn_pty(
         .take_writer()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-    let id = reg.next_id();
     reg.handles
         .lock()
         .unwrap()
@@ -111,9 +119,31 @@ mod tests {
     #[test]
     fn spawn_write_resize_roundtrip() {
         let reg = PtyRegistry::new();
-        let (id, _reader) = spawn_pty(&reg, "/bin/sh", "/", 80, 24).unwrap();
+        let (id, _reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24).unwrap();
         assert!(reg.handles.lock().unwrap().contains_key(&id));
         write_pty(&reg, id, b"echo hi\n").unwrap();
         resize_pty(&reg, id, 100, 30).unwrap();
+    }
+
+    #[test]
+    fn spawn_injects_workspace_and_pty_ids_in_env() {
+        use std::io::Read;
+        let reg = PtyRegistry::new();
+        let (id, mut reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24).unwrap();
+        write_pty(&reg, id, b"echo ID=$TERMINIALS_WORKSPACE_ID:$TERMINIALS_PTY_ID; exit\n")
+            .unwrap();
+        // `exit` termine le shell → EOF : la boucle de lecture se termine toujours.
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+            }
+        }
+        let text = String::from_utf8_lossy(&out);
+        // L'écho du terminal contient la forme littérale `$TERMINIALS_…` ; seule la
+        // sortie d'echo contient la forme développée `ID=ws-test:<id>`.
+        assert!(text.contains(&format!("ID=ws-test:{id}")), "sortie du shell: {text}");
     }
 }
