@@ -204,4 +204,57 @@ describe("workspace store", () => {
     expect(store().sidebarVisible).toBe(true);
     expect(store().renameRequestId).toBeNull();
   });
+
+  it("closeWorkspace du ws actif du milieu active le voisin précédent", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    const c = store().addWorkspace("/c");
+    store().setActive(b);
+    store().closeWorkspace(b);
+    expect(store().workspaces.map((w) => w.id)).toEqual([a, c]);
+    expect(store().activeId).toBe(a);
+  });
+
+  it("closeWorkspace du premier ws actif active le suivant", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    store().setActive(a);
+    store().closeWorkspace(a);
+    expect(store().activeId).toBe(b);
+  });
+
+  it("closeWorkspace du dernier ws restant vide la liste (activeId null)", () => {
+    const a = store().addWorkspace("/a");
+    store().closeWorkspace(a);
+    expect(store().workspaces).toEqual([]);
+    expect(store().activeId).toBeNull();
+  });
+
+  it("closeWorkspace d'un ws inactif ne change pas activeId", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b"); // actif = b
+    store().closeWorkspace(a);
+    expect(store().activeId).toBe(b);
+    expect(store().workspaces.map((w) => w.id)).toEqual([b]);
+  });
+
+  it("closeWorkspace purge les panePtys du ws fermé, pas ceux des autres", () => {
+    const a = store().addWorkspace("/a");
+    store().addPane(a);
+    const b = store().addWorkspace("/b");
+    const [pa0, pa1] = ws(a).panes;
+    const pb0 = ws(b).panes[0];
+    store().setPanePty(pa0, 10);
+    store().setPanePty(pa1, 11);
+    store().setPanePty(pb0, 20);
+    store().closeWorkspace(a);
+    expect(store().panePtys).toEqual({ [pb0]: 20 });
+  });
+
+  it("closeWorkspace d'un id inconnu est un no-op", () => {
+    const a = store().addWorkspace("/a");
+    store().closeWorkspace("ws:fantome");
+    expect(store().workspaces.map((w) => w.id)).toEqual([a]);
+    expect(store().activeId).toBe(a);
+  });
 });

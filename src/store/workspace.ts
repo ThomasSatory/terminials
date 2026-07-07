@@ -42,6 +42,7 @@ interface WorkspaceState {
   addWorkspace: (cwd: string) => string;
   addPane: (wsId: string) => boolean;
   closePane: (wsId: string, paneId: string) => void;
+  closeWorkspace: (wsId: string) => void;
   setActivePane: (wsId: string, paneId: string) => void;
   renameWorkspace: (wsId: string, name: string) => void;
   setColor: (wsId: string, color: string) => void;
@@ -148,6 +149,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         return { ...w, panes, activePaneId, unreadPanes };
       }),
     })),
+  closeWorkspace: (wsId) =>
+    set((s) => {
+      const idx = s.workspaces.findIndex((w) => w.id === wsId);
+      if (idx === -1) return {};
+      const closed = s.workspaces[idx];
+      const workspaces = s.workspaces.filter((w) => w.id !== wsId);
+      // Purge des mappings pane→PTY : les PTYs eux-mêmes sont fermés par le
+      // démontage des TerminalPane du workspace (cleanup closePty).
+      const panePtys = { ...s.panePtys };
+      for (const paneId of closed.panes) delete panePtys[paneId];
+      // Si le workspace fermé était actif : voisin précédent, sinon suivant, sinon rien.
+      const activeId =
+        s.activeId === wsId
+          ? (workspaces[idx - 1]?.id ?? workspaces[idx]?.id ?? null)
+          : s.activeId;
+      return { workspaces, panePtys, activeId };
+    }),
   setActivePane: (wsId, paneId) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) =>
