@@ -47,6 +47,9 @@ function PaneCell({
   const closePane = useWorkspaceStore((s) => s.closePane);
   const [hover, setHover] = useState(false);
   const isActive = ws.activePaneId === paneId;
+  // Anneau bleu cmux : un agent attend dans CE pane (sémantique attention, distincte
+  // de la bordure active 1px couleur d'identité qui, elle, reste inchangée).
+  const isUnread = ws.unreadPanes.includes(paneId);
   const canClose = ws.panes.length > 1;
   return (
     <div
@@ -60,6 +63,12 @@ function PaneCell({
         minHeight: 0,
         boxSizing: "border-box",
         border: `1px solid ${isActive ? ws.color : "transparent"}`,
+        boxShadow: isUnread
+          ? `0 0 0 2px ${ATTENTION_COLOR}, 0 0 8px ${ATTENTION_COLOR}80`
+          : "none",
+        // Le glow 8px déborde sur les cellules voisines (gap 2px) : on le fait
+        // passer au-dessus pour qu'il ne soit pas rogné.
+        zIndex: isUnread ? 2 : "auto",
       }}
     >
       {canClose && hover && (
@@ -101,7 +110,6 @@ export function PaneTree({ ws, visible }: { ws: Workspace; visible: boolean }) {
         width: "100%",
         height: "100%",
         boxSizing: "border-box",
-        boxShadow: ws.unread ? `inset 0 0 0 2px ${ATTENTION_COLOR}` : "none",
       }}
     >
       <div
