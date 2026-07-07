@@ -43,6 +43,7 @@ fn spawn_pty(
                             "agent-notification",
                             serde_json::json!({
                                 "workspaceId": workspace_id,
+                                "ptyId": id,
                                 "title": notif.title,
                                 "body": notif.body,
                             }),
