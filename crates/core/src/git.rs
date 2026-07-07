@@ -167,6 +167,47 @@ fn parse_numstat_z(raw: &[u8]) -> Vec<(String, Option<u32>, Option<u32>)> {
     out
 }
 
+/// Diff unifié d'un fichier : `git diff [--cached] --no-color -- <path>`.
+/// Si le diff est vide et que le fichier n'est pas suivi, repli sur
+/// `git diff --no-index /dev/null <path>` (untracked → diff « tout ajouté »).
+/// `--no-index` sort avec le code 1 quand il y a des différences : normal, pas une erreur.
+/// Fichier binaire : git émet « Binary files ... differ », renvoyé tel quel.
+pub fn file_diff(cwd: &str, path: &str, staged: bool) -> String {
+    let mut args: Vec<&str> = vec!["diff"];
+    if staged {
+        args.push("--cached");
+    }
+    args.extend_from_slice(&["--no-color", "--", path]);
+    if let Some(out) = git_out(cwd, &args) {
+        if !out.is_empty() {
+            return String::from_utf8_lossy(&out).into_owned();
+        }
+    }
+    if !staged && is_untracked(cwd, path) {
+        // Pas de filtre sur le code de sortie : 1 = différences trouvées.
+        if let Ok(o) = Command::new("git")
+            .args(["diff", "--no-color", "--no-index", "--", "/dev/null", path])
+            .current_dir(cwd)
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .output()
+        {
+            return String::from_utf8_lossy(&o.stdout).into_owned();
+        }
+    }
+    String::new()
+}
+
+/// Vrai si `path` n'est pas dans l'index (fichier untracked).
+fn is_untracked(cwd: &str, path: &str) -> bool {
+    Command::new("git")
+        .args(["ls-files", "--error-unmatch", "--", path])
+        .current_dir(cwd)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .output()
+        .map(|o| !o.status.success())
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,5 +394,61 @@ mod tests {
         };
         let v = serde_json::to_value(&f).unwrap();
         assert_eq!(v, serde_json::json!({"path": "a", "status": "renamed", "origPath": "b", "added": 1}));
+    }
+
+    // ---- file_diff ----
+
+    #[test]
+    fn file_diff_modified_contains_plus_minus() {
+        let dir = tmp_repo("fd-mod");
+        write_file(&dir, "a.txt", b"ligne1\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        write_file(&dir, "a.txt", b"ligne2\n");
+        let d = file_diff(dir.to_str().unwrap(), "a.txt", false);
+        assert!(d.contains("-ligne1"), "diff: {d}");
+        assert!(d.contains("+ligne2"), "diff: {d}");
+        assert!(d.contains("@@"), "diff: {d}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_diff_untracked_via_no_index() {
+        // Un untracked est invisible pour `git diff` : repli sur --no-index /dev/null,
+        // dont le code de sortie 1 (différences trouvées) est normal.
+        let dir = tmp_repo("fd-untracked");
+        write_file(&dir, "nouveau.txt", b"contenu\n");
+        let d = file_diff(dir.to_str().unwrap(), "nouveau.txt", false);
+        assert!(d.contains("+contenu"), "diff: {d}");
+        assert!(d.contains("/dev/null"), "diff: {d}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_diff_staged_uses_cached() {
+        let dir = tmp_repo("fd-staged");
+        write_file(&dir, "a.txt", b"un\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        write_file(&dir, "a.txt", b"deux\n");
+        git(&dir, &["add", "a.txt"]);
+        let staged = file_diff(dir.to_str().unwrap(), "a.txt", true);
+        assert!(staged.contains("+deux"), "diff staged: {staged}");
+        // Worktree == index : diff non-staged vide, et PAS de repli --no-index
+        // (le fichier est suivi).
+        assert_eq!(file_diff(dir.to_str().unwrap(), "a.txt", false), "");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_diff_binary_says_binary() {
+        let dir = tmp_repo("fd-bin");
+        write_file(&dir, "bin.dat", &[0u8, 1, 2, 3]);
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        write_file(&dir, "bin.dat", &[0u8, 1, 2, 3, 4]);
+        let d = file_diff(dir.to_str().unwrap(), "bin.dat", false);
+        assert!(d.contains("Binary files"), "diff: {d}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
