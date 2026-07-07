@@ -4,15 +4,17 @@ Terminal desktop Linux pour faire tourner des **agents de code en parallèle** (
 
 Le but : rendre le travail des agents *observable*. Sidebar verticale de workspaces affichant branche git, répertoire et ports en écoute ; anneau visuel + badge quand un agent attend une entrée ; notifications desktop ; CLI/socket pour piloter l'app.
 
-## Fonctionnalités (v1)
+## Fonctionnalités
 
-- **Terminaux** xterm.js (rendu WebGL avec repli DOM) sur PTY natifs (`portable-pty`).
-- **Workspaces** dans une sidebar verticale, **splits** horizontaux/verticaux (Allotment).
-- **Sidebar riche** : branche git, ports TCP en écoute du sous-arbre de process, status pills et barre de progression.
-- **Notifications agents** : capture des séquences `OSC 9 / 99 / 777` dans le flux du terminal → anneau visuel, badge non-lu, notification desktop D-Bus + demande d'attention de la fenêtre. Aussi déclenchables par la CLI et par un hook Claude Code.
+- **Terminaux** xterm.js (rendu WebGL avec repli DOM) sur PTY natifs (`portable-pty`). Les workspaces restent montés en arrière-plan : changer de workspace ne tue pas les shells.
+- **Workspaces sur dossier réel** : le bouton + de la sidebar et `Ctrl+Shift+O` ouvrent un dialog GTK natif ; la liste des workspaces (dossier, nom, couleur, nombre de terminaux) est restaurée au démarrage (un dossier disparu est ignoré avec un toast).
+- **Splits** : grille fixe de 1 à 4 terminaux par workspace (`Ctrl+Shift+T`), focus directionnel `Alt+←→↑↓`.
+- **Sidebar riche** : branche git (+ indicateur dirty), ports TCP en écoute du sous-arbre de process, répertoire abrégé (`~/…`), dernière notification, status pills et barre de progression. Un clic sur la ligne git ouvre le diff viewer ; `Ctrl+Shift+B` masque la sidebar.
+- **Diff viewer** (`Ctrl+Shift+D`, copie du diff viewer cmux) : colonne « Files » (statut coloré, stats +/− par fichier), diff unifié concaténé avec en-têtes sticky et numéros de ligne, filtre `/`, navigation `j`/`k`/`g g`/`Shift+G`, `Échap` ferme.
+- **Notifications agents** : capture des séquences `OSC 9 / 99 / 777` dans le flux du terminal → **anneau bleu** autour du pane émetteur (signature cmux), rail bleu dans la sidebar, notification desktop D-Bus + demande d'attention de la fenêtre. Aussi déclenchables par la CLI et par un hook Claude Code ; les commandes lancées dans un pane ciblent leur workspace d'origine (`TERMINIALS_WORKSPACE_ID` injecté dans l'environnement du shell).
 - **CLI + socket Unix** (`$XDG_RUNTIME_DIR/terminials.sock`, JSON-par-ligne) pour scripter l'app.
 
-Hors périmètre v1 : onglets dans les panes, navigateur intégré, restauration de session.
+Hors périmètre : onglets/surfaces par pane, navigateur intégré, splits libres redimensionnables, command palette.
 
 ## Prérequis (Ubuntu / Debian)
 
@@ -58,11 +60,23 @@ printf '\e]9;Tache terminee\a'                      # OSC 9 (iTerm2)
 
 ## Raccourcis
 
+Couche `Ctrl+Shift` (convention gnome-terminal), matching par touche physique (`e.code`, compatible AZERTY). Aucun `Ctrl+lettre` nu n'est intercepté — `Ctrl+N/T/W…` vont au shell (readline intact) — et `Ctrl+Shift+C/V` restent le copier/coller du terminal.
+
 | Raccourci | Action |
 |---|---|
-| `Ctrl+N` | Nouveau workspace |
-| `Ctrl+D` | Split horizontal du pane |
-| `Ctrl+Shift+D` | Split vertical du pane |
+| `Ctrl+Shift+O` ou `Ctrl+Shift+N` | Ouvrir un dossier (nouveau workspace) |
+| `Ctrl+Shift+T` | Nouveau terminal (pane) |
+| `Ctrl+Shift+W` | Fermer le pane actif |
+| `Ctrl+Shift+Q` | Fermer le workspace actif |
+| `Ctrl+Shift+R` | Renommer le workspace (édition inline) |
+| `Ctrl+Shift+D` | Ouvrir/fermer le diff viewer |
+| `Ctrl+Shift+B` | Afficher/masquer la sidebar |
+| `Ctrl+PageUp` / `Ctrl+PageDown` | Workspace précédent / suivant |
+| `Ctrl+1` … `Ctrl+9` | Sélection directe de workspace |
+| `Alt+←` `Alt+→` `Alt+↑` `Alt+↓` | Focus directionnel de pane |
+| `Échap` | Ferme le diff viewer (quand il est ouvert) |
+
+Conflits assumés : `Ctrl+PageUp/Down` (navigation de fenêtres tmux) et `Ctrl+2..8` (codes de contrôle rarissimes) sont capturés par l'app.
 
 ## Architecture
 
