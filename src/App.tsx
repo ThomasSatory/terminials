@@ -169,6 +169,7 @@ export default function App() {
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {active.name}
+                  {active.branch && <span style={{ color: "#6f6f6f" }}> — {active.branch}</span>}
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
