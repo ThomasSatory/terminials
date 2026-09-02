@@ -36,9 +36,14 @@ cargo test --workspace # tests Rust
 ## Build release
 
 ```bash
-npm run tauri build              # produit le binaire + paquets dans src-tauri/target/release/bundle/
+npm run tauri build              # produit target/release/terminials-app + le .deb dans target/release/bundle/deb/
 ./scripts/install-cli.sh         # compile et installe la CLI `terminials` dans ~/.local/bin
 ```
+
+> **Toujours passer par `npm run tauri build`, jamais par `cargo build --release` seul.**
+> Seul le CLI Tauri exécute `beforeBuildCommand` (`npm run build`) et embarque `dist/` dans le
+> binaire. Un `cargo build --release` nu produit un binaire sans frontend, qui retombe sur le
+> `devUrl` : fenêtre blanche affichant `Could not connect to localhost: Connection refused`.
 
 ## CLI
 
