@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
@@ -6,8 +6,19 @@ import { DiffOverlay } from "./components/DiffOverlay";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { registerSocketEvents } from "./lib/socketEvents";
 import { openFolderDialog } from "./lib/openFolder";
+import { createHomeWorkspace } from "./lib/newWorkspace";
 import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
 import "./App.css";
+
+const EMPTY_BTN: CSSProperties = {
+  padding: "10px 18px",
+  fontSize: 14,
+  background: "#242424",
+  color: "#ddd",
+  border: "1px solid #3a3a3a",
+  borderRadius: 6,
+  cursor: "pointer",
+};
 
 export default function App() {
   useShortcuts();
@@ -135,20 +146,20 @@ export default function App() {
       {sidebarVisible && <Sidebar />}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {booting ? null : workspaces.length === 0 ? (
-          /* État vide : aucun workspace — l'utilisateur choisit un dossier réel. */
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <button
-              onClick={() => void openFolderDialog()}
-              style={{
-                padding: "10px 18px",
-                fontSize: 14,
-                background: "#242424",
-                color: "#ddd",
-                border: "1px solid #3a3a3a",
-                borderRadius: 6,
-                cursor: "pointer",
-              }}
-            >
+          /* État vide : démarrage direct sur ~, ou choix d'un dossier précis. */
+          <div
+            style={{
+              flex: 1,
+              display: "flex",
+              gap: 10,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <button onClick={() => void createHomeWorkspace()} style={EMPTY_BTN}>
+              Nouvel espace ~ (Ctrl+Shift+N)
+            </button>
+            <button onClick={() => void openFolderDialog()} style={EMPTY_BTN}>
               Ouvrir un dossier (Ctrl+Shift+O)
             </button>
           </div>

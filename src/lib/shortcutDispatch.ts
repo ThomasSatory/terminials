@@ -1,5 +1,6 @@
 import { closePty } from "./pty";
 import { openFolderDialog } from "./openFolder";
+import { createHomeWorkspace } from "./newWorkspace";
 import { focusPane } from "./paneFocus";
 import { paneNavTarget, type ShortcutAction } from "./shortcuts";
 import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
@@ -17,6 +18,9 @@ export function dispatchShortcut(action: ShortcutAction): void {
   switch (action.type) {
     case "open-folder":
       void openFolderDialog();
+      return;
+    case "new-workspace":
+      void createHomeWorkspace();
       return;
     case "new-pane":
       if (active && !s.addPane(active.id)) s.showToast(`max ${MAX_PANES} terminaux`);

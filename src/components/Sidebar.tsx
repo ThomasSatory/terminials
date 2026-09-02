@@ -4,6 +4,7 @@ import { useWorkspaceStore, hasAttention } from "../store/workspace";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 import { abbreviateHome } from "../lib/paths";
 import { openFolderDialog } from "../lib/openFolder";
+import { createHomeWorkspace } from "../lib/newWorkspace";
 import { closePty } from "../lib/pty";
 
 /** Métadonnées git/ports condensées en une ligne discrète : `branch • · :ports`.
@@ -259,13 +260,20 @@ export function Sidebar() {
         </div>
       ))}
 
-      <div style={{ marginTop: "auto", padding: "6px 10px" }}>
+      <div style={{ marginTop: "auto", padding: "6px 10px", display: "flex", gap: 6 }}>
+        <button
+          className="icon-btn"
+          onClick={() => void createHomeWorkspace()}
+          title="Nouvel espace dans ~ (Ctrl+Shift+N)"
+        >
+          +
+        </button>
         <button
           className="icon-btn"
           onClick={() => void openFolderDialog()}
           title="Ouvrir un dossier (Ctrl+Shift+O)"
         >
-          +
+          📂
         </button>
       </div>
     </div>

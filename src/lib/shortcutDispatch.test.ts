@@ -3,10 +3,12 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Mocks des modules à effets de bord (IPC Tauri, dialog natif GTK).
 vi.mock("./pty", () => ({ closePty: vi.fn() }));
 vi.mock("./openFolder", () => ({ openFolderDialog: vi.fn(() => Promise.resolve()) }));
+vi.mock("./newWorkspace", () => ({ createHomeWorkspace: vi.fn(() => Promise.resolve()) }));
 
 import { dispatchShortcut } from "./shortcutDispatch";
 import { closePty } from "./pty";
 import { openFolderDialog } from "./openFolder";
+import { createHomeWorkspace } from "./newWorkspace";
 import { registerPaneFocus, unregisterPaneFocus } from "./paneFocus";
 import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
 
@@ -22,6 +24,12 @@ describe("dispatchShortcut", () => {
   it("open-folder ouvre le dialog natif", () => {
     dispatchShortcut({ type: "open-folder" });
     expect(openFolderDialog).toHaveBeenCalledTimes(1);
+  });
+
+  it("new-workspace crée un espace sur ~ sans passer par le dialog", () => {
+    dispatchShortcut({ type: "new-workspace" });
+    expect(createHomeWorkspace).toHaveBeenCalledTimes(1);
+    expect(openFolderDialog).not.toHaveBeenCalled();
   });
 
   it("new-pane ajoute un pane au workspace actif, toast à MAX_PANES", () => {

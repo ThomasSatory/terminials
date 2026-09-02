@@ -16,7 +16,7 @@ const a = (code: string) => k(code, { altKey: true }); // Alt seul
 describe("matchShortcut — couche Ctrl+Shift (convention gnome-terminal)", () => {
   const CASES: Array<[string, ShortcutAction]> = [
     ["KeyO", { type: "open-folder" }],
-    ["KeyN", { type: "open-folder" }],
+    ["KeyN", { type: "new-workspace" }],
     ["KeyT", { type: "new-pane" }],
     ["KeyW", { type: "close-pane" }],
     ["KeyQ", { type: "close-workspace" }],

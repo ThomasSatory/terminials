@@ -6,6 +6,7 @@
  */
 export type ShortcutAction =
   | { type: "open-folder" }
+  | { type: "new-workspace" }
   | { type: "new-pane" }
   | { type: "close-pane" }
   | { type: "close-workspace" }
@@ -29,7 +30,7 @@ export interface KeyLike {
  *  volontairement ABSENTS : Ctrl+Shift+C/V = copier/coller du terminal. */
 const CTRL_SHIFT: Record<string, ShortcutAction> = {
   KeyO: { type: "open-folder" },
-  KeyN: { type: "open-folder" }, // « nouveau workspace » = ouvrir un dossier
+  KeyN: { type: "new-workspace" }, // nouvel espace direct sur ~, sans dialog
   KeyT: { type: "new-pane" },
   KeyW: { type: "close-pane" },
   KeyQ: { type: "close-workspace" },

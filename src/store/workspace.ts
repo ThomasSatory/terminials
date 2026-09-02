@@ -43,7 +43,8 @@ interface WorkspaceState {
   sidebarVisible: boolean;
   /** Workspace dont la Sidebar doit ouvrir l'édition inline du nom (null = aucune demande). */
   renameRequestId: string | null;
-  addWorkspace: (cwd: string) => string;
+  /** `name` explicite (sinon basename(cwd)) : « ~ » pour un espace sur $HOME. */
+  addWorkspace: (cwd: string, name?: string) => string;
   addPane: (wsId: string) => boolean;
   closePane: (wsId: string, paneId: string) => void;
   closeWorkspace: (wsId: string) => void;
@@ -139,7 +140,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   toast: null,
   sidebarVisible: true,
   renameRequestId: null,
-  addWorkspace: (cwd) => {
+  addWorkspace: (cwd, name) => {
     const id = uid("ws");
     const color = PALETTE[colorIndex % PALETTE.length];
     colorIndex++;
@@ -147,7 +148,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const ws: Workspace = {
       id,
       cwd,
-      name: basename(cwd),
+      name: name ?? basename(cwd),
       color,
       panes: [paneId],
       activePaneId: paneId,

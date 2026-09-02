@@ -8,3 +8,9 @@ export function abbreviateHome(path: string, home: string): string {
   if (path.startsWith(h + "/")) return "~" + path.slice(h.length);
   return path;
 }
+
+/** Retire le slash final d'un chemin, en préservant la racine « / ».
+    `homeDir()` peut renvoyer "/home/x/" ; le cwd d'un workspace doit rester canonique. */
+export function stripTrailingSlash(path: string): string {
+  return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
+}
