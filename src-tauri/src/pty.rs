@@ -34,6 +34,21 @@ impl PtyRegistry {
     }
 }
 
+/// Construit la commande du shell d'un pane.
+/// TERM/COLORTERM sont déclarés explicitement et non hérités : lancé depuis un
+/// lanceur .desktop, le process de l'app n'a aucun TERM, et un TERM absent fait
+/// tomber dircolors (LS_COLORS vide → `ls` monochrome), git et la plupart des
+/// outils en noir et blanc. xterm.js rend les 256 couleurs et le truecolor.
+fn build_shell_command(shell: &str, cwd: &str, workspace_id: &str, id: PtyId) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(shell);
+    cmd.cwd(cwd);
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERMINIALS_WORKSPACE_ID", workspace_id);
+    cmd.env("TERMINIALS_PTY_ID", id.to_string());
+    cmd
+}
+
 /// Ouvre un PTY, lance `shell` dans `cwd`, enregistre le handle et retourne (id, reader).
 /// Le reader est destiné à un thread lecteur dédié (lectures bloquantes).
 /// Injecte TERMINIALS_WORKSPACE_ID / TERMINIALS_PTY_ID dans l'env du shell : la CLI
@@ -55,10 +70,7 @@ pub fn spawn_pty(
     // L'id est réservé AVANT le spawn (simple compteur atomique) pour pouvoir
     // l'injecter dans l'env du shell. En cas d'échec du spawn, l'id est juste perdu.
     let id = reg.next_id();
-    let mut cmd = CommandBuilder::new(shell);
-    cmd.cwd(cwd);
-    cmd.env("TERMINIALS_WORKSPACE_ID", workspace_id);
-    cmd.env("TERMINIALS_PTY_ID", id.to_string());
+    let cmd = build_shell_command(shell, cwd, workspace_id, id);
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -145,5 +157,43 @@ mod tests {
         // L'écho du terminal contient la forme littérale `$TERMINIALS_…` ; seule la
         // sortie d'echo contient la forme développée `ID=ws-test:<id>`.
         assert!(text.contains(&format!("ID=ws-test:{id}")), "sortie du shell: {text}");
+    }
+
+    #[test]
+    fn shell_command_declares_color_capable_term() {
+        use std::io::Read;
+        // Le builder hérite de l'env du process : on installe un env hostile
+        // (TERM=dumb, aucun COLORTERM) pour vérifier que la déclaration explicite
+        // gagne — sinon le test passerait par simple héritage du TERM du dev.
+        std::env::set_var("TERM", "dumb");
+        std::env::remove_var("COLORTERM");
+        let cmd = build_shell_command("/bin/sh", "/", "ws-test", 7);
+        assert_eq!(cmd.get_env("TERM").unwrap(), "xterm-256color");
+        assert_eq!(cmd.get_env("COLORTERM").unwrap(), "truecolor");
+
+        // Bout en bout : le shell réellement lancé voit bien ces valeurs.
+        let reg = PtyRegistry::new();
+        let (id, mut reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24).unwrap();
+        write_pty(&reg, id, b"echo TERMCHECK=$TERM:$COLORTERM; exit\n").unwrap();
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+            }
+        }
+        let text = String::from_utf8_lossy(&out);
+        assert!(
+            text.contains("TERMCHECK=xterm-256color:truecolor"),
+            "sortie du shell: {text}"
+        );
+    }
+
+    #[test]
+    fn shell_command_injects_workspace_and_pty_ids() {
+        let cmd = build_shell_command("/bin/sh", "/", "ws-test", 7);
+        assert_eq!(cmd.get_env("TERMINIALS_WORKSPACE_ID").unwrap(), "ws-test");
+        assert_eq!(cmd.get_env("TERMINIALS_PTY_ID").unwrap(), "7");
     }
 }
