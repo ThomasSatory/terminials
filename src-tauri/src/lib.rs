@@ -1,3 +1,4 @@
+mod images;
 mod notify;
 mod pty;
 mod socket;
@@ -128,7 +129,8 @@ pub fn run() {
             git_changed_files,
             git_file_diff,
             dir_exists,
-            workspace_ports
+            workspace_ports,
+            images::save_pasted_image
         ])
         .setup(|app| {
             let handle = app.handle().clone();

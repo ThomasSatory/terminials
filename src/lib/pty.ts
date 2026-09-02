@@ -1,5 +1,12 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
 
+/** Écrit des octets dans l'entrée d'un PTY. Exporté à part de `Pty.write` : le drop de
+    fichiers et le collage d'image ciblent un PTY par son id (via `panePtys` du store),
+    sans passer par l'instance créée dans TerminalPane. */
+export function writePty(id: number, data: string): void {
+  void invoke("write_pty", { id, data: Array.from(new TextEncoder().encode(data)) });
+}
+
 export interface Pty {
   id: number;
   write: (data: string) => void;
@@ -23,8 +30,7 @@ export async function spawnPty(
   });
   return {
     id,
-    write: (data) =>
-      void invoke("write_pty", { id, data: Array.from(new TextEncoder().encode(data)) }),
+    write: (data) => writePty(id, data),
     resize: (cols, rows) => void invoke("resize_pty", { id, cols, rows }),
   };
 }

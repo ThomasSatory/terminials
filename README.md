@@ -12,6 +12,7 @@ Le but : rendre le travail des agents *observable*. Sidebar verticale de workspa
 - **Sidebar riche** : branche git (+ indicateur dirty), ports TCP en écoute du sous-arbre de process, répertoire abrégé (`~/…`), dernière notification, status pills et barre de progression. Un clic sur la ligne git ouvre le diff viewer ; `Ctrl+Shift+B` masque la sidebar.
 - **Diff viewer** (`Ctrl+Shift+D`, copie du diff viewer cmux) : colonne « Files » (statut coloré, stats +/− par fichier), diff unifié concaténé avec en-têtes sticky et numéros de ligne, filtre `/`, navigation `j`/`k`/`g g`/`Shift+G`, `Échap` ferme.
 - **Notifications agents** : capture des séquences `OSC 9 / 99 / 777` dans le flux du terminal → **anneau bleu** autour du pane émetteur (signature cmux), rail bleu dans la sidebar, notification desktop D-Bus + demande d'attention de la fenêtre. Aussi déclenchables par la CLI et par un hook Claude Code ; les commandes lancées dans un pane ciblent leur workspace d'origine (`TERMINIALS_WORKSPACE_ID` injecté dans l'environnement du shell).
+- **Images & fichiers dans le prompt de l'agent** : `Ctrl+V` colle une image du presse-papier directement dans Claude Code (qui la lit via `xclip`, cf. Prérequis) ; `Ctrl+Shift+V` avec une image au presse-papier l'écrit dans `$TMPDIR/terminials-images/` et injecte son chemin dans le terminal ; un glisser-déposer de fichiers injecte leurs chemins (quotés) dans le pane survolé. Sans image au presse-papier, `Ctrl+Shift+V` reste le collage texte du terminal.
 - **CLI + socket Unix** (`$XDG_RUNTIME_DIR/terminials.sock`, JSON-par-ligne) pour scripter l'app.
 
 Hors périmètre : onglets/surfaces par pane, navigateur intégré, splits libres redimensionnables, command palette.
@@ -22,6 +23,10 @@ Hors périmètre : onglets/surfaces par pane, navigateur intégré, splits libre
 sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
   libxdo-dev libssl-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
 # Rust : https://rustup.rs   |   Node >= 20.19
+
+# Collage d'images dans Claude Code (Ctrl+V) : il shelle vers xclip pour lire le
+# presse-papier X11. xsel ne suffit pas, Claude Code ne s'en sert que pour le texte.
+sudo apt install -y xclip   # (Wayland : wl-clipboard)
 ```
 
 ## Développement
@@ -83,6 +88,8 @@ Couche `Ctrl+Shift` (convention gnome-terminal), matching par touche physique (`
 | `Échap` | Ferme le diff viewer (quand il est ouvert) |
 
 Conflits assumés : `Ctrl+PageUp/Down` (navigation de fenêtres tmux) et `Ctrl+2..8` (codes de contrôle rarissimes) sont capturés par l'app.
+
+`Ctrl+V` n'est pas un raccourci de l'app : xterm l'envoie tel quel (`\x16`) au PTY, ce qui est exactement ce qu'attend Claude Code pour aller lire l'image du presse-papier avec `xclip`. Le collage d'image sur `Ctrl+Shift+V` ne dévie pas la touche non plus : il se branche sur l'event `paste` et ne s'active que si le presse-papier contient une image.
 
 ## Architecture
 

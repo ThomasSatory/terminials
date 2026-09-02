@@ -1,5 +1,6 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
 import { DiffOverlay } from "./components/DiffOverlay";
@@ -7,6 +8,8 @@ import { useShortcuts } from "./hooks/useShortcuts";
 import { registerSocketEvents } from "./lib/socketEvents";
 import { openFolderDialog } from "./lib/openFolder";
 import { createHomeWorkspace } from "./lib/newWorkspace";
+import { injectPaths } from "./lib/injectFiles";
+import { resolvePaneId, toCssPoint } from "./lib/dropTarget";
 import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
 import "./App.css";
 
@@ -58,6 +61,25 @@ export default function App() {
     })();
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  // Glisser-déposer de fichiers : Tauri consomme le drop OS (dragDropEnabled par
+  // défaut) et émet tauri://drag-drop — l'event `drop` du DOM ne remonte donc jamais.
+  // Les chemins sont écrits, quotés, dans le PTY du pane survolé (Claude Code lit le
+  // fichier). Tous types de fichiers : Claude Code lit aussi bien un .ts qu'un .png.
+  useEffect(() => {
+    const unlisten = getCurrentWebview().onDragDropEvent((event) => {
+      if (event.payload.type !== "drop") return;
+      // position en pixels PHYSIQUES ; elementFromPoint attend des pixels CSS.
+      const { x, y } = toCssPoint(event.payload.position, window.devicePixelRatio);
+      const paneId = resolvePaneId(document.elementFromPoint(x, y) as HTMLElement | null);
+      if (!injectPaths(paneId, event.payload.paths)) {
+        useWorkspaceStore.getState().showToast("aucun terminal cible pour les fichiers déposés");
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
     };
   }, []);
 

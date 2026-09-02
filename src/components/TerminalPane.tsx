@@ -8,6 +8,7 @@ import { spawnPty, closePty, type Pty } from "../lib/pty";
 import { useWorkspaceStore } from "../store/workspace";
 import { matchShortcut } from "../lib/shortcuts";
 import { registerPaneFocus, unregisterPaneFocus } from "../lib/paneFocus";
+import { injectPaths, savePastedImage } from "../lib/injectFiles";
 
 const SHELL = "/bin/bash";
 
@@ -43,6 +44,29 @@ export function TerminalPane({
 
     // Focus programmatique (Alt+flèches via focusPane) : ce pane expose son focus.
     registerPaneFocus(paneId, () => term.focus());
+
+    // Collage d'une image (Ctrl+Shift+V) : xterm ne sait coller que du texte. On écoute
+    // en CAPTURE sur le host, donc avant les listeners xterm — mais on ne dévie que si
+    // le presse-papier contient une image. Sans image, l'event poursuit sa route et le
+    // collage texte reste celui du terminal : la touche n'est jamais interceptée
+    // (invariant « Ctrl+Shift+C/V = copier/coller du terminal », README).
+    const onPaste = (e: ClipboardEvent) => {
+      const files = e.clipboardData?.files;
+      const image = files && Array.from(files).find((f) => f.type.startsWith("image/"));
+      if (!image) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      savePastedImage(image)
+        .then((path) => {
+          if (!injectPaths(paneId, [path])) {
+            useWorkspaceStore.getState().showToast("terminal indisponible pour l'image collée");
+          }
+        })
+        .catch((err) =>
+          useWorkspaceStore.getState().showToast(`échec du collage d'image : ${String(err)}`),
+        );
+    };
+    host.addEventListener("paste", onPaste, true);
 
     // Renderer WebGL avec fallback DOM (xterm 6 : le renderer canvas a été supprimé).
     try {
@@ -112,6 +136,7 @@ export function TerminalPane({
       disposed = true;
       refitRef.current = () => {};
       ro.disconnect();
+      host.removeEventListener("paste", onPaste, true);
       unlistenExit?.();
       if (pty) {
         closePty(pty.id);

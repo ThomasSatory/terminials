@@ -53,6 +53,9 @@ function PaneCell({
   const canClose = ws.panes.length > 1;
   return (
     <div
+      /* Cible du glisser-déposer de fichiers : resolvePaneId remonte jusqu'ici depuis
+         l'élément xterm survolé (cf. lib/dropTarget). */
+      data-pane-id={paneId}
       onMouseDownCapture={() => setActivePane(ws.id, paneId)}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
