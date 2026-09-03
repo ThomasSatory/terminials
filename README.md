@@ -7,7 +7,7 @@ Le but : rendre le travail des agents *observable*. Sidebar verticale de workspa
 ## Fonctionnalités
 
 - **Terminaux** xterm.js (rendu WebGL avec repli DOM) sur PTY natifs (`portable-pty`). Chaque shell reçoit `TERM=xterm-256color` et `COLORTERM=truecolor`, déclarés par l'émulateur et jamais hérités (lancée depuis un raccourci .desktop, l'app n'a aucun `TERM` — et sans `TERM`, dircolors, git & co passent en monochrome). Les workspaces restent montés en arrière-plan : changer de workspace ne tue pas les shells.
-- **Workspaces** : le bouton + de la sidebar (`Ctrl+Shift+N`) crée un espace directement dans `~` ; le bouton 📂 (`Ctrl+Shift+O`) ouvre un dialog GTK natif pour choisir un dossier précis ; la liste des workspaces (dossier, nom, couleur, nombre de terminaux) est restaurée au démarrage (un dossier disparu est ignoré avec un toast).
+- **Workspaces** : chaque espace a un **nom** et un **dossier**, tous deux modifiables. Le bouton + de la sidebar (`Ctrl+Shift+N`) ouvre un formulaire inline *nom + dossier* (le `…` appelle le dialog GTK, dossier vide = `~`, `Entrée` valide, `Échap` annule) ; le bouton 📂 (`Ctrl+Shift+O`) reste le chemin rapide « choisir un dossier ». Sur un espace existant, le même formulaire s'ouvre par double-clic sur le nom, par clic sur sa ligne de chemin `~/…`, ou avec `Ctrl+Shift+R` — changer le dossier **relance les shells** du workspace (`TerminalPane` dépend de `cwd`). Le dossier saisi est validé côté Rust (`dir_exists`) avant création. La liste des workspaces (dossier, nom, couleur, nombre de terminaux) est restaurée au démarrage (un dossier disparu est ignoré avec un toast).
 - **Splits** : grille fixe de 1 à 4 terminaux par workspace (`Ctrl+Shift+T`), focus directionnel `Alt+←→↑↓`.
 - **Sidebar riche** : branche git (+ indicateur dirty), ports TCP en écoute du sous-arbre de process, répertoire abrégé (`~/…`), dernière notification, status pills et barre de progression. Un clic sur la ligne git ouvre le diff viewer ; `Ctrl+Shift+B` masque la sidebar.
 - **Diff viewer** (`Ctrl+Shift+D`, copie du diff viewer cmux) : colonne « Files » (statut coloré, stats +/− par fichier), diff unifié concaténé avec en-têtes sticky et numéros de ligne, filtre `/`, navigation `j`/`k`/`g g`/`Shift+G`, `Échap` ferme.
@@ -74,12 +74,12 @@ Couche `Ctrl+Shift` (convention gnome-terminal), matching par touche physique (`
 
 | Raccourci | Action |
 |---|---|
-| `Ctrl+Shift+N` | Nouvel espace dans `~` (sans dialog) |
+| `Ctrl+Shift+N` | Nouvel espace : formulaire nom + dossier dans la sidebar |
 | `Ctrl+Shift+O` | Ouvrir un dossier (nouveau workspace) |
 | `Ctrl+Shift+T` | Nouveau terminal (pane) |
 | `Ctrl+Shift+W` | Fermer le pane actif |
 | `Ctrl+Shift+Q` | Fermer le workspace actif |
-| `Ctrl+Shift+R` | Renommer le workspace (édition inline) |
+| `Ctrl+Shift+R` | Modifier le nom / le dossier du workspace (édition inline) |
 | `Ctrl+Shift+D` | Ouvrir/fermer le diff viewer |
 | `Ctrl+Shift+B` | Afficher/masquer la sidebar |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Workspace précédent / suivant |

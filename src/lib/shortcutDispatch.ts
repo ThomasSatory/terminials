@@ -1,6 +1,5 @@
 import { closePty } from "./pty";
 import { openFolderDialog } from "./openFolder";
-import { createHomeWorkspace } from "./newWorkspace";
 import { focusPane } from "./paneFocus";
 import { paneNavTarget, type ShortcutAction } from "./shortcuts";
 import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
@@ -20,7 +19,10 @@ export function dispatchShortcut(action: ShortcutAction): void {
       void openFolderDialog();
       return;
     case "new-workspace":
-      void createHomeWorkspace();
+      // Le formulaire nom+dossier vit dans la Sidebar : on la révèle si elle est
+      // masquée (Ctrl+Shift+B), sinon le raccourci n'aurait aucun effet visible.
+      if (!s.sidebarVisible) s.toggleSidebar();
+      s.requestNewWorkspace(true);
       return;
     case "new-pane":
       if (active && !s.addPane(active.id)) s.showToast(`max ${MAX_PANES} terminaux`);
@@ -42,7 +44,10 @@ export function dispatchShortcut(action: ShortcutAction): void {
       return;
     }
     case "rename-workspace":
-      if (active) s.requestRename(active.id);
+      // Même raison que new-workspace : l'édition inline est dans la Sidebar.
+      if (!active) return;
+      if (!s.sidebarVisible) s.toggleSidebar();
+      s.requestRename(active.id);
       return;
     case "toggle-diff":
       // Uniquement si le workspace a un dossier : le diff s'appuie sur git dans cwd.

@@ -5,9 +5,9 @@ import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
 import { DiffOverlay } from "./components/DiffOverlay";
 import { useShortcuts } from "./hooks/useShortcuts";
+import { dispatchShortcut } from "./lib/shortcutDispatch";
 import { registerSocketEvents } from "./lib/socketEvents";
 import { openFolderDialog } from "./lib/openFolder";
-import { createHomeWorkspace } from "./lib/newWorkspace";
 import { injectPaths } from "./lib/injectFiles";
 import { resolvePaneId, toCssPoint } from "./lib/dropTarget";
 import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
@@ -168,7 +168,7 @@ export default function App() {
       {sidebarVisible && <Sidebar />}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {booting ? null : workspaces.length === 0 ? (
-          /* État vide : démarrage direct sur ~, ou choix d'un dossier précis. */
+          /* État vide : formulaire nom+dossier dans la Sidebar, ou dialog natif. */
           <div
             style={{
               flex: 1,
@@ -178,8 +178,13 @@ export default function App() {
               justifyContent: "center",
             }}
           >
-            <button onClick={() => void createHomeWorkspace()} style={EMPTY_BTN}>
-              Nouvel espace ~ (Ctrl+Shift+N)
+            <button
+              // Même chemin que Ctrl+Shift+N : révèle la Sidebar puis y ouvre
+              // le formulaire nom+dossier (masquée, elle ne consommerait pas la demande).
+              onClick={() => dispatchShortcut({ type: "new-workspace" })}
+              style={EMPTY_BTN}
+            >
+              Nouvel espace (Ctrl+Shift+N)
             </button>
             <button onClick={() => void openFolderDialog()} style={EMPTY_BTN}>
               Ouvrir un dossier (Ctrl+Shift+O)

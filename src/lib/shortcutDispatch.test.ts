@@ -3,12 +3,10 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // Mocks des modules à effets de bord (IPC Tauri, dialog natif GTK).
 vi.mock("./pty", () => ({ closePty: vi.fn() }));
 vi.mock("./openFolder", () => ({ openFolderDialog: vi.fn(() => Promise.resolve()) }));
-vi.mock("./newWorkspace", () => ({ createHomeWorkspace: vi.fn(() => Promise.resolve()) }));
 
 import { dispatchShortcut } from "./shortcutDispatch";
 import { closePty } from "./pty";
 import { openFolderDialog } from "./openFolder";
-import { createHomeWorkspace } from "./newWorkspace";
 import { registerPaneFocus, unregisterPaneFocus } from "./paneFocus";
 import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
 
@@ -26,10 +24,23 @@ describe("dispatchShortcut", () => {
     expect(openFolderDialog).toHaveBeenCalledTimes(1);
   });
 
-  it("new-workspace crée un espace sur ~ sans passer par le dialog", () => {
+  it("new-workspace demande le formulaire nom+dossier sans créer de workspace", () => {
     dispatchShortcut({ type: "new-workspace" });
-    expect(createHomeWorkspace).toHaveBeenCalledTimes(1);
+    expect(store().newWorkspaceRequested).toBe(true);
+    expect(store().workspaces).toHaveLength(0);
     expect(openFolderDialog).not.toHaveBeenCalled();
+  });
+
+  it("new-workspace et rename-workspace révèlent la sidebar masquée", () => {
+    store().toggleSidebar();
+    dispatchShortcut({ type: "new-workspace" });
+    expect(store().sidebarVisible).toBe(true);
+
+    store().toggleSidebar();
+    const id = store().addWorkspace("/a");
+    dispatchShortcut({ type: "rename-workspace" });
+    expect(store().sidebarVisible).toBe(true);
+    expect(store().renameRequestId).toBe(id);
   });
 
   it("new-pane ajoute un pane au workspace actif, toast à MAX_PANES", () => {

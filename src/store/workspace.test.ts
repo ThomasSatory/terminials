@@ -106,6 +106,29 @@ describe("workspace store", () => {
     expect(ws(id).name).toBe("tmp");
   });
 
+  it("setCwd change le dossier sans toucher au nom, slash final retiré", () => {
+    const id = store().addWorkspace("/tmp", "agent");
+    store().setCwd(id, "/srv/app/");
+    expect(ws(id).cwd).toBe("/srv/app");
+    expect(ws(id).name).toBe("agent");
+  });
+
+  it("setCwd puis renameWorkspace(\"\") retombe sur le basename du NOUVEAU dossier", () => {
+    const id = store().addWorkspace("/tmp");
+    store().setCwd(id, "/srv/app");
+    store().renameWorkspace(id, "");
+    expect(ws(id).name).toBe("app");
+  });
+
+  it("setCwd ne touche que le workspace visé, et pas ses panes", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    const panes = ws(a).panes;
+    store().setCwd(a, "/c");
+    expect(ws(a).panes).toEqual(panes);
+    expect(ws(b).cwd).toBe("/b");
+  });
+
   it("change la couleur d'un workspace", () => {
     const id = store().addWorkspace("/tmp");
     store().setColor(id, "#123456");
@@ -224,12 +247,23 @@ describe("workspace store", () => {
     expect(store().renameRequestId).toBeNull();
   });
 
-  it("reset restaure sidebarVisible et renameRequestId", () => {
+  it("requestNewWorkspace pose et efface la demande sans rien créer", () => {
+    expect(store().newWorkspaceRequested).toBe(false);
+    store().requestNewWorkspace(true);
+    expect(store().newWorkspaceRequested).toBe(true);
+    expect(store().workspaces).toHaveLength(0);
+    store().requestNewWorkspace(false);
+    expect(store().newWorkspaceRequested).toBe(false);
+  });
+
+  it("reset restaure sidebarVisible, renameRequestId et newWorkspaceRequested", () => {
     store().toggleSidebar();
     store().requestRename("ws:0");
+    store().requestNewWorkspace(true);
     store().reset();
     expect(store().sidebarVisible).toBe(true);
     expect(store().renameRequestId).toBeNull();
+    expect(store().newWorkspaceRequested).toBe(false);
   });
 
   it("closeWorkspace du ws actif du milieu active le voisin précédent", () => {
@@ -322,6 +356,12 @@ describe("persistance v2", () => {
     store().renameWorkspace(id, "agent");
     store().setColor(id, "#123456");
     expect(saved()[0]).toEqual({ cwd: "/a", name: "agent", color: "#123456", paneCount: 1 });
+  });
+
+  it("setCwd réécrit la sauvegarde", () => {
+    const id = store().addWorkspace("/a", "agent");
+    store().setCwd(id, "/b");
+    expect(saved()[0].cwd).toBe("/b");
   });
 
   it("closeWorkspace retire l'entrée persistée", () => {

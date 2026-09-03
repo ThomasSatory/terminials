@@ -49,6 +49,16 @@ body {
   color: #ccc;
 }
 
+/* Variante compacte : boutons … / ✓ du formulaire nom+dossier de la Sidebar,
+   qui doivent tenir sur la ligne du champ dossier (240px de sidebar). */
+.icon-btn-sm {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
 /* ---- Diff viewer : overlay au-dessus de la zone de grille (spec §4) ---- */
 .diff-overlay {
   position: absolute;

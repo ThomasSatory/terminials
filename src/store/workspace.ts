@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { PALETTE, basename } from "../lib/palette";
+import { stripTrailingSlash } from "../lib/paths";
 
 export interface Notification {
   title: string;
@@ -41,8 +42,10 @@ interface WorkspaceState {
   toast: string | null;
   /** Sidebar visible (toggle Ctrl+Shift+B). */
   sidebarVisible: boolean;
-  /** Workspace dont la Sidebar doit ouvrir l'édition inline du nom (null = aucune demande). */
+  /** Workspace dont la Sidebar doit ouvrir l'édition inline nom+dossier (null = aucune demande). */
   renameRequestId: string | null;
+  /** Demande d'ouverture du formulaire de création dans la Sidebar (consommée par elle). */
+  newWorkspaceRequested: boolean;
   /** `name` explicite (sinon basename(cwd)) : « ~ » pour un espace sur $HOME. */
   addWorkspace: (cwd: string, name?: string) => string;
   addPane: (wsId: string) => boolean;
@@ -50,6 +53,8 @@ interface WorkspaceState {
   closeWorkspace: (wsId: string) => void;
   setActivePane: (wsId: string, paneId: string) => void;
   renameWorkspace: (wsId: string, name: string) => void;
+  /** Change le dossier d'un workspace : ses panes respawnent (TerminalPane dépend de cwd). */
+  setCwd: (wsId: string, cwd: string) => void;
   setColor: (wsId: string, color: string) => void;
   setNotification: (wsId: string, n: Notification, paneId?: string) => void;
   setActive: (wsId: string) => void;
@@ -62,6 +67,7 @@ interface WorkspaceState {
   toggleDiff: (wsId: string) => void;
   toggleSidebar: () => void;
   requestRename: (wsId: string | null) => void;
+  requestNewWorkspace: (requested: boolean) => void;
   restoreWorkspaces: (entries: SavedWorkspace[]) => void;
   showToast: (msg: string) => void;
   clearToast: () => void;
@@ -140,6 +146,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   toast: null,
   sidebarVisible: true,
   renameRequestId: null,
+  newWorkspaceRequested: false,
   addWorkspace: (cwd, name) => {
     const id = uid("ws");
     const color = PALETTE[colorIndex % PALETTE.length];
@@ -229,6 +236,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }));
     persistWorkspaces(get().workspaces);
   },
+  setCwd: (wsId, cwd) => {
+    const next = stripTrailingSlash(cwd);
+    set((s) => ({
+      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, cwd: next } : w)),
+    }));
+    persistWorkspaces(get().workspaces);
+  },
   setColor: (wsId, color) => {
     set((s) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, color } : w)),
@@ -285,6 +299,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })),
   toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
   requestRename: (wsId) => set({ renameRequestId: wsId }),
+  requestNewWorkspace: (requested) => set({ newWorkspaceRequested: requested }),
   restoreWorkspaces: (entries) => {
     const restored = entries.map((e): Workspace => {
       // paneCount vient du disque : clamp défensif dans [1, MAX_PANES] (la grille fixe a 4 cellules)
@@ -326,6 +341,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       toast: null,
       sidebarVisible: true,
       renameRequestId: null,
+      newWorkspaceRequested: false,
     });
   },
 }));

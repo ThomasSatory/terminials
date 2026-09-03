@@ -1,11 +1,11 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { homeDir } from "@tauri-apps/api/path";
 import { useWorkspaceStore, hasAttention } from "../store/workspace";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 import { abbreviateHome } from "../lib/paths";
 import { openFolderDialog } from "../lib/openFolder";
-import { createHomeWorkspace } from "../lib/newWorkspace";
 import { closePty } from "../lib/pty";
+import { WorkspaceForm } from "./WorkspaceForm";
 
 /** Métadonnées git/ports condensées en une ligne discrète : `branch • · :ports`.
    Le `•` (dirty) et les ports sont optionnels ; hors repo, renvoie "". */
@@ -17,13 +17,33 @@ function metaLine(branch: string | undefined, dirty: boolean | undefined, ports:
 }
 
 export function Sidebar() {
-  const { workspaces, activeId, setActive, toggleDiff, closeWorkspace, panePtys, renameWorkspace, setColor } =
-    useWorkspaceStore();
+  const {
+    workspaces,
+    activeId,
+    setActive,
+    toggleDiff,
+    closeWorkspace,
+    panePtys,
+    renameWorkspace,
+    setCwd,
+    setColor,
+    addWorkspace,
+  } = useWorkspaceStore();
+  // Workspace en cours d'édition (nom + dossier) et champ à focus à l'ouverture.
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [draft, setDraft] = useState("");
+  const [focusField, setFocusField] = useState<"name" | "folder">("name");
+  // Formulaire de création ouvert en bas de liste (aucun workspace créé tant
+  // qu'il n'est pas validé : le + ne crée plus silencieusement sur ~).
+  const [creating, setCreating] = useState(false);
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
-  const blurShouldCommit = useRef(true);
+
+  const openEdit = (wsId: string, field: "name" | "folder") => {
+    setCreating(false);
+    setPaletteFor(null);
+    setFocusField(field);
+    setEditingId(wsId);
+  };
 
   // Home résolu une fois via Tauri ; tant qu'il est vide, abbreviateHome est un no-op.
   const [home, setHome] = useState("");
@@ -40,14 +60,20 @@ export function Sidebar() {
   const renameRequestId = useWorkspaceStore((s) => s.renameRequestId);
   useEffect(() => {
     if (!renameRequestId) return;
-    const w = workspaces.find((x) => x.id === renameRequestId);
-    if (w) {
-      setDraft(w.name);
-      setPaletteFor(null);
-      setEditingId(w.id);
-    }
+    if (workspaces.some((x) => x.id === renameRequestId)) openEdit(renameRequestId, "name");
     useWorkspaceStore.getState().requestRename(null);
   }, [renameRequestId]);
+
+  // Ctrl+Shift+N (et le bouton de l'état vide) : même protocole de demande
+  // consommée que le renommage, le formulaire de création vivant ici.
+  const newWorkspaceRequested = useWorkspaceStore((s) => s.newWorkspaceRequested);
+  useEffect(() => {
+    if (!newWorkspaceRequested) return;
+    setEditingId(null);
+    setPaletteFor(null);
+    setCreating(true);
+    useWorkspaceStore.getState().requestNewWorkspace(false);
+  }, [newWorkspaceRequested]);
 
   return (
     <div
@@ -76,7 +102,13 @@ export function Sidebar() {
             borderLeft: `3px solid ${hasAttention(w) ? ATTENTION_COLOR : "transparent"}`,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: editingId === w.id ? "flex-start" : "center",
+              gap: 7,
+            }}
+          >
             <span
               onClick={(e) => {
                 e.stopPropagation();
@@ -94,44 +126,34 @@ export function Sidebar() {
               }}
             />
             {editingId === w.id ? (
-              <input
-                autoFocus
-                onFocus={(e) => e.target.select()}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                onBlur={() => {
-                  if (blurShouldCommit.current) renameWorkspace(w.id, draft);
-                  blurShouldCommit.current = true;
+              <WorkspaceForm
+                // Remonte quand le champ ciblé change (nom → dossier) : autoFocus
+                // ne refire pas sur une instance déjà montée.
+                key={focusField}
+                initialName={w.name}
+                initialFolder={w.cwd}
+                home={home}
+                focusField={focusField}
+                onCommit={(r) => {
+                  // Ordre important : le dossier d'abord, pour que le fallback
+                  // « nom vide → basename(cwd) » de renameWorkspace porte sur le
+                  // NOUVEAU dossier. Changer cwd respawn les panes (TerminalPane).
+                  if (r.cwd !== w.cwd) {
+                    setCwd(w.id, r.cwd);
+                    useWorkspaceStore.getState().showToast("dossier changé — terminaux relancés");
+                  }
+                  renameWorkspace(w.id, r.name ?? "");
                   setEditingId(null);
                 }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    renameWorkspace(w.id, draft);
-                    blurShouldCommit.current = false;
-                    setEditingId(null);
-                  } else if (e.key === "Escape") {
-                    blurShouldCommit.current = false;
-                    setEditingId(null);
-                  }
-                }}
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  background: "#111",
-                  color: "#eee",
-                  border: "1px solid #444",
-                  font: "inherit",
-                }}
+                onCancel={() => setEditingId(null)}
               />
             ) : (
               <span
                 onDoubleClick={(e) => {
                   e.stopPropagation();
-                  setDraft(w.name);
-                  setPaletteFor(null);
-                  setEditingId(w.id);
+                  openEdit(w.id, "name");
                 }}
+                title="Renommer (double-clic, Ctrl+Shift+R)"
                 style={{
                   flex: 1,
                   minWidth: 0,
@@ -218,11 +240,20 @@ export function Sidebar() {
             </div>
           )}
           <div
+            onClick={(e) => {
+              // Seule affordance visible pour changer le dossier d'un workspace
+              // déjà créé : le chemin lui-même ouvre le formulaire sur ce champ.
+              e.stopPropagation();
+              setActive(w.id);
+              openEdit(w.id, "folder");
+            }}
+            title="Changer le dossier"
             style={{
               fontSize: 11,
               color: "#6f6f6f",
               marginLeft: 17,
               marginTop: 2,
+              cursor: "pointer",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -260,11 +291,27 @@ export function Sidebar() {
         </div>
       ))}
 
+      {creating && (
+        <div style={{ display: "flex", padding: "7px 10px", margin: "1px 6px" }}>
+          <WorkspaceForm
+            initialName=""
+            initialFolder=""
+            home={home}
+            focusField="name"
+            onCommit={(r) => {
+              addWorkspace(r.cwd, r.name);
+              setCreating(false);
+            }}
+            onCancel={() => setCreating(false)}
+          />
+        </div>
+      )}
+
       <div style={{ marginTop: "auto", padding: "6px 10px", display: "flex", gap: 6 }}>
         <button
           className="icon-btn"
-          onClick={() => void createHomeWorkspace()}
-          title="Nouvel espace dans ~ (Ctrl+Shift+N)"
+          onClick={() => setCreating(true)}
+          title="Nouvel espace : nom + dossier (Ctrl+Shift+N)"
         >
           +
         </button>
