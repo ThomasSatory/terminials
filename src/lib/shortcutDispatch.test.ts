@@ -107,6 +107,29 @@ describe("dispatchShortcut", () => {
     expect(store().activeId).toBe(b);
   });
 
+  it("move-workspace déplace le workspace actif dans la liste", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    const c = store().addWorkspace("/c");
+    store().setActive(b);
+    dispatchShortcut({ type: "move-workspace", dir: "up" });
+    expect(store().workspaces.map((w) => w.id)).toEqual([b, a, c]);
+    dispatchShortcut({ type: "move-workspace", dir: "down" });
+    expect(store().workspaces.map((w) => w.id)).toEqual([a, b, c]);
+    expect(store().activeId).toBe(b); // déplacer ne change pas le workspace actif
+  });
+
+  it("move-workspace aux extrémités est un no-op (pas de wrap, contrairement à prev/next)", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    store().setActive(a);
+    dispatchShortcut({ type: "move-workspace", dir: "up" });
+    expect(store().workspaces.map((w) => w.id)).toEqual([a, b]);
+    store().setActive(b);
+    dispatchShortcut({ type: "move-workspace", dir: "down" });
+    expect(store().workspaces.map((w) => w.id)).toEqual([a, b]);
+  });
+
   it("select-workspace cible l'index du tableau, hors bornes = no-op", () => {
     const a = store().addWorkspace("/a");
     const b = store().addWorkspace("/b"); // actif = b

@@ -72,6 +72,19 @@ describe("matchShortcut — navigation de workspaces", () => {
     expect(matchShortcut(c("Digit9"))).toEqual({ type: "select-workspace", index: 8 });
   });
 
+  it("Ctrl+Shift+ArrowUp / ArrowDown → déplacement du workspace actif", () => {
+    expect(matchShortcut(cs("ArrowUp"))).toEqual({ type: "move-workspace", dir: "up" });
+    expect(matchShortcut(cs("ArrowDown"))).toEqual({ type: "move-workspace", dir: "down" });
+  });
+
+  it("les flèches verticales sans Ctrl+Shift ne déplacent rien", () => {
+    // Ctrl seul et Shift seul restent au shell (readline, sélection) ; Alt+flèches
+    // sont déjà le focus directionnel de pane.
+    expect(matchShortcut(c("ArrowUp"))).toBeNull();
+    expect(matchShortcut(k("ArrowDown", { shiftKey: true }))).toBeNull();
+    expect(matchShortcut(a("ArrowUp"))).toEqual({ type: "focus-pane", dir: "up" });
+  });
+
   it("Ctrl+Digit0, Ctrl+Shift+Digit1, Digit1 nu → null", () => {
     expect(matchShortcut(c("Digit0"))).toBeNull();
     expect(matchShortcut(cs("Digit1"))).toBeNull();

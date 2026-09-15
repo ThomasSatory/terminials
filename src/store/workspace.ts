@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { PALETTE, basename } from "../lib/palette";
 import { stripTrailingSlash } from "../lib/paths";
+import { moveItem } from "../lib/reorder";
 
 export interface Notification {
   title: string;
@@ -51,6 +52,8 @@ interface WorkspaceState {
   addPane: (wsId: string) => boolean;
   closePane: (wsId: string, paneId: string) => void;
   closeWorkspace: (wsId: string) => void;
+  /** Réordonne la sidebar : place le workspace `wsId` à l'index `toIndex`. */
+  moveWorkspace: (wsId: string, toIndex: number) => void;
   setActivePane: (wsId: string, paneId: string) => void;
   renameWorkspace: (wsId: string, name: string) => void;
   /** Change le dossier d'un workspace : ses panes respawnent (TerminalPane dépend de cwd). */
@@ -213,6 +216,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           : s.activeId;
       return { workspaces, panePtys, activeId };
     });
+    persistWorkspaces(get().workspaces);
+  },
+  moveWorkspace: (wsId, toIndex) => {
+    set((s) => {
+      const from = s.workspaces.findIndex((w) => w.id === wsId);
+      if (from === -1) return {}; // workspace fermé entre le pointerdown et le pointerup
+      // moveItem renvoie la même référence sur un no-op (index identique ou hors
+      // bornes) : on n'écrit alors pas le store, donc pas de re-render.
+      const workspaces = moveItem(s.workspaces, from, toIndex);
+      return workspaces === s.workspaces ? {} : { workspaces };
+    });
+    // Réordonner ne touche pas activeId : déplacer un workspace ne l'active pas.
     persistWorkspaces(get().workspaces);
   },
   setActivePane: (wsId, paneId) =>

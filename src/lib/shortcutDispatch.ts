@@ -68,6 +68,17 @@ export function dispatchShortcut(action: ShortcutAction): void {
       s.setActive(next.id);
       return;
     }
+    case "move-workspace": {
+      // Réordonnancement, PAS de la navigation : pas de wrap-around (contrairement
+      // à prev/next-workspace) — téléporter un workspace d'un bout à l'autre de la
+      // liste sur une frappe de trop serait désagréable.
+      if (!active) return;
+      const idx = s.workspaces.indexOf(active);
+      const target = idx + (action.dir === "up" ? -1 : 1);
+      if (target < 0 || target >= s.workspaces.length) return;
+      s.moveWorkspace(active.id, target);
+      return;
+    }
     case "select-workspace": {
       const target = s.workspaces[action.index];
       if (target) s.setActive(target.id);

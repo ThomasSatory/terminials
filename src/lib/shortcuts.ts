@@ -15,6 +15,7 @@ export type ShortcutAction =
   | { type: "toggle-sidebar" }
   | { type: "prev-workspace" }
   | { type: "next-workspace" }
+  | { type: "move-workspace"; dir: "up" | "down" } // réordonne, ne navigue pas
   | { type: "select-workspace"; index: number } // 0-based, Digit1..Digit9
   | { type: "focus-pane"; dir: "left" | "right" | "up" | "down" };
 
@@ -26,8 +27,10 @@ export interface KeyLike {
   altKey: boolean;
 }
 
-/** Couche Ctrl+Shift+lettre (convention gnome-terminal). KeyC et KeyV sont
- *  volontairement ABSENTS : Ctrl+Shift+C/V = copier/coller du terminal. */
+/** Couche Ctrl+Shift (convention gnome-terminal), indexée par `code` physique.
+ *  KeyC et KeyV sont volontairement ABSENTS : Ctrl+Shift+C/V = copier/coller
+ *  du terminal. Les flèches verticales y côtoient les lettres : elles déplacent
+ *  le workspace actif dans la sidebar (Alt+flèches, elles, focusent un pane). */
 const CTRL_SHIFT: Record<string, ShortcutAction> = {
   KeyO: { type: "open-folder" },
   KeyN: { type: "new-workspace" }, // nouvel espace direct sur ~, sans dialog
@@ -37,6 +40,8 @@ const CTRL_SHIFT: Record<string, ShortcutAction> = {
   KeyR: { type: "rename-workspace" },
   KeyD: { type: "toggle-diff" },
   KeyB: { type: "toggle-sidebar" },
+  ArrowUp: { type: "move-workspace", dir: "up" },
+  ArrowDown: { type: "move-workspace", dir: "down" },
 };
 
 /**

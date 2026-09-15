@@ -320,6 +320,49 @@ describe("workspace store", () => {
   });
 });
 
+describe("moveWorkspace", () => {
+  beforeEach(() => store().reset());
+
+  it("déplace un workspace à l'index demandé", () => {
+    const a = store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    store().addWorkspace("/c");
+    store().moveWorkspace(a, 2);
+    expect(store().workspaces.map((w) => w.cwd)).toEqual(["/b", "/c", "/a"]);
+  });
+
+  it("remonte un workspace en tête", () => {
+    store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    const c = store().addWorkspace("/c");
+    store().moveWorkspace(c, 0);
+    expect(store().workspaces.map((w) => w.cwd)).toEqual(["/c", "/a", "/b"]);
+  });
+
+  it("déplacer n'active pas : activeId est préservé", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    store().setActive(a);
+    store().moveWorkspace(b, 0);
+    expect(store().activeId).toBe(a);
+  });
+
+  it("id inconnu → no-op", () => {
+    store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    store().moveWorkspace("ws:inexistant", 0);
+    expect(store().workspaces.map((w) => w.cwd)).toEqual(["/a", "/b"]);
+  });
+
+  it("index hors bornes → no-op (jamais de trou dans la liste)", () => {
+    const a = store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    store().moveWorkspace(a, 5);
+    store().moveWorkspace(a, -1);
+    expect(store().workspaces.map((w) => w.cwd)).toEqual(["/a", "/b"]);
+  });
+});
+
 describe("persistance v2", () => {
   const V2_KEY = "terminials:workspaces:v2";
   const saved = (): SavedWorkspace[] =>
@@ -362,6 +405,13 @@ describe("persistance v2", () => {
     const id = store().addWorkspace("/a", "agent");
     store().setCwd(id, "/b");
     expect(saved()[0].cwd).toBe("/b");
+  });
+
+  it("moveWorkspace réécrit l'ordre persisté (l'ordre survit au redémarrage)", () => {
+    const a = store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    store().moveWorkspace(a, 1);
+    expect(saved().map((e) => e.cwd)).toEqual(["/b", "/a"]);
   });
 
   it("closeWorkspace retire l'entrée persistée", () => {
