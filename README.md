@@ -7,9 +7,9 @@ Le but : rendre le travail des agents *observable*. Sidebar verticale de workspa
 ## Fonctionnalités
 
 - **Terminaux** xterm.js (rendu WebGL avec repli DOM) sur PTY natifs (`portable-pty`). Chaque shell reçoit `TERM=xterm-256color` et `COLORTERM=truecolor`, déclarés par l'émulateur et jamais hérités (lancée depuis un raccourci .desktop, l'app n'a aucun `TERM` — et sans `TERM`, dircolors, git & co passent en monochrome). Les workspaces restent montés en arrière-plan : changer de workspace ne tue pas les shells.
-- **Workspaces** : chaque espace a un **nom** et un **dossier**, tous deux modifiables. Le bouton + de la sidebar (`Ctrl+Shift+N`) ouvre un formulaire inline *nom + dossier* (le `…` appelle le dialog GTK, dossier vide = `~`, `Entrée` valide, `Échap` annule) ; le bouton 📂 (`Ctrl+Shift+O`) reste le chemin rapide « choisir un dossier ». Sur un espace existant, le même formulaire s'ouvre par double-clic sur le nom, par clic sur sa ligne de chemin `~/…`, ou avec `Ctrl+Shift+R` — changer le dossier **relance les shells** du workspace (`TerminalPane` dépend de `cwd`). Le dossier saisi est validé côté Rust (`dir_exists`) avant création. La liste des workspaces (dossier, nom, couleur, nombre de terminaux) est restaurée au démarrage (un dossier disparu est ignoré avec un toast).
+- **Workspaces** : chaque espace a un **nom** et un **dossier**, tous deux modifiables. Le bouton + de la sidebar (`Ctrl+Shift+N`) ouvre un formulaire inline *nom + dossier* (le `…` appelle le dialog GTK, dossier vide = `~`, `Entrée` valide, `Échap` annule) ; le bouton 📂 (`Ctrl+Shift+O`) reste le chemin rapide « choisir un dossier ». Sur un espace existant, le même formulaire s'ouvre par le bouton **✎** de la pile d'actions (révélée au survol de la ligne, sous le `×`) ou avec `Ctrl+Shift+R` — jamais au clic ni au double-clic sur la ligne, pour ne pas surgir à chaque fois qu'on sélectionne un espace — changer le dossier **relance les shells** du workspace (`TerminalPane` dépend de `cwd`). Le dossier saisi est validé côté Rust (`dir_exists`) avant création. La liste des workspaces (dossier, nom, couleur, nombre de terminaux) est restaurée au démarrage (un dossier disparu est ignoré avec un toast).
 - **Splits** : grille fixe de 1 à 4 terminaux par workspace (`Ctrl+Shift+T`), focus directionnel `Alt+←→↑↓`.
-- **Sidebar riche** : branche git (+ indicateur dirty), ports TCP en écoute du sous-arbre de process, répertoire abrégé (`~/…`), dernière notification, status pills et barre de progression. Un clic sur la ligne git ouvre le diff viewer ; `Ctrl+Shift+B` masque la sidebar.
+- **Sidebar riche** : branche git (+ indicateur dirty), ports TCP en écoute du sous-arbre de process, répertoire abrégé (`~/…`), dernière notification, status pills et barre de progression. Un clic sur la ligne git ouvre le diff viewer ; `Ctrl+Shift+B` masque la sidebar. Une **pastille bleue** s'allume sur la ligne quand un agent du workspace a notifié (session Claude terminée via le hook `Stop`, ou en attente d'une entrée) et s'éteint à l'activation du workspace — ou, pour une notification émise par un pane précis (OSC), au focus de ce pane. Les workspaces se **réordonnent au glisser-déposer** (appui n'importe où sur la ligne, un trait indique la position de dépôt) ou avec `Ctrl+Shift+↑/↓` ; l'ordre est persisté.
 - **Diff viewer** (`Ctrl+Shift+D`, copie du diff viewer cmux) : colonne « Files » (statut coloré, stats +/− par fichier), diff unifié concaténé avec en-têtes sticky et numéros de ligne, filtre `/`, navigation `j`/`k`/`g g`/`Shift+G`, `Échap` ferme.
 - **Notifications agents** : capture des séquences `OSC 9 / 99 / 777` dans le flux du terminal → **anneau bleu** autour du pane émetteur (signature cmux), rail bleu dans la sidebar, notification desktop D-Bus + demande d'attention de la fenêtre. Aussi déclenchables par la CLI et par un hook Claude Code ; les commandes lancées dans un pane ciblent leur workspace d'origine (`TERMINIALS_WORKSPACE_ID` injecté dans l'environnement du shell).
 - **Images & fichiers dans le prompt de l'agent** : `Ctrl+V` colle une image du presse-papier directement dans Claude Code (qui la lit via `xclip`, cf. Prérequis) ; `Ctrl+Shift+V` avec une image au presse-papier l'écrit dans `$TMPDIR/terminials-images/` et injecte son chemin dans le terminal ; un glisser-déposer de fichiers injecte leurs chemins (quotés) dans le pane survolé. Sans image au presse-papier, `Ctrl+Shift+V` reste le collage texte du terminal.
@@ -28,6 +28,125 @@ sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential cur
 # presse-papier X11. xsel ne suffit pas, Claude Code ne s'en sert que pour le texte.
 sudo apt install -y xclip   # (Wayland : wl-clipboard)
 ```
+
+## Installation par Claude Code
+
+Sur une machine Linux (ou WSL2) vierge, ouvrir Claude Code dans un dossier de travail et lui coller
+ce prompt — il fait l'installation complète de bout en bout :
+
+````text
+Installe l'application terminials (https://github.com/ThomasSatory/terminials.git — ou le dossier local si le
+dépôt est déjà cloné ici) sur cette machine Linux. Suis cette procédure, vérifie chaque étape avant
+de passer à la suivante, et arrête-toi en me disant ce qui bloque si une commande échoue.
+
+1. Diagnostic de l'environnement
+   - Affiche `uname -a`, la distribution (`lsb_release -a` ou /etc/os-release), et dis-moi si on est
+     sous WSL (`grep -qi microsoft /proc/version`).
+   - Si ce n'est PAS une distribution Debian/Ubuntu, adapte les commandes apt au gestionnaire de
+     paquets local (dnf, pacman…) en gardant les mêmes paquets équivalents.
+   - Si on est sur Windows natif (pas WSL) : STOP, l'app ne compile pas sur Windows natif
+     (socket Unix, /proc, shell /bin/bash). Dis-le-moi et propose WSL2.
+
+2. Dépendances système
+   sudo apt update && sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+     libxdo-dev libssl-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev git xclip
+   (sous Wayland, installe aussi wl-clipboard ; xclip sert à Claude Code pour lire les images du
+   presse-papier, xsel ne suffit pas)
+
+3. Toolchains
+   - Rust : si `cargo --version` échoue, installe via rustup (https://rustup.rs, non interactif :
+     `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y`) puis source
+     ~/.cargo/env.
+   - Node >= 20.19 : vérifie `node -v`. S'il est trop vieux ou absent, installe-le (nvm ou nodesource),
+     ne casse pas une install Node existante du système.
+
+4. Récupération et build
+   - Clone le dépôt (ou place-toi dans le clone existant), puis `npm install`.
+   - Build : `npm run tauri build`.
+     ATTENTION : jamais `cargo build --release` seul — seul le CLI Tauri exécute `npm run build` et
+     embarque dist/ dans le binaire ; un cargo build nu produit une fenêtre blanche.
+   - Build du CLI : `./scripts/install-cli.sh` (symlinke `terminials` dans ~/.local/bin).
+
+5. Installation
+   - Symlinke la GUI : `ln -sf "$PWD/target/release/terminials-app" ~/.local/bin/terminials-app`.
+     (`terminials-app` = l'application graphique, `terminials` = la CLI de pilotage — ne pas les
+     confondre.)
+   - Vérifie que ~/.local/bin est dans le PATH, ajoute-le au ~/.bashrc ou ~/.zshrc sinon.
+   - Crée le lanceur ~/.local/share/applications/terminials.desktop :
+       [Desktop Entry]
+       Type=Application
+       Name=terminials
+       Comment=Terminal pour agents de code en parallèle
+       Exec=<chemin absolu de ~/.local/bin/terminials-app>
+       Icon=<chemin absolu du dépôt>/src-tauri/icons/128x128.png
+       Terminal=false
+       Categories=Development;System;TerminalEmulator;
+       StartupNotify=true
+     puis `update-desktop-database ~/.local/share/applications` si la commande existe.
+   - Installe le hook Claude Code : `terminials hooks setup`, et dis-moi quoi ajouter dans
+     ~/.claude/settings.json pour le brancher sur les events Stop et Notification.
+
+6. Si on est sous WSL2
+   - Vérifie que WSLg est actif (`echo $DISPLAY` non vide, ou /mnt/wslg existe). Sinon, dis-moi de
+     faire `wsl --update` côté Windows.
+   - Si la fenêtre de l'app reste blanche, exporte `WEBKIT_DISABLE_DMABUF_RENDERER=1` (et au besoin
+     `WEBKIT_DISABLE_COMPOSITING_MODE=1`) dans le ~/.bashrc, et mets-le aussi dans l'Exec= du .desktop
+     via `env WEBKIT_DISABLE_DMABUF_RENDERER=1 <binaire>`.
+   - Préviens-moi que les dépôts doivent vivre dans le système de fichiers WSL (~/dev/...) et jamais
+     sous /mnt/c : la sonde git dirty y devient catastrophiquement lente.
+
+7. Vérification finale — ne me dis pas que c'est installé sans avoir exécuté ces contrôles :
+   - `cargo test --workspace` et `npm run test` passent.
+   - `ls -l ~/.local/bin/terminials ~/.local/bin/terminials-app` et `terminials --help` répondent.
+   - Lance `terminials-app` en arrière-plan, attends 5 s, puis `terminials ping` doit répondre pong
+     (ça prouve que le socket $XDG_RUNTIME_DIR/terminials.sock est bien servi). Tue le process ensuite.
+   - Fais-moi un récapitulatif : ce qui est installé, où, et ce qui reste à faire manuellement.
+````
+
+## Plateformes
+
+| Cible | État | Détail |
+|---|---|---|
+| **Linux natif** (X11 / Wayland) | ✅ supporté | Cible de développement. |
+| **Windows + WSL2** (WSLg) | ⚠️ utilisable, dégradé | C'est le build Linux tel quel — voir réserves ci-dessous. |
+| **Windows natif** | ❌ ne compile pas | Blocages structurels, voir ci-dessous. |
+
+### Windows + WSL2
+
+L'app tourne sous WSL2 avec WSLg (Windows 11, ou Windows 10 21H2+ après `wsl --update`) : PTY,
+`/proc` pour les ports, socket Unix dans `$XDG_RUNTIME_DIR`, `git`, `xclip` via le pont
+presse-papier WSLg — tout est là. Les réserves :
+
+- **Fenêtre blanche** : le renderer DMABUF de webkit2gtk ≥ 2.44 ne fonctionne pas sous WSLg ; lancer
+  avec `WEBKIT_DISABLE_DMABUF_RENDERER=1` (et au besoin `WEBKIT_DISABLE_COMPOSITING_MODE=1`).
+- **Notifications desktop** : WSLg ne fait pas tourner de démon de notifications ; les appels D-Bus
+  de `notify-rust` échouent silencieusement. L'anneau bleu autour du pane et la pastille de la
+  sidebar continuent de fonctionner — seul le toast système manque (installer `dunst` ou équivalent
+  dans la distro pour le récupérer).
+- **Performance git** : ne jamais placer les dépôts sous `/mnt/c` (9P). La sonde dirty (`git status`)
+  y devient inutilisable. Les dépôts vivent dans le système de fichiers WSL (`~/dev/…`).
+- **Rendu** : GPU émulé (Mesa/D3D12) ; l'addon WebGL de xterm.js peut retomber sur le rendu DOM.
+
+### Windows natif — ce qui bloque
+
+Trois fichiers empêchent la compilation, et aucun usage unix du dépôt n'est protégé par un `#[cfg]` :
+
+- `src-tauri/src/socket.rs` et `crates/cli/src/lib.rs` : sockets Unix (`tokio::net::UnixListener`,
+  `std::os::unix::net::UnixStream`) + `PermissionsExt`. À remplacer par un named pipe Windows.
+- `crates/cli/src/hooks.rs` : `PermissionsExt`, `$HOME`, script hook en bash + `jq`.
+
+Et, même une fois que ça compile, quatre points cassent à l'exécution :
+
+- `src/components/TerminalPane.tsx` : shell figé sur `/bin/bash`.
+- `src/lib/workspaceDraft.ts` : `resolveDraft` rejette tout chemin ne commençant pas par `/`, donc
+  aucun `C:\…` — plus aucun workspace créable. Idem `abbreviateHome` / `palette.ts`, qui découpent
+  sur `/`.
+- `crates/core/src/ports.rs` : lecture de `/proc` — la détection de ports renverrait toujours vide.
+- `src-tauri/tauri.conf.json` : `targets: ["deb"]` uniquement, à étendre à `nsis`/`msi`.
+
+Le reste est portable en l'état : `portable-pty` gère ConPTY, `git.rs` shelle vers le binaire `git`,
+`images.rs` passe par `std::env::temp_dir()`, et `notify-rust` a bien une implémentation Windows
+(toasts). Le portage est donc réaliste — compter une journée — mais il n'est pas fait.
 
 ## Développement
 
@@ -82,6 +201,7 @@ Couche `Ctrl+Shift` (convention gnome-terminal), matching par touche physique (`
 | `Ctrl+Shift+R` | Modifier le nom / le dossier du workspace (édition inline) |
 | `Ctrl+Shift+D` | Ouvrir/fermer le diff viewer |
 | `Ctrl+Shift+B` | Afficher/masquer la sidebar |
+| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Déplacer le workspace actif dans la sidebar (sans wrap) |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Workspace précédent / suivant |
 | `Ctrl+1` … `Ctrl+9` | Sélection directe de workspace |
 | `Alt+←` `Alt+→` `Alt+↑` `Alt+↓` | Focus directionnel de pane |
