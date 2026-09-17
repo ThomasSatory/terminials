@@ -137,12 +137,10 @@ impl OscScanner {
 }
 
 fn interpret(payload: &str) -> Option<OscNotification> {
-    // OSC 9 (iTerm2) : "9;<message>". Un message peut lui-même contenir des ';' (ex. un
-    // format "titre;corps" produit par certains clients) : on ne garde que le dernier
-    // segment comme corps, ce qui laisse `body` inchangé quand `rest` n'a pas de ';'.
+    // OSC 9 (iTerm2) : "9;<message>". Le message peut contenir des ';' (ex. "Erreur; voir
+    // logs") : c'est un texte libre, pas un format à sous-champs — tout le reste est le corps.
     if let Some(rest) = payload.strip_prefix("9;") {
-        let body = rest.rsplit(';').next().unwrap_or(rest).to_string();
-        return Some(OscNotification { title: "terminials".into(), body });
+        return Some(OscNotification { title: "terminials".into(), body: rest.to_string() });
     }
     // OSC 777 (RXVT) : "777;notify;<title>;<body>"
     if let Some(rest) = payload.strip_prefix("777;notify;") {
@@ -266,9 +264,18 @@ mod tests {
         ev.extend(sc.feed_events(&full[5..]));
         assert_eq!(ev.len(), 2);
         assert_eq!(ev[0], OscEvent::Exit { code: 130 });
-        assert!(matches!(&ev[1], OscEvent::Notification(n) if n.body == "fini"));
+        assert!(matches!(&ev[1], OscEvent::Notification(n) if n.body == "Claude Code;fini"));
         let mut sc2 = OscScanner::new();
         assert_eq!(sc2.feed(full).len(), 1, "feed reste l'API des notifications seules");
+    }
+
+    #[test]
+    fn notification_osc9_conserve_le_point_virgule_dans_le_corps() {
+        // Le corps d'une notification OSC 9 est du texte libre : un ';' interne (ex. une
+        // phrase) ne doit pas être interprété comme un séparateur de sous-champs.
+        let input = b"\x1b]9;Erreur; voir logs\x07";
+        let n = parse_notifications(input);
+        assert_eq!(n, vec![OscNotification { title: "terminials".into(), body: "Erreur; voir logs".into() }]);
     }
 
     #[test]
