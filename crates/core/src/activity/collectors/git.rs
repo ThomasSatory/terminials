@@ -49,20 +49,29 @@ pub fn collect(
             .unwrap_or(0);
 
         match commits_since(&dir, since, author_email, ticket_patterns) {
-            Ok(events) => {
-                match store.insert_events(&events) {
-                    Ok(n) => inserted += n,
-                    Err(e) => errors.push(format!("insertion des commits de {dir}: {e}")),
-                }
-                if let Err(e) = store.set_cursor(&cursor_name, &(now - 3600).to_string()) {
-                    errors.push(format!("avance du curseur de {dir}: {e}"));
-                }
-            }
+            Ok(events) => match apply_scan(store, &cursor_name, events, now) {
+                Ok(n) => inserted += n,
+                Err(e) => errors.push(format!("{dir}: {e}")),
+            },
             Err(e) => errors.push(format!("{dir}: {e}")),
         }
     }
 
     (inserted, errors)
+}
+
+/// Insère les événements d'un dépôt puis, seulement si l'insertion a réussi, avance son
+/// curseur à `now - 3600`. Si l'insertion échoue, le curseur reste inchangé : sans ça, la
+/// fenêtre de commits concernée serait perdue silencieusement et définitivement (elle ne
+/// serait plus jamais rescannée, alors qu'aucun de ses commits n'a été persisté).
+fn apply_scan(store: &Store, cursor_name: &str, events: Vec<NewEvent>, now: i64) -> Result<usize, String> {
+    let n = store
+        .insert_events(&events)
+        .map_err(|e| format!("insertion des commits: {e}"))?;
+    store
+        .set_cursor(cursor_name, &(now - 3600).to_string())
+        .map_err(|e| format!("avance du curseur: {e}"))?;
+    Ok(n)
 }
 
 /// Commits d'un dépôt depuis `since` (epoch s) par `author` (None → `git config user.email`
