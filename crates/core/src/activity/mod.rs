@@ -157,6 +157,11 @@ pub struct ActivityStats {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
+    /// Jour sous lequel la synthèse est rangée (`YYYY-MM-DD`, heure locale). Il
+    /// vaut le jour demandé, sauf pour `semaine` où c'est le **lundi** de la
+    /// semaine : c'est la clé de cache, et le front s'en sert pour savoir à quelle
+    /// période correspond réellement le texte affiché.
+    pub day: String,
     pub text: String,
     pub model: String,
     pub generated_at: i64,

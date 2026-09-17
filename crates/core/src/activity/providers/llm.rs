@@ -249,6 +249,13 @@ impl LlmProvider for ClaudeCli {
 /// Construit le fournisseur configuré par l'utilisateur. `extra_headers` (BTreeMap
 /// dans les réglages) est converti en `Vec` ordonné, le délai global est de 120 s
 /// et un jeton vide est autorisé (l'API cible peut ne pas en exiger).
+/// Nom du fournisseur configuré, sans en construire l'usage : permet aux appelants
+/// qui n'ont pas de `LlmProvider` sous la main (cf. `summaries::prepare`) d'étiqueter
+/// une synthèse avec le même nom que celui qu'aurait rendu `provider.name()`.
+pub fn provider_name(s: &LlmSettings) -> String {
+    from_settings(s).name()
+}
+
 pub fn from_settings(s: &LlmSettings) -> Box<dyn LlmProvider> {
     let timeout = Duration::from_secs(120);
     match s.provider {

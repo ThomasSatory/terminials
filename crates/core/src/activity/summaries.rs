@@ -71,19 +71,24 @@ pub fn last_working_day(day: NaiveDate) -> NaiveDate {
     }
 }
 
+/// Lundi de la semaine de `day` (un lundi se rend lui-même).
+pub fn lundi_de(day: NaiveDate) -> NaiveDate {
+    day - Duration::days(day.weekday().num_days_from_monday() as i64)
+}
+
 /// Plage à résumer pour `kind` sur `day` (spec §6) :
-/// - Bilan/ResteAFaire un lundi : vendredi 00:00 → lundi 00:00 (couvre le week-end) ;
-///   un vendredi : vendredi 00:00 → lundi 00:00 suivant ; les autres jours : le jour seul.
+/// - Bilan/ResteAFaire un vendredi : vendredi 00:00 → lundi 00:00 suivant (le week-end
+///   qui suit est rattaché au bilan du vendredi, qui est produit le lundi matin) ;
+///   tous les autres jours, lundi compris : le jour seul.
 /// - Semaine : lundi 00:00 → samedi 00:00 de la semaine de `day`.
 pub fn range_for(day: NaiveDate, kind: SummaryKind, tz: &impl TimeZone) -> (i64, i64) {
     use chrono::Weekday;
     match kind {
         SummaryKind::Semaine => {
-            let monday = day - Duration::days(day.weekday().num_days_from_monday() as i64);
+            let monday = lundi_de(day);
             (local_epoch(monday, tz), local_epoch(monday + Duration::days(5), tz))
         }
         SummaryKind::Bilan | SummaryKind::ResteAFaire => match day.weekday() {
-            Weekday::Mon => (local_epoch(day - Duration::days(3), tz), local_epoch(day, tz)),
             Weekday::Fri => (local_epoch(day, tz), local_epoch(day + Duration::days(3), tz)),
             _ => (local_epoch(day, tz), local_epoch(day + Duration::days(1), tz)),
         },
@@ -102,29 +107,38 @@ pub fn system_prompt(kind: SummaryKind) -> &'static str {
 /// Message utilisateur envoyé au LLM : le digest de la période, précédé d'un
 /// en-tête, complété pour `ResteAFaire` par les tâches ClickUp ouvertes et les
 /// branches non fusionnées.
-pub fn user_prompt(kind: SummaryKind, day: &str, digest_text: &str, inputs: &SummaryInputs) -> String {
+pub fn user_prompt(
+    kind: SummaryKind,
+    day: &str,
+    digest_text: &str,
+    inputs: &SummaryInputs,
+    offset: chrono::FixedOffset,
+) -> String {
     let mut s = format!("# Journal du {day}\n\n{digest_text}");
     if kind == SummaryKind::ResteAFaire {
         s.push_str("\n\n# Tâches ClickUp ouvertes\n");
-        s.push_str(&format_tasks(inputs.open_tasks));
+        s.push_str(&format_tasks(inputs.open_tasks, offset));
         s.push_str("\n# Branches non fusionnées\n");
         s.push_str(&format_unmerged(inputs.unmerged));
     }
     s
 }
 
-fn format_tasks(tasks: &[OpenTask]) -> String {
+fn format_tasks(tasks: &[OpenTask], offset: chrono::FixedOffset) -> String {
     if tasks.is_empty() {
         return "- (aucune)".to_string();
     }
-    tasks.iter().map(format_task).collect::<Vec<_>>().join("\n")
+    tasks.iter().map(|t| format_task(t, offset)).collect::<Vec<_>>().join("\n")
 }
 
-fn format_task(t: &OpenTask) -> String {
+/// Une tâche en une ligne. L'échéance est rendue au **jour local** (`offset`) :
+/// en UTC, une échéance fixée en fin de journée locale s'afficherait la veille et
+/// le LLM annoncerait une date fausse (spec §7 : les jours sont locaux).
+fn format_task(t: &OpenTask, offset: chrono::FixedOffset) -> String {
     let mut s = format!("- [{}]({}) {} — {}", t.id, t.url, t.name, t.status);
     if let Some(due) = t.due_date {
         if let Some(dt) = chrono::DateTime::from_timestamp(due, 0) {
-            s.push_str(&format!(" — échéance {}", dt.format("%Y-%m-%d")));
+            s.push_str(&format!(" — échéance {}", dt.with_timezone(&offset).format("%Y-%m-%d")));
         }
     }
     if let Some(p) = &t.priority {
@@ -192,7 +206,7 @@ fn range_digest(store: &Store, from: i64, to: i64, offset: chrono::FixedOffset) 
 /// ouvrés de la semaine de `day`, chacun précédé de `# {day}`. Les jours sans
 /// activité sont omis.
 fn week_digest(store: &Store, day: NaiveDate, tz: &impl TimeZone) -> Result<Digest, LlmError> {
-    let monday = day - Duration::days(day.weekday().num_days_from_monday() as i64);
+    let monday = lundi_de(day);
     let mut sections = Vec::new();
     let mut event_count = 0usize;
     for i in 0..5 {
@@ -216,11 +230,164 @@ fn sha256_hex(text: &str) -> String {
     Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Génère (ou récupère du cache) la synthèse `kind` du jour `day`. Le cache est
-/// tenu par (jour, type, hash du digest) : tant que le digest ne change pas et
-/// que `force` n'est pas demandé, la synthèse stockée est réutilisée sans
-/// appeler le LLM. Un digest vide court-circuite complètement l'appel LLM et
-/// n'écrit rien en cache. Un échec du LLM est propagé sans toucher au cache.
+/// Jour servant de clé de cache pour `(day, kind)`. Le contenu d'une synthèse
+/// `Semaine` ne dépend que de la semaine : toutes les journées d'une même semaine
+/// partagent donc **une seule** ligne, datée du lundi. Sans cette normalisation,
+/// naviguer du lundi au mardi en mode Semaine créait une seconde ligne au contenu
+/// identique, au prix d'un appel LLM complet.
+pub fn cache_day_for(day: NaiveDate, kind: SummaryKind) -> String {
+    let d = if kind == SummaryKind::Semaine { lundi_de(day) } else { day };
+    d.format("%Y-%m-%d").to_string()
+}
+
+/// Tout ce qu'il faut pour appeler le fournisseur puis écrire le résultat, sans
+/// jamais relire le store : la couche Tauri peut donc relâcher le verrou entre
+/// `prepare` et `finish` (l'appel LLM dure jusqu'à 120 s).
+pub struct ToGenerate {
+    pub request: LlmRequest,
+    pub digest_hash: String,
+    pub event_count: usize,
+    /// Clé `day` de la ligne `summaries` à écrire (cf. `cache_day_for`).
+    pub cache_day: String,
+    pub kind: SummaryKind,
+}
+
+/// Résultat de `prepare` : soit une synthèse déjà disponible (cache valide, ou
+/// période vide), soit la requête à soumettre au fournisseur.
+pub enum Preparation {
+    Cached(Summary),
+    ToGenerate(ToGenerate),
+}
+
+/// Première moitié de `generate`, **sans appel LLM** : lit le store (événements,
+/// tickets, tâches, branches non fusionnées), construit le digest et consulte le
+/// cache. Tous les accès à la base sont ici ; l'appelant peut relâcher son verrou
+/// dès le retour.
+pub fn prepare(
+    store: &Store,
+    settings: &LlmSettings,
+    day: &str,
+    kind: SummaryKind,
+    force: bool,
+    now: i64,
+    tz: &impl TimeZone,
+) -> Result<Preparation, LlmError> {
+    let date = NaiveDate::parse_from_str(day, "%Y-%m-%d")
+        .map_err(|e| LlmError::Malformed(format!("jour invalide {day:?} : {e}")))?;
+    let cache_day = cache_day_for(date, kind);
+
+    let (digest, offset) = if kind == SummaryKind::Semaine {
+        let debut = local_epoch(lundi_de(date), tz);
+        (week_digest(store, date, tz)?, fixed_offset_at(debut, tz))
+    } else {
+        let (from, to) = range_for(date, kind, tz);
+        let offset = fixed_offset_at(from, tz);
+        (range_digest(store, from, to, offset)?, offset)
+    };
+
+    // Le nom du fournisseur est déduit des réglages : `prepare` ne reçoit pas de
+    // `LlmProvider` puisqu'elle n'en appelle aucun.
+    let model = crate::activity::providers::llm::provider_name(settings);
+
+    if digest.text.is_empty() {
+        return Ok(Preparation::Cached(Summary {
+            day: cache_day,
+            text: EMPTY_TEXT.to_string(),
+            model,
+            generated_at: now,
+            cached: false,
+        }));
+    }
+
+    if !force {
+        if let Some(stored) = store.get_summary(&cache_day, kind.as_str()).map_err(db_err)? {
+            if stored.digest_hash == digest.hash {
+                return Ok(Preparation::Cached(Summary {
+                    day: cache_day,
+                    text: stored.text,
+                    model: stored.model,
+                    generated_at: stored.generated_at,
+                    cached: true,
+                }));
+            }
+        }
+    }
+
+    // Tâches ouvertes et branches non fusionnées ne servent qu'à « reste à faire » :
+    // un `branch --no-merged` par dépôt actif est un sous-processus, inutile de le
+    // payer pour un bilan ou une synthèse hebdomadaire.
+    let (open_tasks, unmerged) = if kind == SummaryKind::ResteAFaire {
+        let tasks = store.open_tasks().map_err(db_err)?;
+        let unmerged: Vec<(String, Vec<String>)> = store
+            .active_repos()
+            .map_err(db_err)?
+            .into_iter()
+            .filter_map(|dir| {
+                let branches = git::unmerged_branches(&dir);
+                if branches.is_empty() {
+                    None
+                } else {
+                    Some((workspace_name(&dir), branches))
+                }
+            })
+            .collect();
+        (tasks, unmerged)
+    } else {
+        (Vec::new(), Vec::new())
+    };
+    let inputs = SummaryInputs { open_tasks: &open_tasks, unmerged: &unmerged };
+
+    let request = LlmRequest {
+        system: system_prompt(kind).to_string(),
+        // En-tête daté de la clé de cache : le prompt d'une synthèse hebdomadaire
+        // est ainsi le même quel que soit le jour de la semaine demandé.
+        user: user_prompt(kind, &cache_day, &digest.text, &inputs, offset),
+        max_tokens: settings.max_tokens,
+        temperature: settings.temperature,
+    };
+
+    Ok(Preparation::ToGenerate(ToGenerate {
+        request,
+        digest_hash: digest.hash,
+        event_count: digest.event_count,
+        cache_day,
+        kind,
+    }))
+}
+
+/// Seconde moitié de `generate` : écrit la réponse du fournisseur dans le cache et
+/// construit la `Summary` renvoyée au front. Reprend le verrou du store le temps
+/// d'un `INSERT`, pas plus.
+pub fn finish(
+    store: &Store,
+    prep: &ToGenerate,
+    text: String,
+    model: String,
+    now: i64,
+) -> Result<Summary, LlmError> {
+    store
+        .put_summary(&StoredSummary {
+            day: prep.cache_day.clone(),
+            kind: prep.kind.as_str().to_string(),
+            model: model.clone(),
+            digest_hash: prep.digest_hash.clone(),
+            text: text.clone(),
+            generated_at: now,
+        })
+        .map_err(db_err)?;
+
+    Ok(Summary { day: prep.cache_day.clone(), text, model, generated_at: now, cached: false })
+}
+
+/// Génère (ou récupère du cache) la synthèse `kind` du jour `day` : composition de
+/// `prepare`, de l'appel au fournisseur et de `finish`. Le cache est tenu par
+/// (jour de cache, type, hash du digest) : tant que le digest ne change pas et que
+/// `force` n'est pas demandé, la synthèse stockée est réutilisée sans appeler le
+/// LLM. Un digest vide court-circuite l'appel LLM et n'écrit rien en cache. Un
+/// échec du LLM est propagé sans toucher au cache.
+///
+/// La couche Tauri n'utilise **pas** cette fonction : elle enchaîne `prepare` et
+/// `finish` elle-même pour ne pas tenir le verrou du store pendant l'appel réseau.
 #[allow(clippy::too_many_arguments)]
 pub fn generate(
     store: &Store,
@@ -232,70 +399,13 @@ pub fn generate(
     now: i64,
     tz: &impl TimeZone,
 ) -> Result<Summary, LlmError> {
-    let date = NaiveDate::parse_from_str(day, "%Y-%m-%d")
-        .map_err(|e| LlmError::Malformed(format!("jour invalide {day:?} : {e}")))?;
-
-    let digest = if kind == SummaryKind::Semaine {
-        week_digest(store, date, tz)?
-    } else {
-        let (from, to) = range_for(date, kind, tz);
-        let offset = fixed_offset_at(from, tz);
-        range_digest(store, from, to, offset)?
-    };
-
-    if digest.text.is_empty() {
-        return Ok(Summary { text: EMPTY_TEXT.to_string(), model: provider.name(), generated_at: now, cached: false });
-    }
-
-    if !force {
-        if let Some(stored) = store.get_summary(day, kind.as_str()).map_err(db_err)? {
-            if stored.digest_hash == digest.hash {
-                return Ok(Summary {
-                    text: stored.text,
-                    model: stored.model,
-                    generated_at: stored.generated_at,
-                    cached: true,
-                });
-            }
+    match prepare(store, settings, day, kind, force, now, tz)? {
+        Preparation::Cached(summary) => Ok(summary),
+        Preparation::ToGenerate(prep) => {
+            let text = provider.complete(&prep.request)?;
+            finish(store, &prep, text, provider.name(), now)
         }
     }
-
-    let open_tasks = store.open_tasks().map_err(db_err)?;
-    let unmerged: Vec<(String, Vec<String>)> = store
-        .active_repos()
-        .map_err(db_err)?
-        .into_iter()
-        .filter_map(|dir| {
-            let branches = git::unmerged_branches(&dir);
-            if branches.is_empty() {
-                None
-            } else {
-                Some((workspace_name(&dir), branches))
-            }
-        })
-        .collect();
-    let inputs = SummaryInputs { open_tasks: &open_tasks, unmerged: &unmerged };
-
-    let request = LlmRequest {
-        system: system_prompt(kind).to_string(),
-        user: user_prompt(kind, day, &digest.text, &inputs),
-        max_tokens: settings.max_tokens,
-        temperature: settings.temperature,
-    };
-    let text = provider.complete(&request)?;
-
-    store
-        .put_summary(&StoredSummary {
-            day: day.to_string(),
-            kind: kind.as_str().to_string(),
-            model: provider.name(),
-            digest_hash: digest.hash,
-            text: text.clone(),
-            generated_at: now,
-        })
-        .map_err(db_err)?;
-
-    Ok(Summary { text, model: provider.name(), generated_at: now, cached: false })
 }
 
 #[cfg(test)]
@@ -336,6 +446,15 @@ mod tests {
         assert_eq!((f, t), (1_789_516_800, 1_789_603_200));
         let (f, t) = range_for(d("2026-09-18"), SummaryKind::Bilan, &utc); // vendredi → couvre jusqu'au lundi 00:00
         assert_eq!(t - f, 3 * 86400);
+        // Lundi : le jour lui-même, et lui seul. Le week-end écoulé est couvert par
+        // le bilan *du vendredi* (bras `Fri` ci-dessus), pas par celui du lundi.
+        let (f, t) = range_for(d("2026-09-21"), SummaryKind::Bilan, &utc);
+        assert_eq!(
+            (f, t),
+            (local_epoch(d("2026-09-21"), &utc), local_epoch(d("2026-09-22"), &utc)),
+            "le bilan d'un lundi couvre le lundi, du lundi 00:00 au mardi 00:00"
+        );
+        assert_eq!(t - f, 86400);
         let (f, t) = range_for(d("2026-09-16"), SummaryKind::Semaine, &utc); // mercredi → lundi 14 00:00 → samedi 19 00:00
         assert_eq!(f, 1_789_344_000);
         assert_eq!(t - f, 5 * 86400);
@@ -429,6 +548,66 @@ mod tests {
     }
 
     #[test]
+    fn lundi_de_ramene_au_lundi_de_la_semaine() {
+        assert_eq!(lundi_de(d("2026-09-21")), d("2026-09-21"), "un lundi reste lui-même");
+        assert_eq!(lundi_de(d("2026-09-16")), d("2026-09-14"), "mercredi → lundi précédent");
+        assert_eq!(lundi_de(d("2026-09-20")), d("2026-09-14"), "dimanche → lundi de la même semaine");
+    }
+
+    #[test]
+    fn semaine_partage_une_seule_ligne_de_cache_pour_toute_la_semaine() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .insert_events(&[NewEvent {
+                ts: 1_789_466_400, // mardi 15/09/2026 10:00 UTC
+                kind: EventKind::Commit,
+                workspace_dir: Some("/a".into()),
+                branch: None,
+                title: "c".into(),
+                body: None,
+                ticket_ids: vec![],
+                source_ref: "1".into(),
+            }])
+            .unwrap();
+        let fake = Fake { calls: Default::default(), reply: "## Semaine".into() };
+        let s = LlmSettings::default();
+        let mardi = generate(&store, &fake, &s, "2026-09-15", SummaryKind::Semaine, false, 10, &chrono::Utc).unwrap();
+        assert!(!mardi.cached);
+        assert_eq!(mardi.day, "2026-09-14", "la synthèse hebdomadaire est datée du lundi");
+        // Jour différent, même semaine : la ligne de cache doit être réutilisée.
+        let jeudi = generate(&store, &fake, &s, "2026-09-17", SummaryKind::Semaine, false, 11, &chrono::Utc).unwrap();
+        assert!(jeudi.cached, "un autre jour de la même semaine réutilise la synthèse");
+        assert_eq!(jeudi.day, "2026-09-14");
+        assert_eq!(*fake.calls.lock().unwrap(), 1, "un seul appel LLM pour toute la semaine");
+        assert!(store.get_summary("2026-09-14", "semaine").unwrap().is_some());
+        assert!(store.get_summary("2026-09-17", "semaine").unwrap().is_none(), "aucune ligne parasite");
+    }
+
+    #[test]
+    fn echeance_formatee_en_heure_locale_et_non_en_utc() {
+        // 2026-09-21 21:30 UTC = 2026-09-22 06:30 à Tokyo (UTC+9) : l'échéance doit
+        // s'afficher au jour local, sinon le LLM annonce une date fausse (la veille).
+        let tokyo = chrono::FixedOffset::east_opt(9 * 3600).unwrap();
+        let tasks = vec![OpenTask {
+            id: "86c1abc".into(),
+            name: "Dashboard".into(),
+            status: "en cours".into(),
+            url: "https://app.clickup.com/t/86c1abc".into(),
+            due_date: Some(1_790_026_200),
+            priority: None,
+            list_name: None,
+        }];
+        let p = user_prompt(
+            SummaryKind::ResteAFaire,
+            "2026-09-21",
+            "## digest",
+            &SummaryInputs { open_tasks: &tasks, unmerged: &[] },
+            tokyo,
+        );
+        assert!(p.contains("échéance 2026-09-22"), "prompt produit : {p}");
+    }
+
+    #[test]
     fn user_prompt_reste_a_faire_inclut_taches_et_branches() {
         let tasks = vec![OpenTask {
             id: "86c1abc".into(),
@@ -440,7 +619,13 @@ mod tests {
             list_name: Some("Sprint 42".into()),
         }];
         let unmerged = vec![("terminals".to_string(), vec!["feat/dashboard".to_string()])];
-        let p = user_prompt(SummaryKind::ResteAFaire, "2026-09-16", "## digest", &SummaryInputs { open_tasks: &tasks, unmerged: &unmerged });
+        let p = user_prompt(
+            SummaryKind::ResteAFaire,
+            "2026-09-16",
+            "## digest",
+            &SummaryInputs { open_tasks: &tasks, unmerged: &unmerged },
+            chrono::FixedOffset::east_opt(0).unwrap(),
+        );
         assert!(p.contains("[86c1abc](https://app.clickup.com/t/86c1abc) Dashboard — en cours — échéance 2026-09-21 — priorité high — Sprint 42"));
         assert!(p.contains("- terminals : feat/dashboard"));
         assert!(p.contains("## digest"));
