@@ -72,7 +72,7 @@ fn spawn_pty(
                                 activity::on_shell_command(&st, id, &cmd, &pwd);
                             }
                             OscEvent::Exit { code } => {
-                                activity::on_shell_exit(&app, &st, id, code);
+                                activity::on_shell_exit(&st, id, code);
                             }
                         }
                     }
@@ -163,6 +163,7 @@ pub fn run() {
             activity::activity_query,
             activity::activity_stats,
             activity::activity_summary,
+            activity::activity_summary_cached,
             activity::activity_open_tasks,
             activity::activity_status,
             activity::activity_get_settings,

@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -19,7 +20,7 @@ use terminials_core::activity::shell_integration::{default_shims_dir, install_sh
 use terminials_core::activity::store::{Store, StoreResult};
 use terminials_core::activity::summaries::{self, SummaryKind};
 use terminials_core::activity::{
-    repo_root, ActivityEvent, ActivityStats, CollectReport, OpenTask, Summary,
+    repo_root, ActivityEvent, ActivityStats, CollectReport, NewEvent, OpenTask, Summary,
 };
 
 /// Nombre maximum d'erreurs de collecte conservées pour le bandeau du dashboard.
@@ -35,6 +36,10 @@ const FENETRE_CLICKUP_ARRIERE: i64 = 7 * 86_400;
 const FENETRE_CLICKUP_AVANT: i64 = 86_400;
 /// Nom du curseur mémorisant le dernier jour dont les synthèses ont été lancées.
 const CURSEUR_DERNIER_JOUR: &str = "summary_last_day";
+/// Délai minimal entre deux tentatives de génération des synthèses (secondes).
+/// Le jeton LLM périme toutes les 6 h (spec §5) : un échec à 07:00 est un état
+/// normal, qui doit coûter une tentative toutes les 30 min, pas une par minute.
+const REPLI_SYNTHESES: i64 = 1800;
 
 /// État partagé du dashboard, géré par Tauri (`.manage`).
 ///
@@ -53,6 +58,16 @@ pub struct ActivityState {
     pub last_collect: Mutex<HashMap<String, i64>>,
     /// Dernières erreurs de collecte (au plus `MAX_ERREURS`).
     pub errors: Mutex<Vec<String>>,
+    /// Epoch s de la dernière tentative de génération des synthèses, `0` si aucune.
+    /// Remis à `0` par `activity_set_settings` : un jeton fraîchement saisi doit
+    /// pouvoir être essayé tout de suite.
+    pub dernier_essai_syntheses: Mutex<i64>,
+    /// Voie d'écriture des événements shell. Le thread lecteur du PTY ne fait qu'y
+    /// pousser : ni verrou du store, ni `git rev-parse`, dans la boucle qui alimente
+    /// l'affichage du terminal.
+    pub shell_tx: Sender<NewEvent>,
+    /// Extrémité de lecture, prise une seule fois par `start_scheduler`.
+    shell_rx: Mutex<Option<Receiver<NewEvent>>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,11 +146,17 @@ fn du_pour(last: &HashMap<String, i64>, source: &str, now_utc: i64, cadence: i64
 /// les cadences de collecte se comparent en epoch UTC. Le rattrapage au démarrage
 /// est implicite : au premier tick passé l'heure prévue, `last_summary_day` vaut
 /// la veille (ou rien), donc les synthèses partent immédiatement.
+///
+/// `last_summary_attempt` (epoch s, `None` si aucune tentative) impose le repli de
+/// `REPLI_SYNTHESES` : le curseur `summary_last_day` n'avançant que sur un succès,
+/// une cause d'échec durable (jeton expiré, réseau coupé) relancerait sinon deux
+/// appels LLM à chaque tick de 60 s jusqu'à minuit.
 pub fn plan_tick(
     now_utc: i64,
     now_local: chrono::NaiveDateTime,
     last: &HashMap<String, i64>,
     last_summary_day: Option<&str>,
+    last_summary_attempt: Option<i64>,
     schedule: &ScheduleSettings,
 ) -> TickPlan {
     use chrono::{Datelike, Timelike, Weekday};
@@ -145,12 +166,17 @@ pub fn plan_tick(
     let heure_atteinte =
         (now_local.hour(), now_local.minute()) >= (schedule.hour as u32, schedule.minute as u32);
     let deja_fait = last_summary_day == Some(today.format("%Y-%m-%d").to_string().as_str());
-
-    let summaries_for = if (jour_ouvre || !schedule.weekdays_only) && heure_atteinte && !deja_fait {
-        Some(summaries::last_working_day(today))
-    } else {
-        None
+    let repli_ecoule = match last_summary_attempt {
+        Some(essai) => now_utc - essai >= REPLI_SYNTHESES,
+        None => true,
     };
+
+    let summaries_for =
+        if (jour_ouvre || !schedule.weekdays_only) && heure_atteinte && !deja_fait && repli_ecoule {
+            Some(summaries::last_working_day(today))
+        } else {
+            None
+        };
 
     TickPlan {
         collect_git_claude: du_pour(last, "git", now_utc, CADENCE_GIT_CLAUDE),
@@ -194,6 +220,8 @@ pub fn init() -> ActivityState {
         }
     };
 
+    let (shell_tx, shell_rx) = std::sync::mpsc::channel();
+
     ActivityState {
         store: Mutex::new(store),
         open_error: Mutex::new(open_error),
@@ -202,6 +230,9 @@ pub fn init() -> ActivityState {
         shims_dir,
         last_collect: Mutex::new(HashMap::new()),
         errors: Mutex::new(errors),
+        dernier_essai_syntheses: Mutex::new(0),
+        shell_tx,
+        shell_rx: Mutex::new(Some(shell_rx)),
     }
 }
 
@@ -224,12 +255,21 @@ pub fn db_path_depuis(xdg_data_home: Option<String>, home: Option<String>) -> Pa
 }
 
 /// Ajoute des erreurs à l'état en ne gardant que les `MAX_ERREURS` plus récentes.
+///
+/// Un message déjà présent est ignoré : une cause durable (jeton expiré) se
+/// répétant à chaque tentative, sans cette garde le plafond était atteint en dix
+/// passages et le bandeau ne contenait plus que la même phrase, les erreurs de
+/// collecte git/claude/clickup ayant été chassées de la liste.
 fn pousser_erreurs(st: &ActivityState, nouvelles: &[String]) {
     if nouvelles.is_empty() {
         return;
     }
     let mut errors = verrou(&st.errors);
-    errors.extend(nouvelles.iter().cloned());
+    for msg in nouvelles {
+        if !errors.iter().any(|e| e == msg) {
+            errors.push(msg.clone());
+        }
+    }
     let trop = errors.len().saturating_sub(MAX_ERREURS);
     if trop > 0 {
         errors.drain(0..trop);
@@ -295,11 +335,17 @@ pub fn run_collect(app: &AppHandle, st: &ActivityState, sources: &[&str]) -> Col
 }
 
 /// Génère les synthèses du jour `day` (bilan + reste à faire, plus la synthèse
-/// hebdomadaire le vendredi) et émet `summary-ready` pour chaque succès.
+/// hebdomadaire le lundi) et émet `summary-ready` pour chaque succès.
 ///
-/// Le verrou du store est tenu pendant l'appel LLM : `summaries::generate` lit le
-/// journal et écrit le cache sous ce même verrou. Assumé en v1 — le fournisseur
-/// impose un délai maximum, et la génération n'a lieu qu'une fois par jour.
+/// Le verrou du store n'est **jamais** tenu pendant l'appel au fournisseur :
+/// `summaries::prepare` fait toutes les lectures, le verrou est relâché, l'appel
+/// part, puis `summaries::finish` le reprend pour le seul `put_summary`.
+///
+/// Écart assumé avec la spec §6, qui demandait la synthèse hebdomadaire le
+/// vendredi : on la produit le **lundi**, pour `last_working_day(lundi)` = le
+/// vendredi écoulé. C'est le seul moment où la semaine est complète ; produite le
+/// vendredi matin, elle aurait ignoré le vendredi lui-même. Elle est rangée sous
+/// la date du lundi de cette semaine (cf. `summaries::cache_day_for`).
 pub fn run_summaries(app: &AppHandle, st: &ActivityState, day: chrono::NaiveDate) {
     use chrono::{Datelike, Weekday};
 
@@ -314,27 +360,9 @@ pub fn run_summaries(app: &AppHandle, st: &ActivityState, day: chrono::NaiveDate
 
     let mut resultats: Vec<Result<(), String>> = Vec::new();
     for kind in kinds {
-        // Une base indisponible est remontée telle quelle : la déguiser en
-        // `LlmError::Disabled` afficherait « fournisseur désactivé » alors que
-        // la cause est le store.
-        let res = match store_ouvert(st) {
-            Ok(guard) => {
-                let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
-                summaries::generate(
-                    store,
-                    provider.as_ref(),
-                    &llm_settings,
-                    &day_str,
-                    kind,
-                    false,
-                    now_s(),
-                    &chrono::Local,
-                )
-                .map(|_| ())
-                .map_err(|e| format!("synthèse {} du {day_str} : {e}", kind.as_str()))
-            }
-            Err(msg) => Err(msg),
-        };
+        let res = synthese_hors_verrou(st, provider.as_ref(), &llm_settings, &day_str, kind, false)
+            .map(|_| ())
+            .map_err(|e| format!("synthèse {} du {day_str} : {e}", kind.as_str()));
         if res.is_ok() {
             let _ = app.emit(
                 "summary-ready",
@@ -357,6 +385,51 @@ pub fn run_summaries(app: &AppHandle, st: &ActivityState, day: chrono::NaiveDate
     }
 }
 
+/// Enchaîne `prepare` → fournisseur → `finish` en ne tenant le verrou du store que
+/// pour les deux accès à la base. C'est le seul chemin de génération de synthèse de
+/// la couche Tauri : tenir le verrou pendant les 120 s d'un appel LLM figeait le
+/// thread lecteur des PTY (donc l'affichage des panes) et les commandes synchrones
+/// du dashboard, qui s'exécutent sur le thread principal.
+///
+/// Une base indisponible est remontée telle quelle (`String`) : la déguiser en
+/// `LlmError::Disabled` afficherait « fournisseur désactivé » alors que la cause
+/// est le store.
+fn synthese_hors_verrou(
+    st: &ActivityState,
+    provider: &dyn llm::LlmProvider,
+    llm_settings: &terminials_core::activity::settings::LlmSettings,
+    day: &str,
+    kind: SummaryKind,
+    force: bool,
+) -> Result<Summary, String> {
+    let preparation = {
+        let guard = store_ouvert(st)?;
+        let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
+        summaries::prepare(store, llm_settings, day, kind, force, now_s(), &chrono::Local)
+            .map_err(erreur_llm)?
+    };
+
+    let prep = match preparation {
+        summaries::Preparation::Cached(summary) => return Ok(summary),
+        summaries::Preparation::ToGenerate(prep) => prep,
+    };
+
+    let texte = provider.complete(&prep.request).map_err(erreur_llm)?;
+
+    let guard = store_ouvert(st)?;
+    let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
+    summaries::finish(store, &prep, texte, provider.name(), now_s()).map_err(erreur_llm)
+}
+
+/// Une erreur d'autorisation est préfixée `unauthorized: ` — le front s'en sert
+/// pour proposer de renouveler le jeton (`isUnauthorized`).
+fn erreur_llm(e: LlmError) -> String {
+    match e {
+        LlmError::Unauthorized => format!("unauthorized: {e}"),
+        autre => autre.to_string(),
+    }
+}
+
 /// Le curseur `summary_last_day` n'avance que si au moins une synthèse du tick a
 /// abouti (génération ou cache). Sinon une coupure réseau ou un jeton expiré à
 /// 07:00 marquerait la journée comme faite et supprimerait tout rattrapage jusqu'au
@@ -373,12 +446,17 @@ fn tick(app: &AppHandle) {
     let last = verrou(&st.last_collect).clone();
     let dernier_jour =
         verrou(&st.store).as_ref().and_then(|s| s.get_cursor(CURSEUR_DERNIER_JOUR).ok().flatten());
+    let dernier_essai = match *verrou(&st.dernier_essai_syntheses) {
+        0 => None,
+        v => Some(v),
+    };
 
     let plan = plan_tick(
         now_s(),
         chrono::Local::now().naive_local(),
         &last,
         dernier_jour.as_deref(),
+        dernier_essai,
         &schedule,
     );
 
@@ -394,14 +472,40 @@ fn tick(app: &AppHandle) {
         run_collect(app, &st, &sources);
     }
     if let Some(day) = plan.summaries_for {
+        // Horodaté avant l'exécution : même si la génération dure (deux appels de
+        // 120 s au pire), le tick suivant ne doit pas la relancer.
+        *verrou(&st.dernier_essai_syntheses) = now_s();
         run_summaries(app, &st, day);
     }
+}
+
+/// Consomme les événements shell poussés par les threads lecteurs des PTY : résout
+/// la racine du dépôt (`git rev-parse`, un sous-processus), insère, et ne notifie le
+/// front que si quelque chose a réellement été écrit. Un seul thread, donc les
+/// insertions restent sérialisées sans faire attendre les PTY.
+fn demarrer_ecrivain_shell(app: AppHandle, st: Arc<ActivityState>) {
+    let Some(rx) = verrou(&st.shell_rx).take() else { return };
+    std::thread::spawn(move || {
+        for mut evenement in rx {
+            evenement.workspace_dir = evenement.workspace_dir.map(|d| repo_root(&d));
+            let insere = verrou(&st.store)
+                .as_ref()
+                .and_then(|store| store.insert_events(std::slice::from_ref(&evenement)).ok())
+                .unwrap_or(0);
+            if insere > 0 {
+                let _ = app.emit("activity-updated", serde_json::json!({ "source": "shell" }));
+            }
+        }
+    });
 }
 
 /// Démarre le planificateur : premier tick immédiat, puis toutes les minutes.
 /// Le corps de chaque tick est isolé par `catch_unwind` pour qu'une panique d'un
 /// collecteur n'arrête pas définitivement la boucle.
 pub fn start_scheduler(app: AppHandle) {
+    let st = app.state::<Arc<ActivityState>>().inner().clone();
+    demarrer_ecrivain_shell(app.clone(), st);
+
     std::thread::spawn(move || loop {
         if std::panic::catch_unwind(AssertUnwindSafe(|| tick(&app))).is_err() {
             eprintln!("tick du planificateur d'activité interrompu par une panique");
@@ -487,24 +591,8 @@ pub async fn activity_summary(
         let llm_settings = lecture(&st.settings).llm.clone();
         let provider = llm::from_settings(&llm_settings);
 
-        let resultat = {
-            let guard = store_ouvert(&st)?;
-            let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
-            summaries::generate(
-                store,
-                provider.as_ref(),
-                &llm_settings,
-                &day,
-                kind,
-                force,
-                now_s(),
-                &chrono::Local,
-            )
-            .map_err(|e| match e {
-                LlmError::Unauthorized => format!("unauthorized: {e}"),
-                autre => autre.to_string(),
-            })?
-        };
+        let resultat =
+            synthese_hors_verrou(&st, provider.as_ref(), &llm_settings, &day, kind, force)?;
 
         if !resultat.cached {
             let _ = app.emit(
@@ -516,6 +604,38 @@ pub async fn activity_summary(
     })
     .await
     .map_err(|e| format!("synthèse interrompue : {e}"))?
+}
+
+/// Synthèse **déjà en cache** pour ce jour et ce type, ou `None` s'il n'y en a pas.
+/// N'appelle jamais le LLM et ne construit même pas le digest : c'est le chemin du
+/// chargement automatique du dashboard (montage, changement de jour, rafraîchissement
+/// après collecte), qui déclenchait sinon un appel LLM par événement collecté.
+/// Seuls le bouton « Générer maintenant », le ↻ et le planificateur passent par
+/// `activity_summary`.
+///
+/// Le `day` interrogé est normalisé comme à l'écriture : lundi de la semaine pour
+/// `semaine`, le jour lui-même sinon. La `Summary` rendue porte ce jour normalisé
+/// dans son champ `day` et `cached: true`.
+#[tauri::command]
+pub fn activity_summary_cached(
+    st: State<'_, Arc<ActivityState>>,
+    day: String,
+    kind: String,
+) -> Result<Option<Summary>, String> {
+    let kind_parse =
+        SummaryKind::parse(&kind).ok_or_else(|| format!("type de synthèse inconnu : {kind}"))?;
+    let date = chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+        .map_err(|e| format!("jour invalide {day:?} : {e}"))?;
+    let cache_day = summaries::cache_day_for(date, kind_parse);
+
+    let stored = avec_store(&st, |store| store.get_summary(&cache_day, kind_parse.as_str()))?;
+    Ok(stored.map(|s| Summary {
+        day: s.day,
+        text: s.text,
+        model: s.model,
+        generated_at: s.generated_at,
+        cached: true,
+    }))
 }
 
 #[tauri::command]
@@ -553,6 +673,10 @@ pub fn activity_set_settings(
     let devient_active = settings.shell.integration;
     *ecriture(&st.settings) = settings;
 
+    // Nouveaux réglages (typiquement un jeton renouvelé) : on libère le repli pour
+    // que le prochain tick retente les synthèses immédiatement.
+    *verrou(&st.dernier_essai_syntheses) = 0;
+
     if devient_active && !etait_active {
         if let Some(dir) = &st.shims_dir {
             if let Err(e) = install_shims(dir) {
@@ -578,23 +702,18 @@ pub fn on_shell_command(st: &ActivityState, pty: u32, cmd: &str, pwd: &str) {
     verrou(&st.pairer).on_command(pty, cmd, pwd, now_ms());
 }
 
-/// Marqueur OSC 133 D : apparie, enregistre l'événement `shell_cmd` et notifie le front.
-pub fn on_shell_exit(app: &AppHandle, st: &ActivityState, pty: u32, code: i32) {
+/// Marqueur OSC 133 D : apparie la commande et pousse l'événement vers l'écrivain.
+///
+/// Appelée **en ligne dans la boucle de lecture du PTY**, avant que le morceau de
+/// sortie ne soit transmis au front : tout ce qui est lent (racine du dépôt via
+/// `git rev-parse`, verrou du store, insertion) est déporté sur le thread
+/// `demarrer_ecrivain_shell`. Ici, rien qu'un `send` sur un canal non borné.
+pub fn on_shell_exit(st: &ActivityState, pty: u32, code: i32) {
     let ignored = lecture(&st.settings).shell.ignored_commands.clone();
     let evenement = verrou(&st.pairer).on_exit(pty, code, now_ms(), &ignored);
-    let Some(mut evenement) = evenement else { return };
-
-    // `repo_root` lance un sous-process : calculé avant de prendre le verrou du store.
-    evenement.workspace_dir = evenement.workspace_dir.map(|d| repo_root(&d));
-
-    // Le front ne recharge que si quelque chose a réellement été écrit.
-    let insere = verrou(&st.store)
-        .as_ref()
-        .and_then(|store| store.insert_events(std::slice::from_ref(&evenement)).ok())
-        .unwrap_or(0);
-    if insere > 0 {
-        let _ = app.emit("activity-updated", serde_json::json!({ "source": "shell" }));
-    }
+    let Some(evenement) = evenement else { return };
+    // Échec = écrivain disparu (arrêt de l'application) : rien à signaler ici.
+    let _ = st.shell_tx.send(evenement);
 }
 
 /// Le PTY est terminé : oublier toute commande restée en attente.
@@ -606,53 +725,10 @@ pub fn on_pty_closed(st: &ActivityState, pty: u32) {
 mod tests {
     use super::*;
 
-    fn at(h: u32, m: u32, day: &str) -> chrono::NaiveDateTime {
-        chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").unwrap().and_hms_opt(h, m, 0).unwrap()
-    }
-
-    #[test]
-    fn premier_tick_collecte_tout_et_ne_resume_pas_avant_l_heure() {
-        let p = plan_tick(0, at(6, 59, "2026-09-16"), &HashMap::new(), None, &ScheduleSettings::default());
-        assert!(p.collect_git_claude && p.collect_clickup && p.summaries_for.is_none());
-    }
-
-    #[test]
-    fn a_7h_un_mercredi_resume_la_veille_une_seule_fois() {
-        let p = plan_tick(0, at(7, 0, "2026-09-16"), &HashMap::new(), None, &ScheduleSettings::default());
-        assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()));
-        let p2 = plan_tick(0, at(7, 1, "2026-09-16"), &HashMap::new(), Some("2026-09-16"), &ScheduleSettings::default());
-        assert!(p2.summaries_for.is_none());
-    }
-
-    #[test]
-    fn lundi_resume_vendredi_et_weekend_ne_resume_pas() {
-        let p = plan_tick(0, at(9, 0, "2026-09-21"), &HashMap::new(), None, &ScheduleSettings::default());
-        assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 18).unwrap()));
-        assert!(plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, &ScheduleSettings::default()).summaries_for.is_none());
-    }
-
-    #[test]
-    fn cadences_de_collecte() {
-        let mut last = HashMap::new();
-        last.insert("git".to_string(), 1000);
-        last.insert("clickup".to_string(), 1000);
-        let p = plan_tick(1200, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), &ScheduleSettings::default());
-        assert!(!p.collect_git_claude && !p.collect_clickup);
-        let p = plan_tick(1400, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), &ScheduleSettings::default());
-        assert!(p.collect_git_claude && !p.collect_clickup);
-    }
-
-    #[test]
-    fn le_weekend_resume_quand_weekdays_only_est_faux() {
-        let schedule = ScheduleSettings { hour: 7, minute: 0, weekdays_only: false };
-        let p = plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, &schedule);
-        // Samedi 19/09 → dernier jour ouvré = vendredi 18/09.
-        assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 18).unwrap()));
-    }
-
-    #[test]
-    fn les_erreurs_sont_bornees_a_vingt() {
-        let st = ActivityState {
+    /// État minimal (sans base, sans shims) pour les tests purs.
+    fn etat_de_test() -> ActivityState {
+        let (shell_tx, shell_rx) = std::sync::mpsc::channel();
+        ActivityState {
             store: Mutex::new(None),
             open_error: Mutex::new(None),
             settings: RwLock::new(Settings::default()),
@@ -660,7 +736,194 @@ mod tests {
             shims_dir: None,
             last_collect: Mutex::new(HashMap::new()),
             errors: Mutex::new(Vec::new()),
+            dernier_essai_syntheses: Mutex::new(0),
+            shell_tx,
+            shell_rx: Mutex::new(Some(shell_rx)),
+        }
+    }
+
+    /// Comme `etat_de_test`, avec une base en mémoire réelle.
+    fn etat_de_test_avec_store() -> ActivityState {
+        let st = etat_de_test();
+        *verrou(&st.store) = Some(Store::open_in_memory().expect("base en mémoire"));
+        st
+    }
+
+    /// Le cœur du correctif de concurrence : pendant `provider.complete()`, qui dure
+    /// jusqu'à 120 s, le verrou du store doit être **libre**. Sinon le thread lecteur
+    /// de chaque PTY se bloque dans l'écriture des événements shell, et les commandes
+    /// synchrones du dashboard figent le thread principal de la fenêtre.
+    #[test]
+    fn le_verrou_du_store_est_libre_pendant_l_appel_au_fournisseur() {
+        use terminials_core::activity::providers::llm::{LlmProvider, LlmRequest};
+        use terminials_core::activity::{EventKind, NewEvent};
+
+        struct Sonde<'a> {
+            st: &'a ActivityState,
+            verrou_libre: Mutex<Option<bool>>,
+        }
+        impl LlmProvider for Sonde<'_> {
+            fn name(&self) -> String {
+                "sonde".to_string()
+            }
+            fn complete(&self, _r: &LlmRequest) -> Result<String, LlmError> {
+                *self.verrou_libre.lock().unwrap() = Some(self.st.store.try_lock().is_ok());
+                Ok("## Bilan\n- ok".to_string())
+            }
+        }
+
+        let st = etat_de_test_avec_store();
+        let maintenant = now_s();
+        let jour = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+        verrou(&st.store)
+            .as_ref()
+            .unwrap()
+            .insert_events(&[NewEvent {
+                ts: maintenant,
+                kind: EventKind::Commit,
+                workspace_dir: Some("/a".to_string()),
+                branch: None,
+                title: "un commit".to_string(),
+                body: None,
+                ticket_ids: vec![],
+                source_ref: "sha".to_string(),
+            }])
+            .unwrap();
+
+        let sonde = Sonde { st: &st, verrou_libre: Mutex::new(None) };
+        let reglages = lecture(&st.settings).llm.clone();
+        let resultat =
+            synthese_hors_verrou(&st, &sonde, &reglages, &jour, SummaryKind::Bilan, false).unwrap();
+
+        assert_eq!(resultat.text, "## Bilan\n- ok");
+        assert_eq!(resultat.day, jour);
+        assert!(!resultat.cached);
+        assert_eq!(
+            *sonde.verrou_libre.lock().unwrap(),
+            Some(true),
+            "le verrou du store ne doit pas être tenu pendant l'appel au fournisseur"
+        );
+
+        // Et la synthèse a bien été écrite : le second passage la rend depuis le cache,
+        // sans repasser par le fournisseur.
+        let sonde2 = Sonde { st: &st, verrou_libre: Mutex::new(None) };
+        let relu =
+            synthese_hors_verrou(&st, &sonde2, &reglages, &jour, SummaryKind::Bilan, false).unwrap();
+        assert!(relu.cached);
+        assert_eq!(*sonde2.verrou_libre.lock().unwrap(), None, "aucun appel au fournisseur");
+    }
+
+    /// `activity_summary_cached` passe par la même normalisation de clé que
+    /// l'écriture : une synthèse `semaine` écrite sous le lundi doit être retrouvée
+    /// depuis n'importe quel jour de cette semaine.
+    #[test]
+    fn la_lecture_de_cache_normalise_le_jour_de_la_semaine() {
+        use terminials_core::activity::store::StoredSummary;
+
+        let st = etat_de_test_avec_store();
+        verrou(&st.store)
+            .as_ref()
+            .unwrap()
+            .put_summary(&StoredSummary {
+                day: "2026-09-14".to_string(), // lundi
+                kind: "semaine".to_string(),
+                model: "m".to_string(),
+                digest_hash: "h".to_string(),
+                text: "## Semaine".to_string(),
+                generated_at: 42,
+            })
+            .unwrap();
+
+        let lire = |jour: &str, kind: &str| {
+            let k = SummaryKind::parse(kind).unwrap();
+            let date = chrono::NaiveDate::parse_from_str(jour, "%Y-%m-%d").unwrap();
+            let cle = summaries::cache_day_for(date, k);
+            avec_store(&st, |store| store.get_summary(&cle, k.as_str())).unwrap()
         };
+
+        assert_eq!(lire("2026-09-17", "semaine").unwrap().text, "## Semaine", "jeudi → lundi");
+        assert_eq!(lire("2026-09-14", "semaine").unwrap().text, "## Semaine");
+        assert!(lire("2026-09-17", "bilan").is_none(), "un bilan n'est pas normalisé");
+    }
+
+    fn at(h: u32, m: u32, day: &str) -> chrono::NaiveDateTime {
+        chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d").unwrap().and_hms_opt(h, m, 0).unwrap()
+    }
+
+    #[test]
+    fn premier_tick_collecte_tout_et_ne_resume_pas_avant_l_heure() {
+        let p = plan_tick(0, at(6, 59, "2026-09-16"), &HashMap::new(), None, None, &ScheduleSettings::default());
+        assert!(p.collect_git_claude && p.collect_clickup && p.summaries_for.is_none());
+    }
+
+    #[test]
+    fn a_7h_un_mercredi_resume_la_veille_une_seule_fois() {
+        let p = plan_tick(0, at(7, 0, "2026-09-16"), &HashMap::new(), None, None, &ScheduleSettings::default());
+        assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()));
+        let p2 = plan_tick(0, at(7, 1, "2026-09-16"), &HashMap::new(), Some("2026-09-16"), None, &ScheduleSettings::default());
+        assert!(p2.summaries_for.is_none());
+    }
+
+    #[test]
+    fn lundi_resume_vendredi_et_weekend_ne_resume_pas() {
+        let p = plan_tick(0, at(9, 0, "2026-09-21"), &HashMap::new(), None, None, &ScheduleSettings::default());
+        assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 18).unwrap()));
+        assert!(plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, None, &ScheduleSettings::default()).summaries_for.is_none());
+    }
+
+    #[test]
+    fn cadences_de_collecte() {
+        let mut last = HashMap::new();
+        last.insert("git".to_string(), 1000);
+        last.insert("clickup".to_string(), 1000);
+        let p = plan_tick(1200, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), None, &ScheduleSettings::default());
+        assert!(!p.collect_git_claude && !p.collect_clickup);
+        let p = plan_tick(1400, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), None, &ScheduleSettings::default());
+        assert!(p.collect_git_claude && !p.collect_clickup);
+    }
+
+    #[test]
+    fn le_weekend_resume_quand_weekdays_only_est_faux() {
+        let schedule = ScheduleSettings { hour: 7, minute: 0, weekdays_only: false };
+        let p = plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, None, &schedule);
+        // Samedi 19/09 → dernier jour ouvré = vendredi 18/09.
+        assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 18).unwrap()));
+    }
+
+
+    #[test]
+    fn une_tentative_de_synthese_recente_bloque_le_tick_suivant() {
+        // Jeton expiré à 07:00 : sans repli, `plan_tick` relançait deux appels LLM
+        // de 120 s toutes les 60 s jusqu'à minuit (le curseur n'avance que sur un
+        // succès). Une tentative toutes les 30 min suffit au rattrapage.
+        let maintenant = 1_000_000;
+        let plan = |essai: Option<i64>| {
+            plan_tick(maintenant, at(7, 30, "2026-09-16"), &HashMap::new(), None, essai, &ScheduleSettings::default())
+                .summaries_for
+        };
+        assert!(plan(None).is_some(), "aucune tentative encore : on lance");
+        assert!(plan(Some(maintenant - 60)).is_none(), "tentative il y a 1 min : on attend");
+        assert!(plan(Some(maintenant - 1799)).is_none(), "1799 s : toujours trop tôt");
+        assert!(plan(Some(maintenant - 1800)).is_some(), "30 min écoulées : on retente");
+    }
+
+    #[test]
+    fn les_erreurs_identiques_ne_sont_pas_dupliquees() {
+        let st = etat_de_test();
+        pousser_erreurs(&st, &["jeton LLM refusé".to_string()]);
+        pousser_erreurs(&st, &["jeton LLM refusé".to_string()]);
+        pousser_erreurs(&st, &["collecte git".to_string(), "jeton LLM refusé".to_string()]);
+        let errors = verrou(&st.errors);
+        assert_eq!(
+            *errors,
+            vec!["jeton LLM refusé".to_string(), "collecte git".to_string()],
+            "un message déjà présent ne doit pas chasser les autres du bandeau"
+        );
+    }
+
+    #[test]
+    fn les_erreurs_sont_bornees_a_vingt() {
+        let st = etat_de_test();
         let lot: Vec<String> = (0..25).map(|i| format!("erreur {i}")).collect();
         pousser_erreurs(&st, &lot);
         let errors = verrou(&st.errors);
