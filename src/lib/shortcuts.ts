@@ -13,6 +13,7 @@ export type ShortcutAction =
   | { type: "rename-workspace" }
   | { type: "toggle-diff" }
   | { type: "toggle-sidebar" }
+  | { type: "toggle-dashboard" }
   | { type: "prev-workspace" }
   | { type: "next-workspace" }
   | { type: "move-workspace"; dir: "up" | "down" } // réordonne, ne navigue pas
@@ -40,6 +41,7 @@ const CTRL_SHIFT: Record<string, ShortcutAction> = {
   KeyR: { type: "rename-workspace" },
   KeyD: { type: "toggle-diff" },
   KeyB: { type: "toggle-sidebar" },
+  KeyH: { type: "toggle-dashboard" },
   ArrowUp: { type: "move-workspace", dir: "up" },
   ArrowDown: { type: "move-workspace", dir: "down" },
 };

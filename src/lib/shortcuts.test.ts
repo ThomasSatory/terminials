@@ -23,6 +23,7 @@ describe("matchShortcut — couche Ctrl+Shift (convention gnome-terminal)", () =
     ["KeyR", { type: "rename-workspace" }],
     ["KeyD", { type: "toggle-diff" }],
     ["KeyB", { type: "toggle-sidebar" }],
+    ["KeyH", { type: "toggle-dashboard" }],
   ];
   it.each(CASES)("Ctrl+Shift+%s", (code, expected) => {
     expect(matchShortcut(cs(code))).toEqual(expected);
@@ -43,7 +44,7 @@ describe("matchShortcut — couche Ctrl+Shift (convention gnome-terminal)", () =
 });
 
 describe("matchShortcut — refus des Ctrl+lettre nus (réservés à readline)", () => {
-  it.each(["KeyN", "KeyT", "KeyW", "KeyO", "KeyQ", "KeyR", "KeyD", "KeyB", "KeyC", "KeyV"])(
+  it.each(["KeyN", "KeyT", "KeyW", "KeyO", "KeyQ", "KeyR", "KeyD", "KeyB", "KeyH", "KeyC", "KeyV"])(
     "Ctrl+%s nu → null",
     (code) => {
       expect(matchShortcut(c(code))).toBeNull();

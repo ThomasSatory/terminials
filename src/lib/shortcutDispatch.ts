@@ -3,6 +3,7 @@ import { openFolderDialog } from "./openFolder";
 import { focusPane } from "./paneFocus";
 import { paneNavTarget, type ShortcutAction } from "./shortcuts";
 import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
+import { useDashboardStore } from "../store/dashboard";
 
 /**
  * Exécute une action de raccourci sur le store. Point UNIQUE de dispatch :
@@ -55,6 +56,9 @@ export function dispatchShortcut(action: ShortcutAction): void {
       return;
     case "toggle-sidebar":
       s.toggleSidebar();
+      return;
+    case "toggle-dashboard":
+      useDashboardStore.getState().toggle();
       return;
     case "prev-workspace":
     case "next-workspace": {
