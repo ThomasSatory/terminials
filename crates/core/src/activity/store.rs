@@ -141,7 +141,7 @@ impl Store {
         to: i64,
         workspace_dir: Option<&str>,
     ) -> StoreResult<Vec<ActivityEvent>> {
-        let mut rows: Vec<(i64, i64, String, Option<String>, Option<String>, String, Option<String>, String)> =
+        let mut rows: Vec<(i64, i64, EventKind, Option<String>, Option<String>, String, Option<String>, String)> =
             Vec::new();
         {
             let sql = if workspace_dir.is_some() {
@@ -153,10 +153,21 @@ impl Store {
             };
             let mut stmt = self.conn.prepare(sql)?;
             let mapper = |row: &rusqlite::Row| {
+                let kind_raw: String = row.get(2)?;
+                let kind = EventKind::parse(&kind_raw).ok_or_else(|| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Text,
+                        Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("kind d'événement inconnu en base : {kind_raw:?}"),
+                        )),
+                    )
+                })?;
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, i64>(1)?,
-                    row.get::<_, String>(2)?,
+                    kind,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
                     row.get::<_, String>(5)?,
@@ -218,7 +229,7 @@ impl Store {
             events.push(ActivityEvent {
                 id,
                 ts,
-                kind: EventKind::parse(&kind).unwrap_or(EventKind::ShellCmd),
+                kind,
                 workspace_dir,
                 branch,
                 title,
@@ -673,5 +684,17 @@ mod tests {
         let got = s.query(T0, T0 + 1, None).unwrap();
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].title, "3 prompts");
+    }
+    #[test]
+    fn query_echoue_si_le_kind_en_base_est_inconnu() {
+        let s = Store::open_in_memory().unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO events (ts, kind, workspace_dir, branch, title, body, ticket_ids, source_ref)
+                 VALUES (?1, 'inconnu', '/a', 'master', 't', NULL, '', 'x')",
+                params![T0],
+            )
+            .unwrap();
+        assert!(s.query(T0, T0 + 1, None).is_err());
     }
 }
