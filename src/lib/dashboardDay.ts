@@ -36,10 +36,13 @@ export function shiftDay(day: string, delta: number): string {
   return toDayString(new Date(y, m - 1, d + delta));
 }
 
-/** Plage epoch secondes [minuit local, minuit local + 1 jour). */
+/** Plage epoch secondes [minuit local, minuit local du lendemain). `to` est
+ *  reconstruit par composants (comme `weekRange`), PAS par `from + 86400` : les
+ *  deux jours de changement d'heure par an durent 23 h ou 25 h en local. */
 export function dayRange(day: string): { from: number; to: number } {
   const from = Math.floor(dayToDate(day).getTime() / 1000);
-  return { from, to: from + 86400 };
+  const to = Math.floor(dayToDate(shiftDay(day, 1)).getTime() / 1000);
+  return { from, to };
 }
 
 /**
