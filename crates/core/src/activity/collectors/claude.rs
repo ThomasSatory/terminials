@@ -1,7 +1,7 @@
 //! Collecteur d'événements `claude_prompt`/`claude_session` à partir des transcripts
 //! Claude Code (`~/.claude/projects/*/*.jsonl`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::activity::store::Store;
@@ -21,8 +21,23 @@ pub struct Parsed {
 const IGNORED_PREFIXES: [&str; 3] = ["<local-command", "<command-name", "<system-reminder"];
 
 /// Parse un transcript Claude Code (JSON Lines). Fonction pure, exposée pour les tests :
-/// ne touche ni au disque ni au store.
+/// ne touche ni au disque ni au store. Résout la racine git via `repo_root`.
 pub fn parse_transcript(path_label: &str, content: &str, ticket_patterns: &[String]) -> Parsed {
+    parse_transcript_with(path_label, content, ticket_patterns, &mut |c| repo_root(c))
+}
+
+/// Comme [`parse_transcript`], mais avec la résolution de racine git injectable
+/// (`resolve_repo_root`). Permet de tester sans dépendre de `git rev-parse`, et de
+/// vérifier que la résolution est mise en cache : un seul appel par `cwd` distinct
+/// (les sessions changent rarement de dossier, donc évite un `git rev-parse` par
+/// prompt).
+pub fn parse_transcript_with(
+    path_label: &str,
+    content: &str,
+    ticket_patterns: &[String],
+    resolve_repo_root: &mut dyn FnMut(&str) -> String,
+) -> Parsed {
+    let mut repo_root_cache: HashMap<String, String> = HashMap::new();
     let mut prompts = Vec::new();
     let mut session_id: Option<String> = None;
     let mut min_ts: Option<i64> = None;
@@ -73,7 +88,12 @@ pub fn parse_transcript(path_label: &str, content: &str, ticket_patterns: &[Stri
         };
 
         let cwd = value.get("cwd").and_then(|v| v.as_str());
-        let workspace_dir = cwd.map(repo_root);
+        let workspace_dir = cwd.map(|c| {
+            repo_root_cache
+                .entry(c.to_string())
+                .or_insert_with(|| resolve_repo_root(c))
+                .clone()
+        });
         let branch = value
             .get("gitBranch")
             .and_then(|v| v.as_str())
@@ -295,6 +315,17 @@ ligne invalide
         assert_eq!(body["prompts"], 2);
         assert_eq!(body["durationSec"], 5463);   // 09:12:57 → 10:44:00
         assert_eq!(body["sessionId"], "s1");
+    }
+    #[test]
+    fn repo_root_resolu_une_seule_fois_par_cwd() {
+        let mut appels = 0usize;
+        let mut resolver = |c: &str| {
+            appels += 1;
+            c.to_string()
+        };
+        let p = parse_transcript_with("/p/s1.jsonl", FIXTURE, &[], &mut resolver);
+        assert_eq!(p.prompts.len(), 2);
+        assert_eq!(appels, 1, "même cwd pour les 2 prompts retenus → un seul appel au resolver");
     }
     #[test]
     fn transcript_sans_prompt_n_a_pas_de_session() {
