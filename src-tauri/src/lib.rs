@@ -34,7 +34,7 @@ fn spawn_pty(
 ) -> Result<PtyId, String> {
     // Intégration shell (OSC 133) : shims posés au démarrage et drapeau activé.
     let st = app.state::<Arc<ActivityState>>().inner().clone();
-    let integration = st.settings.read().unwrap().shell.integration;
+    let integration = activity::integration_shell_active(&st);
     let launch = st
         .shims_dir
         .as_ref()

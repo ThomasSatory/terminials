@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -70,6 +70,43 @@ pub struct TickPlan {
     pub collect_git_claude: bool,
     pub collect_clickup: bool,
     pub summaries_for: Option<chrono::NaiveDate>,
+}
+
+// ---------------------------------------------------------------------------
+// Accès aux verrous, tolérants à l'empoisonnement.
+//
+// Un `Mutex` empoisonné le reste définitivement : si un collecteur panique verrou
+// tenu, un `lock().unwrap()` ferait paniquer *tous* les accès suivants — le
+// `catch_unwind` du planificateur ne ferait que répéter la panique chaque minute,
+// et surtout le thread lecteur de chaque PTY mourrait dans `on_shell_command` /
+// `on_shell_exit` sans jamais émettre `pty-exit`, laissant le front croire le pane
+// vivant. Aucune donnée de cet état ne repose sur un invariant qu'une panique
+// pourrait casser (la base a ses propres transactions), donc on récupère la valeur
+// telle quelle et on continue.
+// ---------------------------------------------------------------------------
+
+fn verrou<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn lecture<T>(l: &RwLock<T>) -> RwLockReadGuard<'_, T> {
+    l.read().unwrap_or_else(|e| e.into_inner())
+}
+
+fn ecriture<T>(l: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
+    l.write().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Garde du store ouvert, ou le message d'erreur d'ouverture mémorisé. Unique
+/// point de repli « base indisponible » de tout le module.
+fn store_ouvert(st: &ActivityState) -> Result<MutexGuard<'_, Option<Store>>, String> {
+    let guard = verrou(&st.store);
+    if guard.is_none() {
+        return Err(verrou(&st.open_error)
+            .clone()
+            .unwrap_or_else(|| "base d'activité indisponible".to_string()));
+    }
+    Ok(guard)
 }
 
 fn now_s() -> i64 {
@@ -170,14 +207,18 @@ pub fn init() -> ActivityState {
 
 /// `$XDG_DATA_HOME/terminials/activity.db`, défaut `~/.local/share/terminials/activity.db`.
 pub fn db_path() -> PathBuf {
-    let base = std::env::var("XDG_DATA_HOME")
-        .ok()
+    db_path_depuis(std::env::var("XDG_DATA_HOME").ok(), std::env::var("HOME").ok())
+}
+
+/// Cœur pur de `db_path` : les deux variables d'environnement sont passées en
+/// paramètres, ce qui rend la règle testable sans toucher à l'environnement du
+/// process (partagé par tous les tests, qui tournent en parallèle).
+pub fn db_path_depuis(xdg_data_home: Option<String>, home: Option<String>) -> PathBuf {
+    let base = xdg_data_home
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| {
-            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
-                .join(".local")
-                .join("share")
+            PathBuf::from(home.unwrap_or_else(|| "/tmp".into())).join(".local").join("share")
         });
     base.join("terminials").join("activity.db")
 }
@@ -187,7 +228,7 @@ fn pousser_erreurs(st: &ActivityState, nouvelles: &[String]) {
     if nouvelles.is_empty() {
         return;
     }
-    let mut errors = st.errors.lock().unwrap();
+    let mut errors = verrou(&st.errors);
     errors.extend(nouvelles.iter().cloned());
     let trop = errors.len().saturating_sub(MAX_ERREURS);
     if trop > 0 {
@@ -207,27 +248,21 @@ pub fn run_collect(app: &AppHandle, st: &ActivityState, sources: &[&str]) -> Col
     let mut report = CollectReport::default();
 
     let (patterns, author, token) = {
-        let s = st.settings.read().unwrap();
+        let s = lecture(&st.settings);
         (s.ticket_patterns.clone(), s.git.author_email.clone(), s.clickup.token.clone())
     };
     let client = if token.is_empty() { None } else { Some(ClickupClient::new(&token)) };
 
     for source in sources {
         {
-            let guard = st.store.lock().unwrap();
-            let store = match guard.as_ref() {
-                Some(s) => s,
-                None => {
-                    let msg = st
-                        .open_error
-                        .lock()
-                        .unwrap()
-                        .clone()
-                        .unwrap_or_else(|| "base d'activité indisponible".into());
+            let guard = match store_ouvert(st) {
+                Ok(g) => g,
+                Err(msg) => {
                     report.errors.push(msg);
                     break;
                 }
             };
+            let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
             match *source {
                 "git" => {
                     let (n, errs) = git::collect(store, author.as_deref(), &patterns, now);
@@ -251,7 +286,7 @@ pub fn run_collect(app: &AppHandle, st: &ActivityState, sources: &[&str]) -> Col
                 autre => report.errors.push(format!("source de collecte inconnue : {autre}")),
             }
         }
-        st.last_collect.lock().unwrap().insert((*source).to_string(), now);
+        verrou(&st.last_collect).insert((*source).to_string(), now);
         let _ = app.emit("activity-updated", serde_json::json!({ "source": source }));
     }
 
@@ -268,7 +303,7 @@ pub fn run_collect(app: &AppHandle, st: &ActivityState, sources: &[&str]) -> Col
 pub fn run_summaries(app: &AppHandle, st: &ActivityState, day: chrono::NaiveDate) {
     use chrono::{Datelike, Weekday};
 
-    let llm_settings = st.settings.read().unwrap().llm.clone();
+    let llm_settings = lecture(&st.settings).llm.clone();
     let provider = llm::from_settings(&llm_settings);
     let day_str = day.format("%Y-%m-%d").to_string();
 
@@ -277,12 +312,15 @@ pub fn run_summaries(app: &AppHandle, st: &ActivityState, day: chrono::NaiveDate
         kinds.push(SummaryKind::Semaine);
     }
 
-    let mut erreurs = Vec::new();
+    let mut resultats: Vec<Result<(), String>> = Vec::new();
     for kind in kinds {
-        let res = {
-            let guard = st.store.lock().unwrap();
-            match guard.as_ref() {
-                Some(store) => summaries::generate(
+        // Une base indisponible est remontée telle quelle : la déguiser en
+        // `LlmError::Disabled` afficherait « fournisseur désactivé » alors que
+        // la cause est le store.
+        let res = match store_ouvert(st) {
+            Ok(guard) => {
+                let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
+                summaries::generate(
                     store,
                     provider.as_ref(),
                     &llm_settings,
@@ -291,44 +329,50 @@ pub fn run_summaries(app: &AppHandle, st: &ActivityState, day: chrono::NaiveDate
                     false,
                     now_s(),
                     &chrono::Local,
-                ),
-                None => Err(LlmError::Disabled),
+                )
+                .map(|_| ())
+                .map_err(|e| format!("synthèse {} du {day_str} : {e}", kind.as_str()))
             }
+            Err(msg) => Err(msg),
         };
-        match res {
-            Ok(_) => {
-                let _ = app.emit(
-                    "summary-ready",
-                    serde_json::json!({ "day": day_str, "kind": kind.as_str() }),
-                );
-            }
-            Err(e) => {
-                erreurs.push(format!("synthèse {} du {day_str} : {e}", kind.as_str()));
-            }
+        if res.is_ok() {
+            let _ = app.emit(
+                "summary-ready",
+                serde_json::json!({ "day": day_str, "kind": kind.as_str() }),
+            );
         }
+        resultats.push(res);
     }
+
+    let erreurs: Vec<String> = resultats.iter().filter_map(|r| r.as_ref().err().cloned()).collect();
     pousser_erreurs(st, &erreurs);
 
-    // Le curseur porte le jour *courant* (et non `day`, qui est le jour résumé) :
-    // c'est lui que `plan_tick` compare pour ne lancer les synthèses qu'une fois.
-    let aujourdhui = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
-    if let Some(store) = st.store.lock().unwrap().as_ref() {
-        let _ = store.set_cursor(CURSEUR_DERNIER_JOUR, &aujourdhui);
+    if doit_avancer_curseur(&resultats) {
+        // Le curseur porte le jour *courant* (et non `day`, qui est le jour résumé) :
+        // c'est lui que `plan_tick` compare pour ne lancer les synthèses qu'une fois.
+        let aujourdhui = chrono::Local::now().date_naive().format("%Y-%m-%d").to_string();
+        if let Some(store) = verrou(&st.store).as_ref() {
+            let _ = store.set_cursor(CURSEUR_DERNIER_JOUR, &aujourdhui);
+        }
     }
+}
+
+/// Le curseur `summary_last_day` n'avance que si au moins une synthèse du tick a
+/// abouti (génération ou cache). Sinon une coupure réseau ou un jeton expiré à
+/// 07:00 marquerait la journée comme faite et supprimerait tout rattrapage jusqu'au
+/// lendemain. Une liste vide (rien de tenté) n'avance pas non plus le curseur.
+pub fn doit_avancer_curseur(resultats: &[Result<(), String>]) -> bool {
+    resultats.iter().any(|r| r.is_ok())
 }
 
 /// Un passage du planificateur : décide puis exécute.
 fn tick(app: &AppHandle) {
     let st = app.state::<Arc<ActivityState>>().inner().clone();
 
-    let schedule = st.settings.read().unwrap().schedule.clone();
-    let last = st.last_collect.lock().unwrap().clone();
-    let dernier_jour = st
-        .store
-        .lock()
-        .unwrap()
-        .as_ref()
-        .and_then(|s| s.get_cursor(CURSEUR_DERNIER_JOUR).ok().flatten());
+    let schedule = lecture(&st.settings).schedule.clone();
+    let last = verrou(&st.last_collect).clone();
+    let dernier_jour =
+        verrou(&st.store).as_ref().and_then(|s| s.get_cursor(CURSEUR_DERNIER_JOUR).ok().flatten());
 
     let plan = plan_tick(
         now_s(),
@@ -371,14 +415,8 @@ fn avec_store<T>(
     st: &ActivityState,
     f: impl FnOnce(&Store) -> StoreResult<T>,
 ) -> Result<T, String> {
-    let guard = st.store.lock().unwrap();
-    let store = guard.as_ref().ok_or_else(|| {
-        st.open_error
-            .lock()
-            .unwrap()
-            .clone()
-            .unwrap_or_else(|| "base d'activité indisponible".to_string())
-    })?;
+    let guard = store_ouvert(st)?;
+    let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
     f(store).map_err(|e| e.to_string())
 }
 
@@ -446,18 +484,12 @@ pub async fn activity_summary(
 
     tauri::async_runtime::spawn_blocking(move || {
         let st = app.state::<Arc<ActivityState>>().inner().clone();
-        let llm_settings = st.settings.read().unwrap().llm.clone();
+        let llm_settings = lecture(&st.settings).llm.clone();
         let provider = llm::from_settings(&llm_settings);
 
         let resultat = {
-            let guard = st.store.lock().unwrap();
-            let store = guard.as_ref().ok_or_else(|| {
-                st.open_error
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .unwrap_or_else(|| "base d'activité indisponible".to_string())
-            })?;
+            let guard = store_ouvert(&st)?;
+            let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
             summaries::generate(
                 store,
                 provider.as_ref(),
@@ -493,18 +525,18 @@ pub fn activity_open_tasks(st: State<'_, Arc<ActivityState>>) -> Result<Vec<Open
 
 #[tauri::command]
 pub fn activity_status(st: State<'_, Arc<ActivityState>>) -> ActivityStatus {
-    let integration = st.settings.read().unwrap().shell.integration;
+    let integration = lecture(&st.settings).shell.integration;
     ActivityStatus {
-        last_collect: st.last_collect.lock().unwrap().clone(),
-        errors: st.errors.lock().unwrap().clone(),
+        last_collect: verrou(&st.last_collect).clone(),
+        errors: verrou(&st.errors).clone(),
         shell_integration: integration && st.shims_dir.is_some(),
-        db_error: st.open_error.lock().unwrap().clone(),
+        db_error: verrou(&st.open_error).clone(),
     }
 }
 
 #[tauri::command]
 pub fn activity_get_settings(st: State<'_, Arc<ActivityState>>) -> Settings {
-    st.settings.read().unwrap().clone()
+    lecture(&st.settings).clone()
 }
 
 /// Enregistre les réglages puis les remplace en mémoire. Si l'intégration shell
@@ -517,9 +549,9 @@ pub fn activity_set_settings(
 ) -> Result<(), String> {
     settings::save(&settings::default_path(), &settings).map_err(|e| e.to_string())?;
 
-    let etait_active = st.settings.read().unwrap().shell.integration;
+    let etait_active = lecture(&st.settings).shell.integration;
     let devient_active = settings.shell.integration;
-    *st.settings.write().unwrap() = settings;
+    *ecriture(&st.settings) = settings;
 
     if devient_active && !etait_active {
         if let Some(dir) = &st.shims_dir {
@@ -535,29 +567,39 @@ pub fn activity_set_settings(
 // Intégration shell : appelée depuis le thread lecteur du PTY (`lib.rs`).
 // ---------------------------------------------------------------------------
 
+/// Drapeau d'intégration shell, lu sans risque d'empoisonnement (appelé par
+/// `lib.rs` à chaque `spawn_pty`).
+pub fn integration_shell_active(st: &ActivityState) -> bool {
+    lecture(&st.settings).shell.integration
+}
+
 /// Marqueur OSC 133 C : mémorise la commande en cours pour ce PTY.
 pub fn on_shell_command(st: &ActivityState, pty: u32, cmd: &str, pwd: &str) {
-    st.pairer.lock().unwrap().on_command(pty, cmd, pwd, now_ms());
+    verrou(&st.pairer).on_command(pty, cmd, pwd, now_ms());
 }
 
 /// Marqueur OSC 133 D : apparie, enregistre l'événement `shell_cmd` et notifie le front.
 pub fn on_shell_exit(app: &AppHandle, st: &ActivityState, pty: u32, code: i32) {
-    let ignored = st.settings.read().unwrap().shell.ignored_commands.clone();
-    let evenement = st.pairer.lock().unwrap().on_exit(pty, code, now_ms(), &ignored);
+    let ignored = lecture(&st.settings).shell.ignored_commands.clone();
+    let evenement = verrou(&st.pairer).on_exit(pty, code, now_ms(), &ignored);
     let Some(mut evenement) = evenement else { return };
 
     // `repo_root` lance un sous-process : calculé avant de prendre le verrou du store.
     evenement.workspace_dir = evenement.workspace_dir.map(|d| repo_root(&d));
 
-    if let Some(store) = st.store.lock().unwrap().as_ref() {
-        let _ = store.insert_events(std::slice::from_ref(&evenement));
+    // Le front ne recharge que si quelque chose a réellement été écrit.
+    let insere = verrou(&st.store)
+        .as_ref()
+        .and_then(|store| store.insert_events(std::slice::from_ref(&evenement)).ok())
+        .unwrap_or(0);
+    if insere > 0 {
+        let _ = app.emit("activity-updated", serde_json::json!({ "source": "shell" }));
     }
-    let _ = app.emit("activity-updated", serde_json::json!({ "source": "shell" }));
 }
 
 /// Le PTY est terminé : oublier toute commande restée en attente.
 pub fn on_pty_closed(st: &ActivityState, pty: u32) {
-    st.pairer.lock().unwrap().forget(pty);
+    verrou(&st.pairer).forget(pty);
 }
 
 #[cfg(test)]
@@ -621,7 +663,7 @@ mod tests {
         };
         let lot: Vec<String> = (0..25).map(|i| format!("erreur {i}")).collect();
         pousser_erreurs(&st, &lot);
-        let errors = st.errors.lock().unwrap();
+        let errors = verrou(&st.errors);
         assert_eq!(errors.len(), MAX_ERREURS);
         assert_eq!(errors.first().unwrap(), "erreur 5");
         assert_eq!(errors.last().unwrap(), "erreur 24");
@@ -629,8 +671,26 @@ mod tests {
 
     #[test]
     fn le_chemin_de_la_base_suit_xdg_data_home() {
-        // `db_path` lit l'environnement : on vérifie seulement la forme du chemin.
-        let p = db_path();
-        assert!(p.ends_with("terminials/activity.db"), "chemin: {p:?}");
+        assert_eq!(
+            db_path_depuis(Some("/xdg".into()), Some("/home/t".into())),
+            PathBuf::from("/xdg/terminials/activity.db")
+        );
+        // Variable absente ou vide → repli sur ~/.local/share.
+        assert_eq!(
+            db_path_depuis(None, Some("/home/t".into())),
+            PathBuf::from("/home/t/.local/share/terminials/activity.db")
+        );
+        assert_eq!(
+            db_path_depuis(Some(String::new()), Some("/home/t".into())),
+            PathBuf::from("/home/t/.local/share/terminials/activity.db")
+        );
+    }
+
+    #[test]
+    fn le_curseur_n_avance_qu_apres_au_moins_un_succes() {
+        assert!(!doit_avancer_curseur(&[]));
+        assert!(!doit_avancer_curseur(&[Err("réseau".into()), Err("réseau".into())]));
+        assert!(doit_avancer_curseur(&[Err("réseau".into()), Ok(())]));
+        assert!(doit_avancer_curseur(&[Ok(()), Ok(())]));
     }
 }
