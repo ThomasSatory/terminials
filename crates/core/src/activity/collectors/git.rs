@@ -13,6 +13,9 @@ use crate::activity::{EventKind, NewEvent};
 /// Longueur maximale (en caractères) du corps de commit conservé dans `body.body`.
 const MAX_BODY_CHARS: usize = 400;
 
+/// Profondeur du tout premier scan d'un dépôt (30 jours), faute de curseur.
+const PREMIER_SCAN_SECONDES: i64 = 30 * 86_400;
+
 /// Scanne tous les repos actifs du store depuis leur curseur `git:<dir>`, insère les
 /// événements trouvés et avance le curseur. Retourne (nombre inséré, erreurs).
 ///
@@ -41,12 +44,16 @@ pub fn collect(
         }
 
         let cursor_name = format!("git:{dir}");
+        // Curseur absent (premier passage sur ce dépôt) : on borne à 30 jours en
+        // arrière, comme le collecteur ClickUp. Sans borne, la première passe
+        // parcourait tout l'historique personnel de chaque dépôt connu — et la
+        // liste des dépôts inclut tout projet où Claude Code a tourné un jour.
         let since = store
             .get_cursor(&cursor_name)
             .ok()
             .flatten()
             .and_then(|s| s.parse::<i64>().ok())
-            .unwrap_or(0);
+            .unwrap_or(now - PREMIER_SCAN_SECONDES);
 
         match commits_since(&dir, since, author_email, ticket_patterns) {
             Ok(events) => match apply_scan(store, &cursor_name, events, now) {
@@ -88,15 +95,21 @@ pub fn commits_since(
         None => config_user_email(dir).unwrap_or_default(),
     };
 
-    let mut args = vec![
-        "log".to_string(),
-        "--all".to_string(),
-        format!("--since=@{since}"),
-    ];
+    let mut args = vec!["log".to_string(), "--all".to_string()];
+    // `--since=@0` ne veut PAS dire « depuis epoch » : l'analyseur de dates de git
+    // refuse `@0` et, en cas d'échec, `approxidate()` renvoie l'heure courante
+    // (`git rev-parse --since=@0` affiche `--max-age=<maintenant>`). Un `since`
+    // nul ou négatif doit donc se traduire par *aucun* filtre de date, sans quoi
+    // un premier scan ne rapporterait que les commits de la seconde en cours.
+    if since > 0 {
+        args.push(format!("--since=@{since}"));
+    }
     if !author_email.is_empty() {
         args.push(format!("--author={author_email}"));
     }
-    args.push("--format=%x1e%H%x00%at%x00%s%x00%b".to_string());
+    // `%D` (refnames de la pointe) évite un `branch --points-at` par commit : la
+    // branche dont le commit est la tête est déjà là, dans la sortie qu'on lit déjà.
+    args.push("--format=%x1e%H%x00%at%x00%D%x00%s%x00%b".to_string());
     args.push("--numstat".to_string());
 
     let raw = run_git(dir, &args)?;
@@ -124,9 +137,10 @@ fn parse_log(dir: &str, raw: &str, ticket_patterns: &[String]) -> Vec<NewEvent> 
         if block.trim().is_empty() {
             continue;
         }
-        let mut parts = block.splitn(4, '\u{0}');
+        let mut parts = block.splitn(5, '\u{0}');
         let sha = parts.next().unwrap_or("").trim();
         let ts: i64 = parts.next().unwrap_or("0").trim().parse().unwrap_or(0);
+        let refnames = parts.next().unwrap_or("");
         let subject = parts.next().unwrap_or("").to_string();
         let rest = parts.next().unwrap_or("");
         if sha.is_empty() {
@@ -134,8 +148,11 @@ fn parse_log(dir: &str, raw: &str, ticket_patterns: &[String]) -> Vec<NewEvent> 
         }
 
         let (files, added, deleted, body_text) = parse_numstat_and_body(rest);
-        let branches = branches_containing(dir, sha);
-        let branch = choose_branch(dir, sha, &branches);
+        // Pointe d'une branche : `%D` suffit et coûte zéro sous-processus. Sinon
+        // seulement, on paie un `branch --all --contains` pour ce commit.
+        let tip = branches_from_refnames(refnames);
+        let branches = if tip.is_empty() { branches_containing(dir, sha) } else { tip };
+        let branch = pick_branch(&branches);
 
         let branch_ref = branch.clone().unwrap_or_default();
         let ticket_ids =
@@ -202,22 +219,19 @@ fn branches_containing(dir: &str, sha: &str) -> Vec<String> {
         .collect()
 }
 
-/// Choisit la branche attribuée à `sha` : si `sha` est la pointe d'une (ou plusieurs)
-/// branches, cette branche prime sur les branches qui ne le contiennent que comme ancêtre
-/// (cas d'une branche créée après ce commit, qui hérite tous les commits antérieurs de sa
-/// base sans que ce commit lui « appartienne ») ; sinon, repli sur `containing`, la liste
-/// complète des branches contenant `sha` (déjà filtrée de HEAD/*/HEAD).
-fn choose_branch(dir: &str, sha: &str, containing: &[String]) -> Option<String> {
-    let tips = git_out(dir, &["branch", "--all", "--points-at", sha, "--format=%(refname:short)"])
-        .map(|out| {
-            out.lines()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty() && s != "HEAD" && !s.ends_with("/HEAD"))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let pool = if tips.is_empty() { containing } else { &tips };
-    pick_branch(pool)
+/// Branches dont `sha` est la **pointe**, lues dans `%D` (`refnames`) du `git log`
+/// déjà lancé : `HEAD -> feature/x, origin/main, tag: v1`. `HEAD`, `*/HEAD` et les
+/// tags sont écartés. Une pointe prime sur les branches qui ne contiennent le
+/// commit que comme ancêtre (une branche créée après lui hérite de tout
+/// l'historique de sa base sans que ce commit lui « appartienne »).
+fn branches_from_refnames(refnames: &str) -> Vec<String> {
+    refnames
+        .split(',')
+        .map(|s| s.trim())
+        .map(|s| s.strip_prefix("HEAD -> ").unwrap_or(s))
+        .filter(|s| !s.is_empty() && *s != "HEAD" && !s.ends_with("/HEAD") && !s.starts_with("tag: "))
+        .map(|s| s.to_string())
+        .collect()
 }
 
 /// Choisit une branche locale de préférence ; sinon une branche distante `origin/x` → `x`.
@@ -272,9 +286,24 @@ mod tests {
     use crate::activity::store::Store;
     use std::process::Command as StdCommand;
 
+    /// Premier horodatage des commits de fixture : 2026-09-16 09:00:00 UTC. Chaque
+    /// commit d'un test en reçoit un distinct et croissant (`commit_at`) pour que
+    /// l'ordre et le filtrage par date ne dépendent jamais de l'horloge de la machine.
+    const TS_FIXTURE: i64 = 1_789_549_200;
+
     /// Exécute git dans `dir` et panique avec stderr si la commande échoue.
     fn git(dir: &std::path::Path, args: &[&str]) {
-        let out = StdCommand::new("git").args(args).current_dir(dir).output().unwrap();
+        git_env(dir, args, &[]);
+    }
+
+    /// Comme `git`, avec des variables d'environnement supplémentaires.
+    fn git_env(dir: &std::path::Path, args: &[&str], env: &[(&str, String)]) {
+        let mut cmd = StdCommand::new("git");
+        cmd.args(args).current_dir(dir);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().unwrap();
         assert!(
             out.status.success(),
             "git {args:?} a échoué: {}",
@@ -282,16 +311,28 @@ mod tests {
         );
     }
 
-    /// Crée un repo git temporaire vierge (branche main, user configuré).
-    fn tmp_repo(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("terminials-act-git-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        git(&dir, &["init", "-q", "-b", "main"]);
-        git(&dir, &["config", "user.email", "moi@x.fr"]);
-        git(&dir, &["config", "user.name", "moi"]);
-        git(&dir, &["config", "init.defaultBranch", "main"]);
-        dir
+    /// `git commit` avec des dates d'auteur et de commit figées (`TS_FIXTURE + decalage`).
+    fn commit_at(dir: &std::path::Path, decalage: i64, args: &[&str]) {
+        let date = format!("{} +0000", TS_FIXTURE + decalage);
+        let mut all = vec!["commit"];
+        all.extend_from_slice(args);
+        git_env(
+            dir,
+            &all,
+            &[("GIT_AUTHOR_DATE", date.clone()), ("GIT_COMMITTER_DATE", date)],
+        );
+    }
+
+    /// Crée un repo git temporaire vierge (branche main, user configuré). Le
+    /// `TempDir` doit rester vivant : il supprime le dossier quand il est détruit.
+    fn tmp_repo() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "user.email", "moi@x.fr"]);
+        git(dir, &["config", "user.name", "moi"]);
+        git(dir, &["config", "init.defaultBranch", "main"]);
+        tmp
     }
 
     fn write_file(dir: &std::path::Path, name: &str, content: &[u8]) {
@@ -300,20 +341,32 @@ mod tests {
 
     #[test]
     fn commits_since_filtre_auteur_et_lit_toutes_les_branches() {
-        let dir = tmp_repo("act-git");
-        write_file(&dir, "a.txt", b"1\n");
-        git(&dir, &["add", "."]);
-        git(&dir, &["commit", "-qm", "feat: a CU-86c1abc"]);
-        git(&dir, &["checkout", "-qb", "feature/CU-86c1abd_x"]);
-        write_file(&dir, "b.txt", b"1\n2\n");
-        git(&dir, &["add", "."]);
-        git(&dir, &["commit", "-qm", "fix: b"]);
-        git(
-            &dir,
-            &["-c", "user.email=autre@x.fr", "-c", "user.name=Autre", "commit", "-q", "--allow-empty", "-m", "pas moi"],
+        let tmp = tmp_repo();
+        let dir = tmp.path();
+        write_file(dir, "a.txt", b"1\n");
+        git(dir, &["add", "."]);
+        commit_at(dir, 0, &["-qm", "feat: a CU-86c1abc"]);
+        git(dir, &["checkout", "-qb", "feature/CU-86c1abd_x"]);
+        write_file(dir, "b.txt", b"1\n2\n");
+        git(dir, &["add", "."]);
+        commit_at(dir, 60, &["-qm", "fix: b"]);
+        // Commit d'un autre auteur (identité passée par l'environnement : `-c` ne peut
+        // pas être combiné avec `-m`), qui doit être exclu par le filtre `--author`.
+        let date_autre = format!("{} +0000", TS_FIXTURE + 120);
+        git_env(
+            dir,
+            &["commit", "-q", "--allow-empty", "-m", "pas moi"],
+            &[
+                ("GIT_AUTHOR_DATE", date_autre.clone()),
+                ("GIT_COMMITTER_DATE", date_autre),
+                ("GIT_AUTHOR_NAME", "Autre".to_string()),
+                ("GIT_AUTHOR_EMAIL", "autre@x.fr".to_string()),
+                ("GIT_COMMITTER_NAME", "Autre".to_string()),
+                ("GIT_COMMITTER_EMAIL", "autre@x.fr".to_string()),
+            ],
         );
-        let evs = commits_since(dir.to_str().unwrap(), 0, Some("moi@x.fr"), &[]).unwrap();
-        assert_eq!(evs.len(), 2);
+        let evs = commits_since(dir.to_str().unwrap(), TS_FIXTURE - 86400, Some("moi@x.fr"), &[]).unwrap();
+        assert_eq!(evs.len(), 2, "événements lus : {:?}", evs.iter().map(|e| &e.title).collect::<Vec<_>>());
         let b = evs.iter().find(|e| e.title == "fix: b").unwrap();
         assert_eq!(b.branch.as_deref(), Some("feature/CU-86c1abd_x"));
         assert_eq!(b.ticket_ids, vec!["86c1abd"]);
@@ -322,13 +375,44 @@ mod tests {
         assert_eq!(body["added"], 2);
         let a = evs.iter().find(|e| e.title.starts_with("feat: a")).unwrap();
         assert_eq!(a.ticket_ids, vec!["86c1abc"]);
+        // Pointe de main : la branche vient de %D, sans sous-processus supplémentaire.
+        assert_eq!(a.branch.as_deref(), Some("main"));
+        assert_eq!(a.ts, TS_FIXTURE, "l'horodatage vient du commit, pas de l'horloge");
         assert!(
             unmerged_branches(dir.to_str().unwrap()).is_empty(),
             "sur la feature branch tout est fusionné dans HEAD"
         );
-        git(&dir, &["checkout", "-q", "main"]);
+        git(dir, &["checkout", "-q", "main"]);
         assert_eq!(unmerged_branches(dir.to_str().unwrap()), vec!["feature/CU-86c1abd_x"]);
-        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `since = 0` (curseur absent) doit rendre *tout* l'historique. `--since=@0`
+    /// est refusé par l'analyseur de dates de git, qui se rabat alors sur l'heure
+    /// courante : sans la garde de `commits_since`, un premier scan ne verrait que
+    /// les commits de la seconde en cours (et ce test échouerait ~une fois sur dix).
+    #[test]
+    fn commits_since_zero_lit_tout_l_historique() {
+        let tmp = tmp_repo();
+        let dir = tmp.path();
+        write_file(dir, "a.txt", b"1\n");
+        git(dir, &["add", "."]);
+        commit_at(dir, 0, &["-qm", "ancien"]);
+        write_file(dir, "b.txt", b"2\n");
+        git(dir, &["add", "."]);
+        commit_at(dir, 60, &["-qm", "récent"]);
+        let evs = commits_since(dir.to_str().unwrap(), 0, Some("moi@x.fr"), &[]).unwrap();
+        assert_eq!(evs.len(), 2, "événements lus : {:?}", evs.iter().map(|e| &e.title).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn refnames_ignorent_head_et_les_tags() {
+        assert_eq!(
+            branches_from_refnames("HEAD -> feature/x, origin/feature/x, tag: v1.2, origin/HEAD"),
+            vec!["feature/x".to_string(), "origin/feature/x".to_string()]
+        );
+        assert!(branches_from_refnames("").is_empty());
+        assert!(branches_from_refnames("tag: v1.2").is_empty(), "un tag seul ne fait pas une branche");
+        assert!(branches_from_refnames("HEAD").is_empty());
     }
 
     #[test]
@@ -338,20 +422,23 @@ mod tests {
 
     #[test]
     fn collect_avance_le_cursor_par_repo_et_desactive_les_dossiers_disparus() {
-        let dir = tmp_repo("act-git2");
-        write_file(&dir, "a.txt", b"1\n");
-        git(&dir, &["add", "."]);
-        git(&dir, &["commit", "-qm", "c"]);
+        let tmp = tmp_repo();
+        let dir = tmp.path();
+        write_file(dir, "a.txt", b"1\n");
+        git(dir, &["add", "."]);
+        commit_at(dir, 0, &["-qm", "c"]);
         let store = Store::open_in_memory().unwrap();
         store
             .register_repos(&[dir.to_str().unwrap().to_string(), "/nonexistent/repo".into()], 1)
             .unwrap();
-        let (n, errs) = collect(&store, Some("moi@x.fr"), &[], 2_000_000_000);
+        // `now` proche des commits de fixture : le repli « curseur absent » borne
+        // le premier scan à 30 jours en arrière (cf. `collect`).
+        let now = TS_FIXTURE + 3600;
+        let (n, errs) = collect(&store, Some("moi@x.fr"), &[], now);
         assert_eq!(n, 1);
         assert!(errs.is_empty(), "un dossier disparu n'est pas une erreur : {errs:?}");
         assert_eq!(store.active_repos().unwrap().len(), 1);
         assert!(store.get_cursor(&format!("git:{}", dir.display())).unwrap().is_some());
-        assert_eq!(collect(&store, Some("moi@x.fr"), &[], 2_000_000_000).0, 0);
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(collect(&store, Some("moi@x.fr"), &[], now).0, 0);
     }
 }
