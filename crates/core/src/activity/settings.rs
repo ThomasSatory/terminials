@@ -1,0 +1,175 @@
+//! Réglages du dashboard : ~/.config/terminials/settings.json (0600, écriture atomique).
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmProviderKind {
+    Openai,
+    Ollama,
+    ClaudeCli,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LlmSettings {
+    pub provider: LlmProviderKind,
+    pub base_url: String,
+    pub model: String,
+    pub token: String,
+    pub extra_headers: BTreeMap<String, String>,
+    pub temperature: f32,
+    pub max_tokens: u32,
+    pub token_command: Option<String>,
+}
+impl Default for LlmSettings {
+    fn default() -> Self {
+        let mut extra_headers = BTreeMap::new();
+        extra_headers.insert("x-env".to_string(), "dev".to_string());
+        Self {
+            provider: LlmProviderKind::Openai,
+            base_url: "https://llm.example.com/gemma4-31b".into(),
+            model: "google/gemma-4-31B-it".into(),
+            token: String::new(),
+            extra_headers,
+            temperature: 0.3,
+            max_tokens: 1500,
+            token_command: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ClickupSettings {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ScheduleSettings {
+    pub hour: u8,
+    pub minute: u8,
+    pub weekdays_only: bool,
+}
+impl Default for ScheduleSettings {
+    fn default() -> Self {
+        Self { hour: 7, minute: 0, weekdays_only: true }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ShellSettings {
+    pub integration: bool,
+    pub ignored_commands: Vec<String>,
+}
+impl Default for ShellSettings {
+    fn default() -> Self {
+        Self {
+            integration: true,
+            ignored_commands: ["ls", "ll", "la", "cd", "pwd", "clear", "exit"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct GitSettings {
+    pub author_email: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Settings {
+    pub llm: LlmSettings,
+    pub clickup: ClickupSettings,
+    pub schedule: ScheduleSettings,
+    pub shell: ShellSettings,
+    pub git: GitSettings,
+    pub ticket_patterns: Vec<String>,
+}
+
+/// `$XDG_CONFIG_HOME/terminials/settings.json`, défaut `~/.config/terminials/settings.json`.
+pub fn default_path() -> PathBuf {
+    let base = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())).join(".config"));
+    base.join("terminials").join("settings.json")
+}
+
+/// Fichier absent → défauts. JSON partiel → complété par les défauts (serde `default`).
+pub fn load(path: &Path) -> std::io::Result<Settings> {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(|e| std::io::Error::other(format!("settings.json invalide : {e}"))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Écriture atomique (tmp + rename) en 0600 : le fichier contient des jetons.
+pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let json = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
+    {
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+        use std::io::Write;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+    }
+    std::fs::set_permissions(&tmp, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    std::fs::rename(&tmp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn defauts_pointent_sur_gemma_openai_compatible() {
+        let s = Settings::default();
+        assert_eq!(s.llm.provider, LlmProviderKind::Openai);
+        assert_eq!(s.llm.base_url, "https://llm.example.com/gemma4-31b");
+        assert_eq!(s.llm.model, "google/gemma-4-31B-it");
+        assert_eq!(s.llm.extra_headers.get("x-env").map(String::as_str), Some("dev"));
+        assert!(s.llm.token.is_empty());
+        assert_eq!(s.schedule.hour, 7);
+        assert!(s.schedule.weekdays_only);
+        assert!(s.shell.ignored_commands.contains(&"ls".to_string()));
+    }
+    #[test]
+    fn save_puis_load_roundtrip_en_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let mut s = Settings::default();
+        s.llm.token = "secret".into();
+        s.clickup.token = "cu".into();
+        save(&path, &s).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        assert_eq!(load(&path).unwrap(), s);
+    }
+    #[test]
+    fn load_fichier_absent_rend_les_defauts() {
+        assert_eq!(load(std::path::Path::new("/nonexistent/x.json")).unwrap(), Settings::default());
+    }
+    #[test]
+    fn load_json_partiel_complete_avec_les_defauts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        std::fs::write(&path, r#"{"llm":{"token":"abc"}}"#).unwrap();
+        let s = load(&path).unwrap();
+        assert_eq!(s.llm.token, "abc");
+        assert_eq!(s.llm.model, "google/gemma-4-31B-it");
+    }
+}
