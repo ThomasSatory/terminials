@@ -17,6 +17,12 @@ describe("parseMarkdown", () => {
   it("texte brut sans balise reste un paragraphe", () => {
     expect(parseMarkdown("<b>x</b>")).toEqual([{ t: "p", inl: [{ t: "text", v: "<b>x</b>" }] }]);
   });
+
+  it("fins de ligne CRLF donnent le même AST qu'en LF", () => {
+    const lf = "## Bilan\n- a\n- b\n";
+    const crlf = "## Bilan\r\n- a\r\n- b\r\n";
+    expect(parseMarkdown(crlf)).toEqual(parseMarkdown(lf));
+  });
 });
 
 describe("parseInline", () => {

@@ -25,7 +25,10 @@ const OL_ITEM_RE = /^\d+\.\s+(.*)$/;
 
 /** Découpe le texte en blocs (titres, listes, paragraphes) selon les lignes. */
 export function parseMarkdown(src: string): Block[] {
-  const lines = src.split("\n");
+  // Normalise les fins de ligne Windows (CRLF) et Mac classique (CR seul) en LF
+  // avant le split, pour que les regex ancrées sur `$` ne laissent pas de `\r`
+  // traînant dans le texte des blocs.
+  const lines = src.replace(/\r\n?/g, "\n").split("\n");
   const blocks: Block[] = [];
 
   let i = 0;
