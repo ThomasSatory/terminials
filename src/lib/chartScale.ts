@@ -20,10 +20,11 @@ export const KIND_LABELS = {
   clickup_change: "ClickUp",
 } as const;
 
-/** Ordre d'empilement des segments, du bas vers le haut de la barre. */
-const STACK_ORDER = Object.keys(KIND_COLORS) as Array<keyof typeof KIND_COLORS>;
+/** Ordre des kinds : empilement des segments (bas → haut) et parcours des tooltips. */
+export const KIND_ORDER = Object.keys(KIND_COLORS) as Array<keyof typeof KIND_COLORS>;
 
-function kindTotal(c: KindCounts): number {
+/** Somme des 4 kinds comptés (hors `claude_session`, absent de `KindCounts`). */
+export function kindTotal(c: KindCounts): number {
   return c.commit + c.claude_prompt + c.shell_cmd + c.clickup_change;
 }
 
@@ -65,7 +66,7 @@ export function stackSegments(
   const scale = height / total;
   const segments: Array<{ kind: keyof typeof KIND_COLORS; y: number; h: number }> = [];
   let y = height;
-  for (const kind of STACK_ORDER) {
+  for (const kind of KIND_ORDER) {
     const count = c[kind];
     if (count <= 0) continue;
     const h = count * scale;

@@ -1,4 +1,4 @@
-import { KIND_COLORS, KIND_LABELS, niceMax, stackSegments, visibleHours } from "../../lib/chartScale";
+import { KIND_COLORS, KIND_LABELS, KIND_ORDER, kindTotal, niceMax, stackSegments, visibleHours } from "../../lib/chartScale";
 import type { DayCounts, HourCounts, KindCounts } from "../../lib/activityApi";
 
 /** Hauteur utile du graphique (px, dans le viewBox) ; place sous les barres réservée aux libellés d'axe. */
@@ -6,12 +6,6 @@ const HEIGHT = 120;
 const LABEL_SPACE = 20;
 const BAR_WIDTH = 18;
 const BAR_GAP = 8;
-
-const KIND_ORDER = Object.keys(KIND_COLORS) as Array<keyof typeof KIND_COLORS>;
-
-function kindTotal(c: KindCounts): number {
-  return c.commit + c.claude_prompt + c.shell_cmd + c.clickup_change;
-}
 
 const EMPTY_COUNTS: KindCounts = { commit: 0, claude_prompt: 0, shell_cmd: 0, clickup_change: 0 };
 
