@@ -86,13 +86,18 @@ export function DashboardOverlay() {
   }, []);
 
   // Clavier de l'overlay — uniquement sur le conteneur focusé (spec §4/§8).
-  // Un champ de formulaire (input/textarea/select) garde ses touches, sauf Échap
-  // qui ferme toujours l'overlay (réglages, filtre, jeton LLM…).
+  // Un champ de formulaire (input/textarea/select) garde toutes ses touches ;
+  // Échap y rend seulement le focus au conteneur, comme dans DiffOverlay. Fermer
+  // l'overlay détruirait la saisie en cours (un jeton LLM tapé à la main dans
+  // les réglages) sur un Échap réflexe.
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
     const isFormField =
       target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
-    if (isFormField && e.key !== "Escape") return;
+    if (isFormField) {
+      if (e.key === "Escape") containerRef.current?.focus();
+      return;
+    }
     switch (e.key) {
       case "Escape":
         close();
@@ -168,7 +173,7 @@ export function DashboardOverlay() {
               <div className="dash-skeleton" style={{ height: 200 }} />
             </>
           ) : error ? (
-            <div className="dash-banner dash-banner-err">
+            <div className="dash-banner dash-banner-error">
               <p>{error}</p>
               <button type="button" onClick={reload}>
                 Réessayer

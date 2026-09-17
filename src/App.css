@@ -363,15 +363,11 @@ body {
   font-size: 12.5px;
 }
 
-/* `-warning`/`-error` : graphies utilisées par SummaryPanel/OpenTasks (autre tâche),
-   couvertes ici plutôt que d'aller toucher leurs fichiers. */
-.dash-banner-warn,
 .dash-banner-warning {
   background: #3a2e12;
   color: #f1c40f;
 }
 
-.dash-banner-err,
 .dash-banner-error {
   background: #3a1a1a;
   color: #e74c3c;
