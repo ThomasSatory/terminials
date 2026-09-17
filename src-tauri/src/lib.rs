@@ -1,3 +1,4 @@
+mod activity;
 mod images;
 mod notify;
 mod pty;
@@ -8,8 +9,12 @@ use std::sync::Arc;
 use std::thread;
 
 use tauri::ipc::{Channel, InvokeResponseBody};
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 
+use terminials_core::activity::shell_integration::launch_for;
+use terminials_core::osc::OscEvent;
+
+use crate::activity::ActivityState;
 use crate::pty::{PtyId, PtyRegistry};
 
 /// Lance un PTY et câble sa sortie brute vers le front via `on_data` (octets bruts).
@@ -27,8 +32,18 @@ fn spawn_pty(
     rows: u16,
     on_data: Channel<InvokeResponseBody>,
 ) -> Result<PtyId, String> {
-    let (id, mut reader) = pty::spawn_pty(reg.inner(), &shell, &cwd, &workspace_id, cols, rows)
-        .map_err(|e| e.to_string())?;
+    // Intégration shell (OSC 133) : shims posés au démarrage et drapeau activé.
+    let st = app.state::<Arc<ActivityState>>().inner().clone();
+    let integration = st.settings.read().unwrap().shell.integration;
+    let launch = st
+        .shims_dir
+        .as_ref()
+        .filter(|_| integration)
+        .and_then(|dir| launch_for(&shell, dir));
+
+    let (id, mut reader) =
+        pty::spawn_pty(reg.inner(), &shell, &cwd, &workspace_id, cols, rows, launch.as_ref())
+            .map_err(|e| e.to_string())?;
 
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -39,17 +54,27 @@ fn spawn_pty(
                 Ok(n) => {
                     let chunk = &buf[..n];
                     // Scanner à état : gère les séquences OSC réparties sur plusieurs lectures.
-                    for notif in scanner.feed(chunk) {
-                        let _ = app.emit(
-                            "agent-notification",
-                            serde_json::json!({
-                                "workspaceId": workspace_id,
-                                "ptyId": id,
-                                "title": notif.title,
-                                "body": notif.body,
-                            }),
-                        );
-                        notify::fire(&app, &notif.title, &notif.body);
+                    for event in scanner.feed_events(chunk) {
+                        match event {
+                            OscEvent::Notification(notif) => {
+                                let _ = app.emit(
+                                    "agent-notification",
+                                    serde_json::json!({
+                                        "workspaceId": workspace_id,
+                                        "ptyId": id,
+                                        "title": notif.title,
+                                        "body": notif.body,
+                                    }),
+                                );
+                                notify::fire(&app, &notif.title, &notif.body);
+                            }
+                            OscEvent::Command { cmd, pwd } => {
+                                activity::on_shell_command(&st, id, &cmd, &pwd);
+                            }
+                            OscEvent::Exit { code } => {
+                                activity::on_shell_exit(&app, &st, id, code);
+                            }
+                        }
                     }
                     if on_data.send(InvokeResponseBody::Raw(chunk.to_vec())).is_err() {
                         break;
@@ -58,6 +83,7 @@ fn spawn_pty(
                 Err(_) => break,
             }
         }
+        activity::on_pty_closed(&st, id);
         let _ = app.emit("pty-exit", serde_json::json!({ "id": id }));
     });
 
@@ -120,6 +146,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(PtyRegistry::new()))
+        .manage(Arc::new(activity::init()))
         .invoke_handler(tauri::generate_handler![
             spawn_pty,
             write_pty,
@@ -130,9 +157,19 @@ pub fn run() {
             git_file_diff,
             dir_exists,
             workspace_ports,
-            images::save_pasted_image
+            images::save_pasted_image,
+            activity::activity_register_workspaces,
+            activity::activity_collect_now,
+            activity::activity_query,
+            activity::activity_stats,
+            activity::activity_summary,
+            activity::activity_open_tasks,
+            activity::activity_status,
+            activity::activity_get_settings,
+            activity::activity_set_settings
         ])
         .setup(|app| {
+            activity::start_scheduler(app.handle().clone());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = socket::serve(handle).await {

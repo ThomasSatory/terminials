@@ -34,3 +34,4 @@ portable-pty = "0.9"
 notify-rust = "4.17"
 protocol = { path = "../crates/protocol" }
 terminials-core = { path = "../crates/core" }
+chrono = { workspace = true }

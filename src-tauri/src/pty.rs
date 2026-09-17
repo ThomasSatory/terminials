@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use terminials_core::activity::shell_integration::ShellLaunch;
 
 pub type PtyId = u32;
 
@@ -39,8 +40,28 @@ impl PtyRegistry {
 /// lanceur .desktop, le process de l'app n'a aucun TERM, et un TERM absent fait
 /// tomber dircolors (LS_COLORS vide → `ls` monochrome), git et la plupart des
 /// outils en noir et blanc. xterm.js rend les 256 couleurs et le truecolor.
-fn build_shell_command(shell: &str, cwd: &str, workspace_id: &str, id: PtyId) -> CommandBuilder {
-    let mut cmd = CommandBuilder::new(shell);
+/// `launch` (intégration shell OSC 133) remplace le programme et pose ses arguments
+/// et variables d'environnement ; `None` = shell nu, comportement historique.
+fn build_shell_command(
+    shell: &str,
+    cwd: &str,
+    workspace_id: &str,
+    id: PtyId,
+    launch: Option<&ShellLaunch>,
+) -> CommandBuilder {
+    let mut cmd = match launch {
+        Some(l) => {
+            let mut c = CommandBuilder::new(&l.program);
+            for arg in &l.args {
+                c.arg(arg);
+            }
+            for (k, v) in &l.env {
+                c.env(k, v);
+            }
+            c
+        }
+        None => CommandBuilder::new(shell),
+    };
     cmd.cwd(cwd);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -61,6 +82,7 @@ pub fn spawn_pty(
     workspace_id: &str,
     cols: u16,
     rows: u16,
+    launch: Option<&ShellLaunch>,
 ) -> std::io::Result<(PtyId, Box<dyn std::io::Read + Send>)> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -70,7 +92,7 @@ pub fn spawn_pty(
     // L'id est réservé AVANT le spawn (simple compteur atomique) pour pouvoir
     // l'injecter dans l'env du shell. En cas d'échec du spawn, l'id est juste perdu.
     let id = reg.next_id();
-    let cmd = build_shell_command(shell, cwd, workspace_id, id);
+    let cmd = build_shell_command(shell, cwd, workspace_id, id, launch);
     let child = pair
         .slave
         .spawn_command(cmd)
@@ -131,7 +153,7 @@ mod tests {
     #[test]
     fn spawn_write_resize_roundtrip() {
         let reg = PtyRegistry::new();
-        let (id, _reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24).unwrap();
+        let (id, _reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24, None).unwrap();
         assert!(reg.handles.lock().unwrap().contains_key(&id));
         write_pty(&reg, id, b"echo hi\n").unwrap();
         resize_pty(&reg, id, 100, 30).unwrap();
@@ -141,7 +163,7 @@ mod tests {
     fn spawn_injects_workspace_and_pty_ids_in_env() {
         use std::io::Read;
         let reg = PtyRegistry::new();
-        let (id, mut reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24).unwrap();
+        let (id, mut reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24, None).unwrap();
         write_pty(&reg, id, b"echo ID=$TERMINIALS_WORKSPACE_ID:$TERMINIALS_PTY_ID; exit\n")
             .unwrap();
         // `exit` termine le shell → EOF : la boucle de lecture se termine toujours.
@@ -167,13 +189,13 @@ mod tests {
         // gagne — sinon le test passerait par simple héritage du TERM du dev.
         std::env::set_var("TERM", "dumb");
         std::env::remove_var("COLORTERM");
-        let cmd = build_shell_command("/bin/sh", "/", "ws-test", 7);
+        let cmd = build_shell_command("/bin/sh", "/", "ws-test", 7, None);
         assert_eq!(cmd.get_env("TERM").unwrap(), "xterm-256color");
         assert_eq!(cmd.get_env("COLORTERM").unwrap(), "truecolor");
 
         // Bout en bout : le shell réellement lancé voit bien ces valeurs.
         let reg = PtyRegistry::new();
-        let (id, mut reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24).unwrap();
+        let (id, mut reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24, None).unwrap();
         write_pty(&reg, id, b"echo TERMCHECK=$TERM:$COLORTERM; exit\n").unwrap();
         let mut out = Vec::new();
         let mut buf = [0u8; 4096];
@@ -192,8 +214,29 @@ mod tests {
 
     #[test]
     fn shell_command_injects_workspace_and_pty_ids() {
-        let cmd = build_shell_command("/bin/sh", "/", "ws-test", 7);
+        let cmd = build_shell_command("/bin/sh", "/", "ws-test", 7, None);
         assert_eq!(cmd.get_env("TERMINIALS_WORKSPACE_ID").unwrap(), "ws-test");
         assert_eq!(cmd.get_env("TERMINIALS_PTY_ID").unwrap(), "7");
+    }
+
+    #[test]
+    fn shell_command_applique_le_lancement_de_l_integration_shell() {
+        use terminials_core::activity::shell_integration::launch_for;
+        let launch = launch_for("/bin/bash", std::path::Path::new("/run/x")).unwrap();
+        let cmd = build_shell_command("/bin/bash", "/", "w", 1, Some(&launch));
+        let argv: Vec<String> =
+            cmd.get_argv().iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        assert!(argv.iter().any(|a| a == "--init-file"), "argv: {argv:?}");
+        assert!(argv.iter().any(|a| a == "/run/x/bash-init.sh"), "argv: {argv:?}");
+        // Les variables propres à terminials restent posées malgré le lancement dédié.
+        assert_eq!(cmd.get_env("TERMINIALS_PTY_ID").unwrap(), "1");
+    }
+
+    #[test]
+    fn shell_command_applique_l_env_du_lancement_zsh() {
+        use terminials_core::activity::shell_integration::launch_for;
+        let launch = launch_for("/bin/zsh", std::path::Path::new("/run/x")).unwrap();
+        let cmd = build_shell_command("/bin/zsh", "/", "w", 2, Some(&launch));
+        assert_eq!(cmd.get_env("ZDOTDIR").unwrap(), "/run/x/zsh");
     }
 }

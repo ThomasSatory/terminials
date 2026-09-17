@@ -4144,6 +4144,7 @@ dependencies = [
 name = "terminials"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "notify-rust",
  "portable-pty",
  "protocol",
