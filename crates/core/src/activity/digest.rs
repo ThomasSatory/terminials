@@ -1,1 +1,331 @@
-//! Agrégation des événements en statistiques (`ActivityStats`) (tâche à venir).
+//! Construction du digest textuel déterministe envoyé au LLM pour le résumé
+//! d'une journée (spec §6). Le texte est groupé par workspace puis par heure
+//! locale, et haché en SHA-256 pour permettre la mise en cache des résumés.
+
+use super::tickets::ticket_url;
+use super::{workspace_name, ActivityEvent, EventKind, TicketInfo};
+use chrono::Timelike;
+use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
+
+/// Taille maximale (en octets) du texte du digest. Au-delà, on compacte
+/// progressivement (suppression des commandes shell, puis troncature plus
+/// agressive des prompts, puis coupe brutale en dernier recours).
+pub const MAX_CHARS: usize = 24_000;
+
+/// Digest textuel d'une journée d'événements, prêt à être envoyé au LLM.
+pub struct Digest {
+    pub text: String,
+    /// SHA-256 hexadécimal du texte, pour la mise en cache des résumés.
+    pub hash: String,
+    pub event_count: usize,
+}
+
+#[derive(serde::Deserialize)]
+struct CommitStats {
+    files: i64,
+    added: i64,
+    deleted: i64,
+}
+
+/// Construit le digest déterministe des `events` du jour, en utilisant `offset`
+/// comme fuseau pour l'affichage des heures et `tickets` pour enrichir les
+/// identifiants de tickets cités (nom, statut).
+pub fn build_digest(events: &[ActivityEvent], tickets: &[TicketInfo], offset: chrono::FixedOffset) -> Digest {
+    let text = render(events, tickets, offset, true, 120);
+    let text = if text.len() > MAX_CHARS { render(events, tickets, offset, false, 120) } else { text };
+    let text = if text.len() > MAX_CHARS { render(events, tickets, offset, false, 60) } else { text };
+    let text = if text.len() > MAX_CHARS { truncate_at_line_boundary(&text, MAX_CHARS) } else { text };
+
+    let hash = Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+    Digest { text, hash, event_count: events.len() }
+}
+
+/// Coupe `text` à `max_chars` octets au plus, sur une frontière de ligne.
+fn truncate_at_line_boundary(text: &str, max_chars: usize) -> String {
+    if text.len() <= max_chars {
+        return text.to_string();
+    }
+    match text[..max_chars].rfind('\n') {
+        Some(pos) => text[..=pos].to_string(),
+        None => String::new(),
+    }
+}
+
+fn local_hour(ts: i64, offset: chrono::FixedOffset) -> u32 {
+    chrono::DateTime::from_timestamp(ts, 0).unwrap().with_timezone(&offset).hour()
+}
+
+fn truncate_title(title: &str, limit: usize) -> String {
+    let count = title.chars().count();
+    if count <= limit {
+        format!("« {title} »")
+    } else {
+        let truncated: String = title.chars().take(limit).collect();
+        format!("« {truncated}… »")
+    }
+}
+
+fn render_commit_stats(body: Option<&str>) -> String {
+    let Some(body) = body else { return String::new() };
+    let Ok(stats) = serde_json::from_str::<CommitStats>(body) else { return String::new() };
+    let word = if stats.files == 1 { "fichier" } else { "fichiers" };
+    format!(" (+{} −{}, {} {word})", stats.added, stats.deleted, stats.files)
+}
+
+fn ticket_brackets(ticket_ids: &[String]) -> String {
+    if ticket_ids.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", ticket_ids.join(", "))
+    }
+}
+
+/// Rend un événement non-`ShellCmd` en une ligne du digest.
+fn render_event_line(ev: &ActivityEvent, prompt_limit: usize) -> String {
+    match ev.kind {
+        EventKind::Commit => {
+            format!("- commit : {}{}{}", ev.title, render_commit_stats(ev.body.as_deref()), ticket_brackets(&ev.ticket_ids))
+        }
+        EventKind::ClaudePrompt => format!("- claude : {}", truncate_title(&ev.title, prompt_limit)),
+        EventKind::ClaudeSession => format!("- session : {}", ev.title),
+        EventKind::ClickupChange => format!("- clickup : {}{}", ev.title, ticket_brackets(&ev.ticket_ids)),
+        EventKind::ShellCmd => unreachable!("les événements shell sont rendus séparément"),
+    }
+}
+
+/// Rend la ligne unique des commandes shell d'une heure (dédupliquées par titre,
+/// dans l'ordre de première apparition, avec un compteur `×n` si répétées).
+fn render_shell_line(shells: &[&ActivityEvent]) -> Option<String> {
+    if shells.is_empty() {
+        return None;
+    }
+    let mut order: Vec<&str> = Vec::new();
+    let mut counts: BTreeMap<&str, u32> = BTreeMap::new();
+    for ev in shells {
+        let title = ev.title.as_str();
+        if !counts.contains_key(title) {
+            order.push(title);
+        }
+        *counts.entry(title).or_insert(0) += 1;
+    }
+    let parts: Vec<String> = order
+        .into_iter()
+        .map(|title| {
+            let n = counts[title];
+            if n > 1 { format!("{title} ×{n}") } else { title.to_string() }
+        })
+        .collect();
+    Some(format!("- shell : {}", parts.join(" · ")))
+}
+
+/// Rend les lignes d'une heure donnée : les événements non-shell dans l'ordre
+/// chronologique, suivis (si `include_shell`) d'une unique ligne agrégeant les
+/// commandes shell de l'heure.
+fn render_hour_lines(events: &[&ActivityEvent], include_shell: bool, prompt_limit: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut shells = Vec::new();
+    for ev in events {
+        if ev.kind == EventKind::ShellCmd {
+            shells.push(*ev);
+        } else {
+            lines.push(render_event_line(ev, prompt_limit));
+        }
+    }
+    if include_shell {
+        if let Some(line) = render_shell_line(&shells) {
+            lines.push(line);
+        }
+    }
+    lines
+}
+
+/// En-tête d'un groupe workspace, ou `## ClickUp` pour les événements sans
+/// `workspace_dir`. La branche affichée est celle du premier événement du
+/// groupe (par ordre chronologique) qui en a une.
+fn render_group_header(dir: Option<&str>, events: &[&ActivityEvent]) -> String {
+    let Some(dir) = dir else { return "## ClickUp".to_string() };
+    let name = workspace_name(dir);
+    let branch = events.iter().find_map(|e| e.branch.as_deref());
+    match branch {
+        Some(b) => format!("## {name} ({dir}) — branche {b}"),
+        None => format!("## {name} ({dir})"),
+    }
+}
+
+/// Rend un groupe (workspace ou ClickUp) : en-tête puis les heures, triées,
+/// chacune précédée de son sous-titre `### HHh`.
+fn render_group(dir: Option<&str>, events: &[&ActivityEvent], include_shell: bool, prompt_limit: usize, offset: chrono::FixedOffset) -> String {
+    let mut by_hour: BTreeMap<u32, Vec<&ActivityEvent>> = BTreeMap::new();
+    for ev in events {
+        by_hour.entry(local_hour(ev.ts, offset)).or_default().push(ev);
+    }
+    let mut section = vec![render_group_header(dir, events)];
+    for (hour, hour_events) in &by_hour {
+        section.push(format!("### {hour:02}h"));
+        section.extend(render_hour_lines(hour_events, include_shell, prompt_limit));
+    }
+    section.join("\n")
+}
+
+/// Rend la section finale `## Tickets cités`, si au moins un identifiant de
+/// ticket est cité par les événements (dans l'ordre de première apparition).
+fn render_tickets_section(events: &[ActivityEvent], tickets: &[TicketInfo]) -> Option<String> {
+    let mut ids: Vec<&str> = Vec::new();
+    for ev in events {
+        for id in &ev.ticket_ids {
+            if !ids.contains(&id.as_str()) {
+                ids.push(id.as_str());
+            }
+        }
+    }
+    if ids.is_empty() {
+        return None;
+    }
+    let mut section = vec!["## Tickets cités".to_string()];
+    for id in ids {
+        let line = match tickets.iter().find(|t| t.id == id) {
+            Some(t) => format!("- [{}] {} — {} — {}", t.id, t.name, t.status, t.url),
+            None => format!("- [{id}] (inconnu) — {}", ticket_url(id)),
+        };
+        section.push(line);
+    }
+    Some(section.join("\n"))
+}
+
+fn render(events: &[ActivityEvent], tickets: &[TicketInfo], offset: chrono::FixedOffset, include_shell: bool, prompt_limit: usize) -> String {
+    let mut sorted: Vec<&ActivityEvent> = events.iter().collect();
+    sorted.sort_by_key(|e| e.ts);
+
+    // Groupes workspace triés par (nom, dossier) ; les événements sans
+    // `workspace_dir` forment le groupe `ClickUp`, rendu en dernier.
+    let mut by_ws: BTreeMap<(String, String), Vec<&ActivityEvent>> = BTreeMap::new();
+    let mut clickup: Vec<&ActivityEvent> = Vec::new();
+    for ev in &sorted {
+        match &ev.workspace_dir {
+            Some(dir) => by_ws.entry((workspace_name(dir), dir.clone())).or_default().push(ev),
+            None => clickup.push(ev),
+        }
+    }
+
+    let mut sections: Vec<String> = Vec::new();
+    for ((_, dir), group_events) in &by_ws {
+        sections.push(render_group(Some(dir.as_str()), group_events, include_shell, prompt_limit, offset));
+    }
+    if !clickup.is_empty() {
+        sections.push(render_group(None, &clickup, include_shell, prompt_limit, offset));
+    }
+    if let Some(tickets_section) = render_tickets_section(events, tickets) {
+        sections.push(tickets_section);
+    }
+
+    if sections.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", sections.join("\n\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::FixedOffset;
+
+    fn ev(ts: i64, kind: EventKind, dir: &str, title: &str, tickets: &[&str]) -> ActivityEvent {
+        ActivityEvent {
+            id: 0,
+            ts,
+            kind,
+            workspace_dir: Some(dir.into()),
+            branch: Some("master".into()),
+            title: title.into(),
+            body: None,
+            ticket_ids: tickets.iter().map(|s| s.to_string()).collect(),
+            tickets: vec![],
+        }
+    }
+    const T0: i64 = 1_789_516_800; // 2026-09-16 00:00 UTC
+    fn utc() -> FixedOffset {
+        FixedOffset::east_opt(0).unwrap()
+    }
+
+    #[test]
+    fn digest_groupe_par_workspace_puis_heure_et_liste_les_tickets() {
+        let mut c = ev(T0 + 9 * 3600 + 120, EventKind::Commit, "/home/t/dev/terminals", "fix(core): TERM", &["86c1abc"]);
+        c.body = Some(r#"{"files":3,"added":42,"deleted":7}"#.into());
+        let evs = vec![
+            c,
+            ev(T0 + 9 * 3600 + 300, EventKind::ShellCmd, "/home/t/dev/terminals", "npm test", &[]),
+            ev(T0 + 9 * 3600 + 400, EventKind::ShellCmd, "/home/t/dev/terminals", "npm test", &[]),
+            ev(T0 + 14 * 3600, EventKind::ClaudePrompt, "/home/t/dev/autre", "Ajoute un dashboard", &[]),
+        ];
+        let tickets = vec![TicketInfo {
+            id: "86c1abc".into(),
+            name: "Dashboard".into(),
+            status: "en cours".into(),
+            status_type: "custom".into(),
+            url: "https://app.clickup.com/t/86c1abc".into(),
+            due_date: None,
+            list_name: None,
+        }];
+        let d = build_digest(&evs, &tickets, utc());
+        let expected = "\
+## autre (/home/t/dev/autre) — branche master
+### 14h
+- claude : « Ajoute un dashboard »
+
+## terminals (/home/t/dev/terminals) — branche master
+### 09h
+- commit : fix(core): TERM (+42 −7, 3 fichiers) [86c1abc]
+- shell : npm test ×2
+
+## Tickets cités
+- [86c1abc] Dashboard — en cours — https://app.clickup.com/t/86c1abc
+";
+        assert_eq!(d.text, expected);
+        assert_eq!(d.event_count, 4);
+        assert_eq!(d.hash.len(), 64);
+        assert_eq!(build_digest(&evs, &tickets, utc()).hash, d.hash, "déterministe");
+    }
+
+    #[test]
+    fn digest_vide() {
+        let d = build_digest(&[], &[], utc());
+        assert_eq!(d.text, "");
+        assert_eq!(d.event_count, 0);
+    }
+
+    #[test]
+    fn prompt_tronque_a_120_et_ticket_inconnu_liste_avec_url_construite() {
+        let long = "x".repeat(300);
+        let evs = vec![ev(T0, EventKind::ClaudePrompt, "/a", &long, &["zzz1234"])];
+        let d = build_digest(&evs, &[], utc());
+        assert!(d.text.contains(&format!("« {}… »", "x".repeat(120))));
+        assert!(d.text.contains("- [zzz1234] (inconnu) — https://app.clickup.com/t/zzz1234"));
+    }
+
+    #[test]
+    fn compaction_supprime_les_commandes_puis_tronque_les_prompts() {
+        let mut evs = Vec::new();
+        for i in 0..2000 {
+            evs.push(ev(T0 + i, EventKind::ShellCmd, "/a", &format!("cmd-{i} {}", "y".repeat(20)), &[]));
+        }
+        for i in 0..300 {
+            evs.push(ev(T0 + 5000 + i, EventKind::ClaudePrompt, "/a", &"p".repeat(120), &[]));
+        }
+        let d = build_digest(&evs, &[], utc());
+        assert!(d.text.len() <= MAX_CHARS, "{}", d.text.len());
+        assert!(!d.text.contains("shell :"), "les commandes partent d'abord");
+    }
+
+    #[test]
+    fn clickup_change_et_session_sont_rendus() {
+        let mut s = ev(T0 + 8 * 3600, EventKind::ClaudeSession, "/a", "Session Claude Code · 2 prompts · 1 h 31 min", &[]);
+        s.body = None;
+        let mut c = ev(T0 + 10 * 3600, EventKind::ClickupChange, "/a", "Dashboard → terminé", &["86c1abc"]);
+        c.workspace_dir = None;
+        let d = build_digest(&[s, c], &[], utc());
+        assert!(d.text.contains("## ClickUp\n### 10h\n- clickup : Dashboard → terminé [86c1abc]"));
+        assert!(d.text.contains("- session : Session Claude Code · 2 prompts · 1 h 31 min"));
+    }
+}

@@ -1,9 +1,20 @@
-//! Parser des séquences de notification OSC 9 / 99 / 777 dans un flux d'octets PTY.
+//! Parser des séquences de notification OSC 9 / 99 / 777 et des marqueurs de
+//! commande OSC 133 (C = pré-exécution, D = fin) dans un flux d'octets PTY.
+
+use base64::prelude::{Engine as _, BASE64_STANDARD};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OscNotification {
     pub title: String,
     pub body: String,
+}
+
+/// Événement produit par le scanner OSC : notification ou marqueur de commande shell (OSC 133).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OscEvent {
+    Notification(OscNotification),
+    Command { cmd: String, pwd: String },
+    Exit { code: i32 },
 }
 
 /// Extrait les notifications OSC 9 / 99 / 777 d'un buffer d'octets PTY.
@@ -64,7 +75,20 @@ impl OscScanner {
     }
 
     /// Alimente le scanner avec un chunk d'octets ; retourne les notifications complètes trouvées.
+    /// Reste l'API historique : filtre `feed_events` sur les seules notifications.
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<OscNotification> {
+        self.feed_events(bytes)
+            .into_iter()
+            .filter_map(|e| match e {
+                OscEvent::Notification(n) => Some(n),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Alimente le scanner avec un chunk d'octets ; retourne tous les événements OSC
+    /// complets trouvés (notifications et marqueurs de commande OSC 133).
+    pub fn feed_events(&mut self, bytes: &[u8]) -> Vec<OscEvent> {
         let mut out = Vec::new();
         for &b in bytes {
             if !self.in_osc {
@@ -81,15 +105,15 @@ impl OscScanner {
             if self.saw_esc_in_osc {
                 // ST = ESC '\' ; sinon séquence abandonnée.
                 if b == b'\\' {
-                    if let Some(n) = interpret(&String::from_utf8_lossy(&self.payload)) {
-                        out.push(n);
+                    if let Some(e) = interpret_event(&String::from_utf8_lossy(&self.payload)) {
+                        out.push(e);
                     }
                 }
                 self.reset_seq();
             } else if b == 0x07 {
                 // BEL termine l'OSC.
-                if let Some(n) = interpret(&String::from_utf8_lossy(&self.payload)) {
-                    out.push(n);
+                if let Some(e) = interpret_event(&String::from_utf8_lossy(&self.payload)) {
+                    out.push(e);
                 }
                 self.reset_seq();
             } else if b == 0x1b {
@@ -113,9 +137,12 @@ impl OscScanner {
 }
 
 fn interpret(payload: &str) -> Option<OscNotification> {
-    // OSC 9 (iTerm2) : "9;<message>"
+    // OSC 9 (iTerm2) : "9;<message>". Un message peut lui-même contenir des ';' (ex. un
+    // format "titre;corps" produit par certains clients) : on ne garde que le dernier
+    // segment comme corps, ce qui laisse `body` inchangé quand `rest` n'a pas de ';'.
     if let Some(rest) = payload.strip_prefix("9;") {
-        return Some(OscNotification { title: "terminials".into(), body: rest.to_string() });
+        let body = rest.rsplit(';').next().unwrap_or(rest).to_string();
+        return Some(OscNotification { title: "terminials".into(), body });
     }
     // OSC 777 (RXVT) : "777;notify;<title>;<body>"
     if let Some(rest) = payload.strip_prefix("777;notify;") {
@@ -134,6 +161,36 @@ fn interpret(payload: &str) -> Option<OscNotification> {
         }
     }
     None
+}
+
+/// Interprète un payload OSC complet (sans le préfixe `ESC ]` ni le terminateur) : marqueur
+/// de commande OSC 133 (`C;<b64 cmd>;<b64 pwd>` ou `D;<code>`), sinon délégué à `interpret`
+/// et emballé en notification. Un payload 133 mal formé est ignoré silencieusement.
+fn interpret_event(payload: &str) -> Option<OscEvent> {
+    if let Some(rest) = payload.strip_prefix("133;") {
+        let mut parts = rest.splitn(3, ';');
+        return match parts.next() {
+            Some("C") => {
+                let b64_cmd = parts.next()?;
+                let cmd_bytes = BASE64_STANDARD.decode(b64_cmd).ok()?;
+                let cmd = String::from_utf8_lossy(&cmd_bytes).to_string();
+                let pwd = match parts.next() {
+                    Some(b64_pwd) if !b64_pwd.is_empty() => {
+                        let pwd_bytes = BASE64_STANDARD.decode(b64_pwd).ok()?;
+                        String::from_utf8_lossy(&pwd_bytes).to_string()
+                    }
+                    _ => String::new(),
+                };
+                Some(OscEvent::Command { cmd, pwd })
+            }
+            Some("D") => {
+                let code = parts.next()?.parse::<i32>().ok()?;
+                Some(OscEvent::Exit { code })
+            }
+            _ => None,
+        };
+    }
+    interpret(payload).map(OscEvent::Notification)
 }
 
 #[cfg(test)]
@@ -184,5 +241,41 @@ mod tests {
         assert_eq!(n.len(), 2);
         assert_eq!(n[0].body, "A");
         assert_eq!(n[1].title, "B");
+    }
+
+    #[test]
+    fn feed_events_decode_commande_et_sortie_base64() {
+        // "npm test" / "/home/t" en base64 standard
+        let seq = b"\x1b]133;C;bnBtIHRlc3Q=;L2hvbWUvdA==\x07sortie\x1b]133;D;0\x07";
+        let mut sc = OscScanner::new();
+        let ev = sc.feed_events(seq);
+        assert_eq!(
+            ev,
+            vec![
+                OscEvent::Command { cmd: "npm test".into(), pwd: "/home/t".into() },
+                OscEvent::Exit { code: 0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn feed_events_sequence_133_fragmentee_et_notification_conservee() {
+        let full = b"\x1b]133;D;130\x07\x1b]9;Claude Code;fini\x07";
+        let mut sc = OscScanner::new();
+        let mut ev = sc.feed_events(&full[..5]);
+        ev.extend(sc.feed_events(&full[5..]));
+        assert_eq!(ev.len(), 2);
+        assert_eq!(ev[0], OscEvent::Exit { code: 130 });
+        assert!(matches!(&ev[1], OscEvent::Notification(n) if n.body == "fini"));
+        let mut sc2 = OscScanner::new();
+        assert_eq!(sc2.feed(full).len(), 1, "feed reste l'API des notifications seules");
+    }
+
+    #[test]
+    fn feed_events_ignore_133_mal_forme() {
+        let mut sc = OscScanner::new();
+        assert!(sc
+            .feed_events(b"\x1b]133;C;%%%pas-du-base64\x07\x1b]133;D;abc\x07\x1b]133;A\x07")
+            .is_empty());
     }
 }
