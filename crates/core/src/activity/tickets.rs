@@ -39,27 +39,38 @@ pub fn extract_ticket_ids(texts: &[&str], custom_patterns: &[String]) -> Vec<Str
         }
     };
     for text in texts {
+        // Toutes les captures (custom + défaut) sont collectées avec leur position de
+        // départ puis triées par position (tri stable) avant d'être poussées, pour que
+        // l'ordre d'apparition dans le texte soit respecté même quand un motif custom et
+        // un motif par défaut matchent tous les deux dans le même texte.
+        let mut found: Vec<(usize, String)> = Vec::new();
         for re in &custom {
             for m in re.find_iter(text) {
-                push(m.as_str().to_string());
+                found.push((m.start(), m.as_str().to_string()));
             }
         }
         let [cu, url, hash] = [&defaults()[0], &defaults()[1], &defaults()[2]];
         for c in cu.captures_iter(text) {
             let g = c.get(1).unwrap();
             if not_followed_by_alnum(text, g.end()) {
-                push(g.as_str().to_ascii_lowercase());
+                found.push((g.start(), g.as_str().to_ascii_lowercase()));
             }
         }
         for c in url.captures_iter(text) {
-            let id = &c[1];
+            let g = c.get(1).unwrap();
+            let id = g.as_str();
             // ID custom (ABC-42) conservé tel quel ; ID ClickUp natif en minuscules.
-            push(if id.contains('-') { id.to_string() } else { id.to_ascii_lowercase() });
+            found.push((g.start(), if id.contains('-') { id.to_string() } else { id.to_ascii_lowercase() }));
         }
         for c in hash.captures_iter(text) {
-            if is_clickup_like(&c[1]) {
-                push(c[1].to_ascii_lowercase());
+            let g = c.get(1).unwrap();
+            if is_clickup_like(g.as_str()) {
+                found.push((g.start(), g.as_str().to_ascii_lowercase()));
             }
+        }
+        found.sort_by_key(|(pos, _)| *pos);
+        for (_, id) in found {
+            push(id);
         }
     }
     out
@@ -103,5 +114,21 @@ mod tests {
     #[test]
     fn url_construite() {
         assert_eq!(ticket_url("86c1abc"), "https://app.clickup.com/t/86c1abc");
+    }
+    #[test]
+    fn ordre_apparition_intra_texte_defaut_avant_custom() {
+        let custom = vec![r"\bABC-\d+\b".to_string()];
+        assert_eq!(
+            extract_ticket_ids(&["CU-86c1abc puis ABC-42"], &custom),
+            vec!["86c1abc", "ABC-42"]
+        );
+    }
+    #[test]
+    fn ordre_apparition_intra_texte_custom_avant_defaut() {
+        let custom = vec![r"\bABC-\d+\b".to_string()];
+        assert_eq!(
+            extract_ticket_ids(&["ABC-42 puis CU-86c1abc"], &custom),
+            vec!["ABC-42", "86c1abc"]
+        );
     }
 }
