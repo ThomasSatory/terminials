@@ -57,9 +57,35 @@ export function SummaryPanel({
           <p className="dash-summary-footer">
             {summaryFooter(ui.summary)}{" "}
             <button type="button" onClick={() => generate(true)} aria-label="Régénérer">
-              ↻
+              {ui.refreshing ? "…" : "↻"}
             </button>
           </p>
+          {/* Un échec de régénération ne doit jamais faire disparaître le résumé en
+              cache (§10) : on l'affiche toujours ci-dessus, avec un bandeau d'erreur
+              en plus plutôt qu'à sa place. */}
+          {ui.lastError === "unauthorized" && (
+            <div className="dash-banner dash-banner-warning">
+              <p>Jeton LLM expiré</p>
+              <input
+                className="dash-input"
+                type="password"
+                value={tokenInput}
+                placeholder="Nouveau jeton"
+                onChange={(e) => setTokenInput(e.target.value)}
+              />
+              <button type="button" onClick={saveTokenAndRetry} disabled={savingToken}>
+                Valider
+              </button>
+            </div>
+          )}
+          {ui.lastError !== undefined && ui.lastError !== "unauthorized" && (
+            <div className="dash-banner dash-banner-error">
+              <p>{ui.lastError}</p>
+              <button type="button" onClick={() => generate(true)}>
+                Réessayer
+              </button>
+            </div>
+          )}
         </>
       )}
 
