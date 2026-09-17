@@ -63,7 +63,10 @@ impl ClickupClient {
             .body_mut()
             .read_to_string()
             .map_err(|e| ClickupError::Network(e.to_string()))?;
-        if status == 401 {
+        // 403 = jeton valide mais sans droit sur l'équipe : du point de vue de
+        // l'utilisateur c'est le même geste correctif qu'un 401 (revoir le jeton),
+        // et le client LLM traite déjà les deux ensemble.
+        if status == 401 || status == 403 {
             return Err(ClickupError::Unauthorized);
         }
         if !(200..300).contains(&status) {

@@ -271,8 +271,11 @@ impl Store {
         let mut tickets: BTreeSet<String> = BTreeSet::new();
 
         for e in &events {
+            // `%at` d'un commit est arbitraire : un horodatage hors bornes se replie
+            // sur epoch 0 au lieu de faire paniquer `stats` (commande synchrone, donc
+            // le thread principal de l'application).
             let local = chrono::DateTime::from_timestamp(e.ts, 0)
-                .unwrap()
+                .unwrap_or(chrono::DateTime::UNIX_EPOCH)
                 .with_timezone(&offset);
             let day = local.format("%Y-%m-%d").to_string();
             bump(&mut by_hour[local.hour() as usize].counts, e.kind);

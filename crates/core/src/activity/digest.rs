@@ -9,8 +9,9 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 
 /// Taille maximale (en octets) du texte du digest. Au-delà, on compacte
-/// progressivement (suppression des commandes shell, puis troncature plus
-/// agressive des prompts, puis coupe brutale en dernier recours).
+/// progressivement (suppression des commandes shell **et des corps de commit**,
+/// puis troncature plus agressive des prompts, puis coupe brutale en dernier
+/// recours).
 pub const MAX_CHARS: usize = 24_000;
 
 /// Digest textuel d'une journée d'événements, prêt à être envoyé au LLM.
@@ -26,6 +27,11 @@ struct CommitStats {
     files: i64,
     added: i64,
     deleted: i64,
+    /// Corps du commit tel que collecté (tronqué à 400 caractères par le
+    /// collecteur git). `default` : les lignes écrites avant l'ajout du champ ne
+    /// l'ont pas, et une base existante doit rester lisible.
+    #[serde(default)]
+    body: String,
 }
 
 /// Construit le digest déterministe des `events` du jour, en utilisant `offset`
@@ -59,8 +65,14 @@ fn truncate_at_line_boundary(text: &str, max_chars: usize) -> String {
     }
 }
 
+/// Heure locale d'un horodatage. `%at` d'un commit est arbitraire (une date
+/// aberrante suffit) : un timestamp hors bornes se replie sur epoch 0 plutôt que
+/// de faire paniquer toute la construction du digest.
 fn local_hour(ts: i64, offset: chrono::FixedOffset) -> u32 {
-    chrono::DateTime::from_timestamp(ts, 0).unwrap().with_timezone(&offset).hour()
+    chrono::DateTime::from_timestamp(ts, 0)
+        .unwrap_or(chrono::DateTime::UNIX_EPOCH)
+        .with_timezone(&offset)
+        .hour()
 }
 
 fn truncate_title(title: &str, limit: usize) -> String {
@@ -80,6 +92,26 @@ fn render_commit_stats(body: Option<&str>) -> String {
     format!(" (+{} −{}, {} {word})", stats.added, stats.deleted, stats.files)
 }
 
+/// Corps du commit, une ligne indentée de deux espaces par ligne non vide, ou
+/// chaîne vide s'il n'y en a pas. C'est la source la plus riche en intentions du
+/// journal (spec §6 : « commits intégraux, sujet + corps ≤ 400 caractères »).
+fn render_commit_body(body: Option<&str>) -> String {
+    let Some(body) = body else { return String::new() };
+    let Ok(stats) = serde_json::from_str::<CommitStats>(body) else { return String::new() };
+    let lignes: Vec<String> = stats
+        .body
+        .lines()
+        .map(|l| l.trim_end())
+        .filter(|l| !l.is_empty())
+        .map(|l| format!("  {l}"))
+        .collect();
+    if lignes.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", lignes.join("\n"))
+    }
+}
+
 fn ticket_brackets(ticket_ids: &[String]) -> String {
     if ticket_ids.is_empty() {
         String::new()
@@ -88,11 +120,18 @@ fn ticket_brackets(ticket_ids: &[String]) -> String {
     }
 }
 
-/// Rend un événement non-`ShellCmd` en une ligne du digest.
-fn render_event_line(ev: &ActivityEvent, prompt_limit: usize) -> String {
+/// Rend un événement non-`ShellCmd` en une ligne du digest (plus, pour un commit
+/// et si `include_body`, les lignes indentées de son corps).
+fn render_event_line(ev: &ActivityEvent, prompt_limit: usize, include_body: bool) -> String {
     match ev.kind {
         EventKind::Commit => {
-            format!("- commit : {}{}{}", ev.title, render_commit_stats(ev.body.as_deref()), ticket_brackets(&ev.ticket_ids))
+            let corps = if include_body { render_commit_body(ev.body.as_deref()) } else { String::new() };
+            format!(
+                "- commit : {}{}{}{corps}",
+                ev.title,
+                render_commit_stats(ev.body.as_deref()),
+                ticket_brackets(&ev.ticket_ids)
+            )
         }
         EventKind::ClaudePrompt => format!("- claude : {}", truncate_title(&ev.title, prompt_limit)),
         EventKind::ClaudeSession => format!("- session : {}", ev.title),
@@ -129,6 +168,11 @@ fn render_shell_line(shells: &[&ActivityEvent]) -> Option<String> {
 /// Rend les lignes d'une heure donnée : les événements non-shell dans l'ordre
 /// chronologique, suivis (si `include_shell`) d'une unique ligne agrégeant les
 /// commandes shell de l'heure.
+///
+/// `include_shell` gouverne aussi les corps de commit : ils ne sont rendus qu'au
+/// palier complet et disparaissent dès le premier palier de compaction, en même
+/// temps que les commandes — les deux sont les postes les plus volumineux du
+/// digest, et le sujet du commit suffit à en garder la trace.
 fn render_hour_lines(events: &[&ActivityEvent], include_shell: bool, prompt_limit: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut shells = Vec::new();
@@ -136,7 +180,7 @@ fn render_hour_lines(events: &[&ActivityEvent], include_shell: bool, prompt_limi
         if ev.kind == EventKind::ShellCmd {
             shells.push(*ev);
         } else {
-            lines.push(render_event_line(ev, prompt_limit));
+            lines.push(render_event_line(ev, prompt_limit, include_shell));
         }
     }
     if include_shell {
@@ -261,7 +305,10 @@ mod tests {
     #[test]
     fn digest_groupe_par_workspace_puis_heure_et_liste_les_tickets() {
         let mut c = ev(T0 + 9 * 3600 + 120, EventKind::Commit, "/home/t/dev/terminals", "fix(core): TERM", &["86c1abc"]);
-        c.body = Some(r#"{"files":3,"added":42,"deleted":7}"#.into());
+        c.body = Some(
+            r#"{"files":3,"added":42,"deleted":7,"body":"Le parseur perdait le dernier octet.\nRefs CU-86c1abc"}"#
+                .into(),
+        );
         let evs = vec![
             c,
             ev(T0 + 9 * 3600 + 300, EventKind::ShellCmd, "/home/t/dev/terminals", "npm test", &[]),
@@ -286,6 +333,8 @@ mod tests {
 ## terminals (/home/t/dev/terminals) — branche master
 ### 09h
 - commit : fix(core): TERM (+42 −7, 3 fichiers) [86c1abc]
+  Le parseur perdait le dernier octet.
+  Refs CU-86c1abc
 - shell : npm test ×2
 
 ## Tickets cités
@@ -295,6 +344,43 @@ mod tests {
         assert_eq!(d.event_count, 4);
         assert_eq!(d.hash.len(), 64);
         assert_eq!(build_digest(&evs, &tickets, utc()).hash, d.hash, "déterministe");
+    }
+
+    #[test]
+    fn le_corps_du_commit_disparait_au_premier_palier_de_compaction() {
+        // Palier complet : corps rendu. Au-delà de MAX_CHARS, le premier palier
+        // (celui qui retire les commandes shell) retire aussi les corps de commit,
+        // qui sont la partie la plus volumineuse par événement.
+        let corps = "détail ".repeat(60);
+        let mut evs = Vec::new();
+        for i in 0..400 {
+            let mut c = ev(T0 + i, EventKind::Commit, "/a", &format!("commit {i}"), &[]);
+            c.body = Some(
+                serde_json::json!({ "files": 1, "added": 1, "deleted": 0, "body": corps })
+                    .to_string(),
+            );
+            evs.push(c);
+        }
+        let complet = build_digest(&evs[..1], &[], utc());
+        assert!(complet.text.contains("  détail"), "palier complet : {}", complet.text);
+
+        let compacte = build_digest(&evs, &[], utc());
+        assert!(compacte.text.len() <= MAX_CHARS, "{}", compacte.text.len());
+        assert!(!compacte.text.contains("détail"), "le corps doit disparaître à la compaction");
+        assert!(compacte.text.contains("- commit : commit 0"), "les commits restent listés");
+    }
+
+    #[test]
+    fn corps_de_commit_absent_ou_vide_ne_change_rien() {
+        let mut sans_champ = ev(T0, EventKind::Commit, "/a", "x", &[]);
+        sans_champ.body = Some(r#"{"files":1,"added":1,"deleted":0}"#.into());
+        let mut vide = ev(T0 + 1, EventKind::Commit, "/a", "y", &[]);
+        vide.body = Some(r#"{"files":1,"added":1,"deleted":0,"body":""}"#.into());
+        let d = build_digest(&[sans_champ, vide], &[], utc());
+        assert_eq!(
+            d.text,
+            "## a (/a) — branche master\n### 00h\n- commit : x (+1 −0, 1 fichier)\n- commit : y (+1 −0, 1 fichier)\n"
+        );
     }
 
     #[test]
