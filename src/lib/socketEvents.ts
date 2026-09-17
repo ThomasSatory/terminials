@@ -1,6 +1,7 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
+import { coalesce } from "./coalesce";
 
 interface SocketCommand {
   method: string;
@@ -60,8 +61,16 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
   // Dashboard d'activité (§7/§8 du design) : un événement collecté (git, claude,
   // clickup, shell) invalide les données affichées ; un résumé LLM prêt allume
   // la pastille de la sidebar si l'overlay est fermé (sinon no-op, cf. store).
-  const p3 = listen("activity-updated", () => useDashboardStore.getState().bumpRefresh());
+  // Un cycle de collecte émet trois `activity-updated` (git, claude, clickup) et
+  // chaque commande shell terminée en émet un : sans amortissement, chaque
+  // rafale relance les 4 appels IPC de `useActivityData` et la lecture de cache
+  // des trois panneaux de synthèse. Une seule `bumpRefresh` par fenêtre de 2 s.
+  const rafraichir = coalesce(() => useDashboardStore.getState().bumpRefresh(), 2000);
+  const p3 = listen("activity-updated", rafraichir);
   const p4 = listen("summary-ready", () => useDashboardStore.getState().markSummaryReady());
 
-  return Promise.all([p1, p2, p3, p4]).then((fns) => () => fns.forEach((f) => f()));
+  return Promise.all([p1, p2, p3, p4]).then((fns) => () => {
+    rafraichir.cancel();
+    fns.forEach((f) => f());
+  });
 }
