@@ -194,19 +194,21 @@ fn range_digest(store: &Store, from: i64, to: i64, offset: chrono::FixedOffset) 
 fn week_digest(store: &Store, day: NaiveDate, tz: &impl TimeZone) -> Result<Digest, LlmError> {
     let monday = day - Duration::days(day.weekday().num_days_from_monday() as i64);
     let mut sections = Vec::new();
+    let mut event_count = 0usize;
     for i in 0..5 {
         let d = monday + Duration::days(i);
         let from = local_epoch(d, tz);
         let to = local_epoch(d + Duration::days(1), tz);
         let offset = fixed_offset_at(from, tz);
         let digest = range_digest(store, from, to, offset)?;
+        event_count += digest.event_count;
         if !digest.text.is_empty() {
             sections.push(format!("# {}\n{}", d.format("%Y-%m-%d"), digest.text));
         }
     }
     let text = sections.join("\n");
     let hash = sha256_hex(&text);
-    Ok(Digest { text, hash, event_count: 0 })
+    Ok(Digest { text, hash, event_count })
 }
 
 fn sha256_hex(text: &str) -> String {
