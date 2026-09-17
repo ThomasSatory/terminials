@@ -42,11 +42,18 @@ pub fn build_digest(events: &[ActivityEvent], tickets: &[TicketInfo], offset: ch
 }
 
 /// Coupe `text` à `max_chars` octets au plus, sur une frontière de ligne.
+/// `max_chars` est un index en octets qui peut tomber au milieu d'un caractère
+/// UTF-8 multi-octets (guillemets, tiret, accents) : on recule d'abord jusqu'à
+/// la frontière de caractère valide la plus proche avant de trancher.
 fn truncate_at_line_boundary(text: &str, max_chars: usize) -> String {
     if text.len() <= max_chars {
         return text.to_string();
     }
-    match text[..max_chars].rfind('\n') {
+    let mut end = max_chars.min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    match text[..end].rfind('\n') {
         Some(pos) => text[..=pos].to_string(),
         None => String::new(),
     }
@@ -169,8 +176,10 @@ fn render_group(dir: Option<&str>, events: &[&ActivityEvent], include_shell: boo
 }
 
 /// Rend la section finale `## Tickets cités`, si au moins un identifiant de
-/// ticket est cité par les événements (dans l'ordre de première apparition).
-fn render_tickets_section(events: &[ActivityEvent], tickets: &[TicketInfo]) -> Option<String> {
+/// ticket est cité par les événements. `events` doit être trié par `ts`
+/// croissant : l'ordre de première apparition est donc l'ordre chronologique,
+/// indépendamment de l'ordre d'entrée du digest ou du regroupement par workspace.
+fn render_tickets_section(events: &[&ActivityEvent], tickets: &[TicketInfo]) -> Option<String> {
     let mut ids: Vec<&str> = Vec::new();
     for ev in events {
         for id in &ev.ticket_ids {
@@ -215,7 +224,7 @@ fn render(events: &[ActivityEvent], tickets: &[TicketInfo], offset: chrono::Fixe
     if !clickup.is_empty() {
         sections.push(render_group(None, &clickup, include_shell, prompt_limit, offset));
     }
-    if let Some(tickets_section) = render_tickets_section(events, tickets) {
+    if let Some(tickets_section) = render_tickets_section(&sorted, tickets) {
         sections.push(tickets_section);
     }
 
@@ -316,6 +325,41 @@ mod tests {
         let d = build_digest(&evs, &[], utc());
         assert!(d.text.len() <= MAX_CHARS, "{}", d.text.len());
         assert!(!d.text.contains("shell :"), "les commandes partent d'abord");
+    }
+
+    #[test]
+    fn troncature_de_dernier_recours_ne_coupe_pas_un_caractere_utf8() {
+        // Une ligne courte (le commit) puis des centaines de prompts en « é »
+        // (2 octets chacun) : le texte compacté (sans commandes shell, prompts à
+        // 60 caractères) dépasse MAX_CHARS et la coupe brutale à l'octet 24000
+        // tombe précisément au milieu d'un caractère « é » avec cette longueur de
+        // préfixe (vérifié : sans protection de frontière, `text[..24000]` panique
+        // avec `byte index 24000 is not a char boundary`).
+        let dir = "/a".to_string();
+        let prompt = "é".repeat(120);
+        let mut evs = vec![ev(T0, EventKind::Commit, &dir, "x", &[])];
+        for i in 1..1000 {
+            evs.push(ev(T0 + i, EventKind::ClaudePrompt, &dir, &prompt, &[]));
+        }
+        let d = build_digest(&evs, &[], utc());
+        assert!(d.text.len() <= MAX_CHARS, "{}", d.text.len());
+    }
+
+    #[test]
+    fn tickets_cites_ordonnes_par_ts_meme_si_les_evenements_arrivent_dans_le_desordre() {
+        // Dossiers choisis pour que le tri des groupes workspace (par nom) placerait
+        // « aaa1111 » avant « bbb2222 » dans le corps du digest de toute façon : on
+        // isole donc la section « Tickets cités » pour tester spécifiquement son
+        // propre ordre, indépendant de l'ordre de rendu des groupes.
+        let plus_tard = ev(T0 + 10 * 3600, EventKind::Commit, "/z", "second", &["bbb2222"]);
+        let plus_tot = ev(T0 + 8 * 3600, EventKind::Commit, "/a", "first", &["aaa1111"]);
+        // Ordre d'entrée volontairement inversé par rapport au `ts`.
+        let evs = vec![plus_tard, plus_tot];
+        let d = build_digest(&evs, &[], utc());
+        let section = d.text.split("## Tickets cités\n").nth(1).expect("section « Tickets cités » absente");
+        let pos_aaa = section.find("aaa1111").expect("ticket aaa1111 absent de la section");
+        let pos_bbb = section.find("bbb2222").expect("ticket bbb2222 absent de la section");
+        assert!(pos_aaa < pos_bbb, "le ticket de l'événement le plus ancien (ts) doit apparaître en premier dans « Tickets cités »");
     }
 
     #[test]
