@@ -77,14 +77,12 @@ export function useActivityData(): {
  * État + génération d'un résumé LLM pour `kind`. Régénère (lecture cache,
  * `force=false`) au montage et quand `day`/`refreshTick` changent ; régénère
  * en forçant (`force=true`) quand `generateTick` (bouton « Générer
- * maintenant » de la barre du haut, ajouté par une tâche ultérieure) change.
+ * maintenant » de la barre du haut) change.
  */
 export function useSummary(kind: SummaryKind): { ui: SummaryUi; generate(force: boolean): void } {
   const day = useDashboardStore((s) => s.day);
   const refreshTick = useDashboardStore((s) => s.refreshTick);
-  // `generateTick` n'existe pas encore dans le store (tâche ultérieure) : lu
-  // défensivement pour compiler dès maintenant sans dépendre de ce champ.
-  const generateTick = useDashboardStore((s) => (s as { generateTick?: number }).generateTick ?? 0);
+  const generateTick = useDashboardStore((s) => s.generateTick);
 
   const [ui, setUi] = useState<SummaryUi>({ status: "idle" });
   const requestId = useRef(0);

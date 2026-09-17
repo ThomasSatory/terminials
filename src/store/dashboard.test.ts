@@ -65,4 +65,10 @@ describe("dashboard store", () => {
     store().setMode("week");
     expect(store().mode).toBe("week");
   });
+
+  it("bumpGenerate incrémente generateTick", () => {
+    const before = store().generateTick;
+    store().bumpGenerate();
+    expect(store().generateTick).toBe(before + 1);
+  });
 });

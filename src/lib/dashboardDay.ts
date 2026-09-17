@@ -101,3 +101,18 @@ export function formatDuration(minutes: number): string {
   const m = minutes % 60;
   return `${h} h ${String(m).padStart(2, "0")}`;
 }
+
+/**
+ * Libellé « collecté il y a N min » de la barre du haut (§8), à partir du plus
+ * récent timestamp de `ActivityStatus.lastCollect` (une entrée par source :
+ * git, claude, clickup). Aucune entrée → "jamais collecté". Une horloge en
+ * dérive (dernière collecte dans le futur) est plancherée à 0 min plutôt que
+ * d'afficher une durée négative.
+ */
+export function collectedAgoLabel(lastCollect: Record<string, number>, now: number): string {
+  const values = Object.values(lastCollect);
+  if (values.length === 0) return "jamais collecté";
+  const last = Math.max(...values);
+  const minutes = Math.max(0, Math.floor((now - last) / 60));
+  return `collecté il y a ${minutes} min`;
+}

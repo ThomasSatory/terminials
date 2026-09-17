@@ -4,13 +4,16 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Sidebar } from "./components/Sidebar";
 import { PaneTree } from "./components/PaneTree";
 import { DiffOverlay } from "./components/DiffOverlay";
+import { DashboardOverlay } from "./components/DashboardOverlay";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { dispatchShortcut } from "./lib/shortcutDispatch";
 import { registerSocketEvents } from "./lib/socketEvents";
 import { openFolderDialog } from "./lib/openFolder";
 import { injectPaths } from "./lib/injectFiles";
 import { resolvePaneId, toCssPoint } from "./lib/dropTarget";
+import { activityApi } from "./lib/activityApi";
 import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
+import { useDashboardStore } from "./store/dashboard";
 import "./App.css";
 
 const EMPTY_BTN: CSSProperties = {
@@ -28,6 +31,7 @@ export default function App() {
   const { workspaces, activeId, addPane, showToast, toast, clearToast } = useWorkspaceStore();
   // Ctrl+Shift+B : consommation au rendu du booléen basculé par toggleSidebar (K.5).
   const sidebarVisible = useWorkspaceStore((s) => s.sidebarVisible);
+  const dashboardOpen = useDashboardStore((s) => s.open);
 
   // true tant que la restauration n'a pas statué : évite le flash de l'état
   // vide « Open folder » pendant les invoke dir_exists.
@@ -83,13 +87,23 @@ export default function App() {
     };
   }, []);
 
-  // Branche les events backend (socket-command, agent-notification).
+  // Branche les events backend (socket-command, agent-notification, activity-*).
   useEffect(() => {
     const cleanup = registerSocketEvents();
     return () => {
       cleanup.then((fn) => fn());
     };
   }, []);
+
+  // Le collecteur d'activité (dashboard) a besoin de connaître les workspaces
+  // ouverts pour rattacher les événements (commits, prompts…) à leur dossier.
+  // Dépendance sur la liste jointe des cwd (et non `workspaces`) : un seul appel
+  // par changement RÉEL de dossiers, pas à chaque tick des pollers ports/git.
+  const workspaceCwds = workspaces.map((w) => w.cwd).join("\n");
+  useEffect(() => {
+    const dirs = workspaceCwds ? workspaceCwds.split("\n") : [];
+    activityApi.registerWorkspaces(dirs).catch(() => {});
+  }, [workspaceCwds]);
 
   // Auto-dismiss du toast après 2 s. (clearToast est stable : défini une fois par Zustand.)
   useEffect(() => {
@@ -166,7 +180,7 @@ export default function App() {
     <div style={{ display: "flex", width: "100vw", height: "100vh", background: "#1e1e1e" }}>
       {/* Ctrl+Shift+B : démonter la Sidebar est sans risque PTY (aucun TerminalPane dedans). */}
       {sidebarVisible && <Sidebar />}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, position: "relative" }}>
         {booting ? null : workspaces.length === 0 ? (
           /* État vide : formulaire nom+dossier dans la Sidebar, ou dialog natif. */
           <div
@@ -259,6 +273,9 @@ export default function App() {
             </div>
           </>
         )}
+        {/* Dashboard d'activité (Ctrl+Shift+H) : global, pas lié à un workspace — couvre
+            la grille ET l'état vide, mais jamais la sidebar (spec §8). */}
+        {dashboardOpen && <DashboardOverlay />}
       </div>
       {toast && (
         <div

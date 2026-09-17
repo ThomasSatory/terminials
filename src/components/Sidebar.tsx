@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react";
 import { homeDir } from "@tauri-apps/api/path";
 import { useWorkspaceStore, hasAttention } from "../store/workspace";
+import { useDashboardStore } from "../store/dashboard";
 import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 import { abbreviateHome } from "../lib/paths";
 import { openFolderDialog } from "../lib/openFolder";
@@ -60,6 +61,10 @@ export function Sidebar() {
   const [creating, setCreating] = useState(false);
   const [paletteFor, setPaletteFor] = useState<string | null>(null);
   const [hoverId, setHoverId] = useState<string | null>(null);
+
+  const dashboardOpen = useDashboardStore((s) => s.open);
+  const unreadSummary = useDashboardStore((s) => s.unreadSummary);
+  const toggleDashboard = useDashboardStore((s) => s.toggle);
 
   const openEdit = (wsId: string) => {
     setCreating(false);
@@ -146,6 +151,31 @@ export function Sidebar() {
         borderRight: "1px solid #242424",
       }}
     >
+      {/* Entrée fixe en tête de liste (§8 du design), au-dessus des workspaces :
+          le dashboard n'est lié à aucun d'entre eux. Pastille bleue = résumé
+          LLM prêt et pas encore vu (overlay resté fermé depuis, cf. store). */}
+      <div
+        className="dash-entry"
+        onClick={toggleDashboard}
+        title="Dashboard (Ctrl+Shift+H)"
+        // `undefined` (et non "transparent") quand fermé : une valeur inline
+        // écraserait en permanence le survol défini par la classe `.dash-entry:hover`.
+        style={{ background: dashboardOpen ? "#2c2c2c" : undefined }}
+      >
+        <span>▦</span>
+        <span style={{ flex: 1 }}>Dashboard</span>
+        {unreadSummary && (
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "#3b82f6",
+              flexShrink: 0,
+            }}
+          />
+        )}
+      </div>
       {workspaces.map((w, i) => (
         // Fragment et non un div englobant : la ligne reste un enfant DIRECT du
         // conteneur flex, donc ses marges verticales ne peuvent pas fusionner à

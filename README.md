@@ -14,6 +14,7 @@ Le but : rendre le travail des agents *observable*. Sidebar verticale de workspa
 - **Notifications agents** : capture des séquences `OSC 9 / 99 / 777` dans le flux du terminal → **anneau bleu** autour du pane émetteur (signature cmux), rail bleu dans la sidebar, notification desktop D-Bus + demande d'attention de la fenêtre. Aussi déclenchables par la CLI et par un hook Claude Code ; les commandes lancées dans un pane ciblent leur workspace d'origine (`TERMINIALS_WORKSPACE_ID` injecté dans l'environnement du shell).
 - **Images & fichiers dans le prompt de l'agent** : `Ctrl+V` colle une image du presse-papier directement dans Claude Code (qui la lit via `xclip`, cf. Prérequis) ; `Ctrl+Shift+V` avec une image au presse-papier l'écrit dans `$TMPDIR/terminials-images/` et injecte son chemin dans le terminal ; un glisser-déposer de fichiers injecte leurs chemins (quotés) dans le pane survolé. Sans image au presse-papier, `Ctrl+Shift+V` reste le collage texte du terminal.
 - **CLI + socket Unix** (`$XDG_RUNTIME_DIR/terminials.sock`, JSON-par-ligne) pour scripter l'app.
+- **Dashboard d'activité** (`Ctrl+Shift+H`) : vue globale (pas liée à un workspace) de ce qui a été fait — commits, prompts et sessions Claude Code, commandes shell, changements ClickUp — agrégés par heure et par workspace, avec une timeline détaillée filtrable. Un résumé quotidien (« bilan » + « reste à faire ») et un résumé hebdomadaire sont générés par un LLM Gemma auto-hébergé, automatiquement à 07:00 les jours ouvrés ou à la demande (bouton « Générer maintenant ») ; une pastille bleue sur l'entrée « Dashboard » de la sidebar signale un résumé fraîchement généré. Tous les réglages (fournisseur LLM, jeton, planification, tickets, etc.) se configurent dans le panneau ⚙ de l'overlay et sont persistés dans `~/.config/terminials/settings.json`. L'intégration shell (captation des commandes bash/zsh) ne voit que la **première commande simple** d'une ligne composée (pipes/`&&`/`;` non décomposés) — une limite assumée plutôt qu'un parseur shell complet. Le jeton Gemma est **périssable (6 h)** : au-delà, la génération échoue avec un bandeau « Jeton LLM expiré » et un champ pour le renouveler sans repasser par ⚙.
 
 Hors périmètre : onglets/surfaces par pane, navigateur intégré, splits libres redimensionnables, command palette.
 
@@ -201,6 +202,7 @@ Couche `Ctrl+Shift` (convention gnome-terminal), matching par touche physique (`
 | `Ctrl+Shift+R` | Modifier le nom / le dossier du workspace (édition inline) |
 | `Ctrl+Shift+D` | Ouvrir/fermer le diff viewer |
 | `Ctrl+Shift+B` | Afficher/masquer la sidebar |
+| `Ctrl+Shift+H` | Ouvrir/fermer le dashboard d'activité |
 | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Déplacer le workspace actif dans la sidebar (sans wrap) |
 | `Ctrl+PageUp` / `Ctrl+PageDown` | Workspace précédent / suivant |
 | `Ctrl+1` … `Ctrl+9` | Sélection directe de workspace |

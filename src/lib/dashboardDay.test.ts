@@ -9,6 +9,7 @@ import {
   formatDuration,
   isWeekend,
   formatDayLabel,
+  collectedAgoLabel,
 } from "./dashboardDay";
 
 describe("dashboardDay", () => {
@@ -60,5 +61,21 @@ describe("dashboardDay", () => {
     expect(isWeekend("2026-09-19")).toBe(true);
     expect(isWeekend("2026-09-16")).toBe(false);
     expect(formatDayLabel("2026-09-16")).toBe("mercredi 16 septembre 2026");
+  });
+
+  describe("collectedAgoLabel", () => {
+    it("jamais collecté sans entrée", () => {
+      expect(collectedAgoLabel({}, 1_000)).toBe("jamais collecté");
+    });
+    it("prend le max des sources", () => {
+      const lastCollect = { git: 1_000 - 180, claude: 1_000 - 60, clickup: 1_000 - 600 };
+      expect(collectedAgoLabel(lastCollect, 1_000)).toBe("collecté il y a 1 min");
+    });
+    it("arrondit à la minute inférieure", () => {
+      expect(collectedAgoLabel({ git: 1_000 - 179 }, 1_000)).toBe("collecté il y a 2 min");
+    });
+    it("jamais dans le passé (horloge en dérive) : plancher à 0 min", () => {
+      expect(collectedAgoLabel({ git: 1_000 + 60 }, 1_000)).toBe("collecté il y a 0 min");
+    });
   });
 });

@@ -15,6 +15,8 @@ export interface DashboardState {
   settingsOpen: boolean;
   /** Compteur bumpé pour invalider les hooks de données (dépendance d'effet). */
   refreshTick: number;
+  /** Compteur bumpé par « Générer maintenant » : force la régénération des résumés visibles. */
+  generateTick: number;
   toggle(): void;
   close(): void;
   setDay(d: string): void;
@@ -26,6 +28,7 @@ export interface DashboardState {
   markSummaryReady(): void;
   setSettingsOpen(b: boolean): void;
   bumpRefresh(): void;
+  bumpGenerate(): void;
 }
 
 /** État initial, exporté pour réinitialiser le store entre les tests
@@ -40,6 +43,7 @@ export const initialDashboardState: Pick<
   | "unreadSummary"
   | "settingsOpen"
   | "refreshTick"
+  | "generateTick"
 > = {
   open: false,
   day: todayString(),
@@ -49,6 +53,7 @@ export const initialDashboardState: Pick<
   unreadSummary: false,
   settingsOpen: false,
   refreshTick: 0,
+  generateTick: 0,
 };
 
 export const useDashboardStore = create<DashboardState>((set, get) => ({
@@ -82,4 +87,5 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set((s) => (s.open ? {} : { unreadSummary: true })),
   setSettingsOpen: (b) => set({ settingsOpen: b }),
   bumpRefresh: () => set((s) => ({ refreshTick: s.refreshTick + 1 })),
+  bumpGenerate: () => set((s) => ({ generateTick: s.generateTick + 1 })),
 }));

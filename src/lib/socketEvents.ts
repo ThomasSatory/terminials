@@ -1,5 +1,6 @@
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../store/workspace";
+import { useDashboardStore } from "../store/dashboard";
 
 interface SocketCommand {
   method: string;
@@ -56,5 +57,11 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
     s.setNotification(workspaceId, { title, body }, entry?.[0]);
   });
 
-  return Promise.all([p1, p2]).then((fns) => () => fns.forEach((f) => f()));
+  // Dashboard d'activité (§7/§8 du design) : un événement collecté (git, claude,
+  // clickup, shell) invalide les données affichées ; un résumé LLM prêt allume
+  // la pastille de la sidebar si l'overlay est fermé (sinon no-op, cf. store).
+  const p3 = listen("activity-updated", () => useDashboardStore.getState().bumpRefresh());
+  const p4 = listen("summary-ready", () => useDashboardStore.getState().markSummaryReady());
+
+  return Promise.all([p1, p2, p3, p4]).then((fns) => () => fns.forEach((f) => f()));
 }
