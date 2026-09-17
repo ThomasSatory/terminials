@@ -41,6 +41,7 @@ describe("OpenTasks", () => {
 describe("summaryFooter", () => {
   it("formate « généré à HH:MM par <model> »", () => {
     const summary: Summary = {
+      day: "2026-09-17",
       text: "…",
       model: "openai:google/gemma-4-31B-it",
       generatedAt: Math.floor(new Date(2026, 8, 17, 7, 2, 0).getTime() / 1000),

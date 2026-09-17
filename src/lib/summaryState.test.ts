@@ -5,6 +5,7 @@ import type { Summary } from "./activityApi";
 describe("reduceSummary", () => {
   const idle: SummaryUi = { status: "idle" };
   const summary: Summary = {
+    day: "2026-09-17",
     text: "texte du résumé",
     model: "openai:google/gemma-4-31B-it",
     generatedAt: 1234,
@@ -79,6 +80,25 @@ describe("reduceSummary", () => {
       expect(reduceSummary(failed, { type: "ok", summary: nouveau })).toEqual({
         status: "ok",
         summary: nouveau,
+      });
+    });
+  });
+
+  describe("lecture du cache sans appel LLM (Critique #1)", () => {
+    it("absent depuis loading -> statut absent (aucune synthèse en cache)", () => {
+      expect(reduceSummary({ status: "loading" }, { type: "absent" })).toEqual({
+        status: "absent",
+      });
+    });
+
+    it("absent depuis ok -> absent : le résumé d'un autre jour ne reste pas affiché", () => {
+      const ok: SummaryUi = { status: "ok", summary };
+      expect(reduceSummary(ok, { type: "absent" })).toEqual({ status: "absent" });
+    });
+
+    it("start depuis absent -> loading", () => {
+      expect(reduceSummary({ status: "absent" }, { type: "start" })).toEqual({
+        status: "loading",
       });
     });
   });

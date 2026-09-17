@@ -74,10 +74,15 @@ export function useActivityData(): {
 }
 
 /**
- * État + génération d'un résumé LLM pour `kind`. Régénère (lecture cache,
- * `force=false`) au montage et quand `day`/`refreshTick` changent ; régénère
- * en forçant (`force=true`) quand `generateTick` (bouton « Générer
- * maintenant » de la barre du haut) change.
+ * État + génération d'un résumé LLM pour `kind`. Le chargement automatique
+ * (montage, changement de jour, `refreshTick`) passe par
+ * `activity_summary_cached` : lecture seule du cache, donc **jamais** d'appel
+ * LLM — sinon chaque commande shell et chaque cycle de collecte brûlait un
+ * appel par panneau (Critique #1). Cache vide → état `absent` (« Aucune
+ * synthèse pour ce jour »), qui n'est pas une erreur. Seuls les gestes
+ * explicites appellent `activity_summary` : le bouton « Générer » du panneau,
+ * le ↻ (`force=true`) et « Générer maintenant » de la barre du haut
+ * (`generateTick`, `force=true`).
  */
 export function useSummary(kind: SummaryKind): { ui: SummaryUi; generate(force: boolean): void } {
   const day = useDashboardStore((s) => s.day);
@@ -85,7 +90,28 @@ export function useSummary(kind: SummaryKind): { ui: SummaryUi; generate(force: 
   const generateTick = useDashboardStore((s) => s.generateTick);
 
   const [ui, setUi] = useState<SummaryUi>({ status: "idle" });
+  // Compteur partagé par les deux chemins : une lecture de cache tardive ne doit
+  // pas écraser le résultat d'une génération demandée entre-temps (et vice versa).
   const requestId = useRef(0);
+
+  const chargerCache = useCallback(() => {
+    const id = ++requestId.current;
+    setUi((prev) => reduceSummary(prev, { type: "start" }));
+    activityApi
+      .summaryCached(day, kind)
+      .then((summary) => {
+        if (id !== requestId.current) return;
+        setUi((prev) =>
+          summary === null
+            ? reduceSummary(prev, { type: "absent" })
+            : reduceSummary(prev, { type: "ok", summary }),
+        );
+      })
+      .catch((error: unknown) => {
+        if (id !== requestId.current) return;
+        setUi((prev) => reduceSummary(prev, { type: "fail", error }));
+      });
+  }, [day, kind]);
 
   const generate = useCallback(
     (force: boolean) => {
@@ -106,8 +132,8 @@ export function useSummary(kind: SummaryKind): { ui: SummaryUi; generate(force: 
   );
 
   useEffect(() => {
-    generate(false);
-  }, [generate, refreshTick]);
+    chargerCache();
+  }, [chargerCache, refreshTick]);
 
   const generateTickRef = useRef(generateTick);
   useEffect(() => {

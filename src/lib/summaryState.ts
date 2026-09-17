@@ -2,7 +2,11 @@ import { isUnauthorized, type Summary } from "./activityApi";
 
 /**
  * État UI d'un résumé LLM (§8 du design : idle → bouton, loading → squelette,
- * etc). Quand une régénération (`generate(true)`) échoue alors qu'un résumé
+ * etc). `absent` est le résultat d'une lecture de cache qui ne trouve rien
+ * (`activity_summary_cached` → `null`) : ce n'est pas une erreur, juste « aucune
+ * synthèse pour ce jour », avec le bouton de génération — le chargement
+ * automatique ne doit jamais déclencher d'appel LLM (Critique #1). Quand une
+ * régénération (`generate(true)`) échoue alors qu'un résumé
  * est déjà affiché, le résumé en cache n'est jamais écrasé (§10) : `ok` gagne
  * alors `refreshing` (régénération en cours) et `lastError` (échec de la
  * dernière régénération, `"unauthorized"` pour un jeton LLM refusé, sinon
@@ -13,6 +17,7 @@ import { isUnauthorized, type Summary } from "./activityApi";
 export type SummaryUi =
   | { status: "idle" }
   | { status: "loading" }
+  | { status: "absent" }
   | { status: "ok"; summary: Summary; refreshing?: boolean; lastError?: string }
   | { status: "unauthorized" }
   | { status: "error"; message: string };
@@ -20,6 +25,7 @@ export type SummaryUi =
 export type SummaryEvent =
   | { type: "start" }
   | { type: "ok"; summary: Summary }
+  | { type: "absent" }
   | { type: "fail"; error: unknown };
 
 /**
@@ -36,6 +42,11 @@ export function reduceSummary(prev: SummaryUi, ev: SummaryEvent): SummaryUi {
       return { status: "loading" };
     case "ok":
       return { status: "ok", summary: ev.summary };
+    case "absent":
+      // Contrairement à `fail`, on n'a rien à préserver : un cache vide est la
+      // vérité pour le jour demandé. Garder le résumé précédent afficherait
+      // celui de la veille après un changement de jour.
+      return { status: "absent" };
     case "fail":
       if (prev.status === "ok") {
         return {

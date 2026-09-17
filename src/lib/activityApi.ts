@@ -72,6 +72,8 @@ export interface ActivityStats {
 export type SummaryKind = "bilan" | "reste_a_faire" | "semaine";
 
 export interface Summary {
+  /** Jour sous lequel la synthèse est rangée ; pour `semaine`, le lundi de la semaine. */
+  day: string;
   text: string;
   model: string;
   generatedAt: number;
@@ -143,8 +145,17 @@ export const activityApi = {
   stats: (from: number, to: number): Promise<ActivityStats> =>
     invoke("activity_stats", { from, to }),
 
+  /** Génère (ou relit le cache) — peut déclencher un appel LLM de plusieurs dizaines de secondes. */
   summary: (day: string, kind: SummaryKind, force?: boolean): Promise<Summary> =>
     invoke("activity_summary", { day, kind, force: force ?? false }),
+
+  /**
+   * Lecture seule du cache de synthèses : `null` si rien n'a encore été généré
+   * pour ce jour. N'appelle jamais le LLM — c'est le chemin du chargement
+   * automatique (montage, changement de jour, `activity-updated`).
+   */
+  summaryCached: (day: string, kind: SummaryKind): Promise<Summary | null> =>
+    invoke("activity_summary_cached", { day, kind }),
 
   openTasks: (): Promise<OpenTask[]> => invoke("activity_open_tasks"),
 

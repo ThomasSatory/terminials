@@ -51,6 +51,16 @@ export function SummaryPanel({
 
       {ui.status === "loading" && <div className="dash-skeleton" />}
 
+      {/* Cache vide : ce n'est pas une erreur, la génération reste un geste explicite. */}
+      {ui.status === "absent" && (
+        <>
+          <p>Aucune synthèse pour ce jour</p>
+          <button type="button" onClick={() => generate(false)}>
+            Générer maintenant
+          </button>
+        </>
+      )}
+
       {ui.status === "ok" && (
         <>
           <Markdown text={ui.summary.text} onOpenLink={onOpenLink} />
