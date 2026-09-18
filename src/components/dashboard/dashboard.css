@@ -278,6 +278,8 @@
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+  /* Sans cette ligne, une longue prose déborderait la colonne au lieu de défiler. */
+  min-height: 0;
 }
 
 .dash-h2 {

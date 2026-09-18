@@ -34,7 +34,8 @@ function textToList(text: string, sep: RegExp): string[] {
 
 /**
  * Panneau latéral droit « Réglages » (§8/§9) : formulaire complet des
- * réglages persistés. Charge `getSettings` au montage ; « Enregistrer »
+ * réglages persistés, aux champs soulignés des jetons « Journal » (aucune
+ * logique n'a changé avec la refonte, seulement l'habillage). Charge `getSettings` au montage ; « Enregistrer »
  * appelle `setSettings` puis `collectNow` puis rafraîchit le dashboard
  * (`bumpRefresh`) pour que les nouvelles données apparaissent immédiatement.
  */
@@ -69,7 +70,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
 
   if (!settings) {
     return (
-      <div className="dash-card dash-settings">
+      <div className="dash-settings">
         <div className="dash-skeleton" />
       </div>
     );
@@ -104,13 +105,13 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="dash-card dash-settings">
-      {error && <p className="dash-banner dash-banner-error">{error}</p>}
+    <div className="dash-settings">
+      {error && <p className="dash-banner-error">{error}</p>}
 
       <label>
         Fournisseur
         <select
-          className="dash-input"
+          className="dash-field"
           value={settings.llm.provider}
           onChange={(e) =>
             update({
@@ -130,7 +131,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         URL de base
         <input
-          className="dash-input"
+          className="dash-field"
           type="text"
           value={settings.llm.baseUrl}
           onChange={(e) => update({ llm: { ...settings.llm, baseUrl: e.target.value } })}
@@ -140,7 +141,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Modèle
         <input
-          className="dash-input"
+          className="dash-field"
           type="text"
           value={settings.llm.model}
           onChange={(e) => update({ llm: { ...settings.llm, model: e.target.value } })}
@@ -150,7 +151,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Jeton LLM
         <input
-          className="dash-input"
+          className="dash-field"
           type="password"
           value={settings.llm.token}
           onChange={(e) => update({ llm: { ...settings.llm, token: e.target.value } })}
@@ -160,7 +161,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         En-têtes supplémentaires (une par ligne, « clé: valeur »)
         <textarea
-          className="dash-input"
+          className="dash-field"
           value={extraHeadersText}
           onChange={(e) => setExtraHeadersText(e.target.value)}
         />
@@ -169,7 +170,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Température
         <input
-          className="dash-input"
+          className="dash-field"
           type="number"
           step="0.1"
           value={settings.llm.temperature}
@@ -182,7 +183,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Max tokens
         <input
-          className="dash-input"
+          className="dash-field"
           type="number"
           value={settings.llm.maxTokens}
           onChange={(e) => update({ llm: { ...settings.llm, maxTokens: Number(e.target.value) } })}
@@ -192,7 +193,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Token ClickUp
         <input
-          className="dash-input"
+          className="dash-field"
           type="password"
           value={settings.clickup.token}
           onChange={(e) => update({ clickup: { token: e.target.value } })}
@@ -202,7 +203,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Heure de génération
         <input
-          className="dash-input"
+          className="dash-field"
           type="number"
           min={0}
           max={23}
@@ -216,7 +217,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Minute
         <input
-          className="dash-input"
+          className="dash-field"
           type="number"
           min={0}
           max={59}
@@ -227,7 +228,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         />
       </label>
 
-      <label>
+      <label className="dash-settings-check">
         <input
           type="checkbox"
           checked={settings.schedule.weekdaysOnly}
@@ -238,7 +239,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
         Jours ouvrés seulement
       </label>
 
-      <label>
+      <label className="dash-settings-check">
         <input
           type="checkbox"
           checked={settings.shell.integration}
@@ -250,7 +251,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Commandes ignorées (séparées par des virgules)
         <input
-          className="dash-input"
+          className="dash-field"
           type="text"
           value={ignoredCommandsText}
           onChange={(e) => setIgnoredCommandsText(e.target.value)}
@@ -260,7 +261,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         E-mail git
         <input
-          className="dash-input"
+          className="dash-field"
           type="text"
           value={settings.git.authorEmail ?? ""}
           onChange={(e) => update({ git: { authorEmail: e.target.value || null } })}
@@ -270,17 +271,22 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         Motifs de tickets (un par ligne)
         <textarea
-          className="dash-input"
+          className="dash-field"
           value={ticketPatternsText}
           onChange={(e) => setTicketPatternsText(e.target.value)}
         />
       </label>
 
       <div className="dash-settings-actions">
-        <button type="button" onClick={handleSave} disabled={saving}>
+        <button
+          type="button"
+          className="dash-pill dash-pill-accent"
+          onClick={handleSave}
+          disabled={saving}
+        >
           Enregistrer
         </button>
-        <button type="button" onClick={onClose}>
+        <button type="button" className="dash-pill" onClick={onClose}>
           Fermer
         </button>
       </div>

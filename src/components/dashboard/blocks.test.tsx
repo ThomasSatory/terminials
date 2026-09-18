@@ -3,8 +3,10 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { WorkspaceChips } from "./WorkspaceChips";
 import { Timeline } from "./Timeline";
+import { WeekDays } from "./WeekDays";
 import type { ActivityEvent, WorkspaceCount } from "../../lib/activityApi";
 import { assignWorkspaceColors } from "../../lib/workspacePalette";
+import type { WeekDayRow } from "../../lib/weekDays";
 
 describe("WorkspaceChips", () => {
   const rows: WorkspaceCount[] = [
@@ -114,5 +116,48 @@ describe("Timeline", () => {
     );
     expect(html).toContain("dash-tl-empty");
     expect(html).toContain("Aucune activité ce jour");
+  });
+});
+
+describe("WeekDays", () => {
+  const rows: WeekDayRow[] = [
+    {
+      day: "2025-09-15",
+      label: "lun. 15",
+      fait: "réordonnancement des workspaces",
+      future: false,
+      compteurs: "5 commits, 31 échanges",
+      segments: [
+        { dir: "/dev/a", color: "#c9a36a", events: 9 },
+        { dir: "/dev/b", color: "#9bb08a", events: 1 },
+      ],
+    },
+    {
+      day: "2025-09-19",
+      label: "ven. 19",
+      fait: "",
+      future: true,
+      compteurs: "",
+      segments: [],
+    },
+  ];
+
+  it("rend le fait marquant, les compteurs et un segment par workspace", () => {
+    const html = renderToStaticMarkup(
+      createElement(WeekDays, { rows, selectedDay: "2025-09-15", onSelect: () => {} }),
+    );
+    expect(html).toContain("lun. 15");
+    expect(html).toContain("réordonnancement des workspaces");
+    expect(html).toContain("5 commits, 31 échanges");
+    expect((html.match(/dash-dayrow-seg/g) ?? []).length).toBe(2);
+    expect(html).toContain("flex:9");
+  });
+
+  it("marque le jour sélectionné et annonce les jours futurs", () => {
+    const html = renderToStaticMarkup(
+      createElement(WeekDays, { rows, selectedDay: "2025-09-15", onSelect: () => {} }),
+    );
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("à venir");
   });
 });

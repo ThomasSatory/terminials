@@ -5,11 +5,19 @@ import { useWorkspaceStore } from "../store/workspace";
 import { focusPane } from "../lib/paneFocus";
 import { useActivityData, useSummary } from "../hooks/useActivityData";
 import { activityApi, type ActivitySettings } from "../lib/activityApi";
-import { formatDayTitle, formatWeekLabel, collectedAgoLabel } from "../lib/dashboardDay";
+import {
+  formatDayTitle,
+  formatWeekLabel,
+  collectedAgoLabel,
+  weekRange,
+  todayString,
+} from "../lib/dashboardDay";
 import { statsSentence } from "../lib/statsSentence";
 import { assignWorkspaceColors } from "../lib/workspacePalette";
+import { buildWeekDays } from "../lib/weekDays";
 import { WorkspaceChips } from "./dashboard/WorkspaceChips";
 import { Timeline } from "./dashboard/Timeline";
+import { WeekDays } from "./dashboard/WeekDays";
 import { SummaryPanel, SummaryText, summaryFooter } from "./dashboard/SummaryPanel";
 import { OpenTasks } from "./dashboard/OpenTasks";
 import { SettingsPanel } from "./dashboard/SettingsPanel";
@@ -47,6 +55,7 @@ export function DashboardOverlay() {
   const close = useDashboardStore((s) => s.close);
   const shiftDay = useDashboardStore((s) => s.shiftDay);
   const today = useDashboardStore((s) => s.today);
+  const setDay = useDashboardStore((s) => s.setDay);
   const setMode = useDashboardStore((s) => s.setMode);
   const setFilterDir = useDashboardStore((s) => s.setFilterDir);
   const setFilterText = useDashboardStore((s) => s.setFilterText);
@@ -67,6 +76,12 @@ export function DashboardOverlay() {
   // Une teinte par workspace pour toute la plage affichée : chips, glyphes de
   // la chronologie et barres du mode semaine partagent la même affectation.
   const colors = useMemo(() => assignWorkspaceColors(byWorkspace), [byWorkspace]);
+  // Lignes du « jour par jour » : calculées même en mode jour (coût négligeable,
+  // et le hook `useMemo` doit rester inconditionnel).
+  const weekRows = useMemo(
+    () => buildWeekDays(weekRange(day).days, events, colors, todayString()),
+    [day, events, colors],
+  );
 
   // Réglages (jeton ClickUp de « Reste à faire », horaire rappelé par l'état
   // « aucune synthèse ») : lus une fois au montage puis à chaque bumpRefresh
@@ -125,6 +140,12 @@ export function DashboardOverlay() {
         filterRef.current?.focus();
         break;
     }
+  };
+
+  /** Clic sur une ligne du « jour par jour » : on ouvre la journée en mode jour. */
+  const ouvrirJour = (jour: string) => {
+    setDay(jour);
+    setMode("day");
   };
 
   const agoLabel = collectedAgoLabel(status?.lastCollect ?? {}, Math.floor(Date.now() / 1000));
@@ -250,24 +271,32 @@ export function DashboardOverlay() {
             </div>
           )}
           <div className="dash-tl-head">
-            <h2 className="dash-h2">Chronologie</h2>
-            <input
-              ref={filterRef}
-              type="text"
-              className="dash-filter"
-              placeholder="filtrer"
-              aria-label="Filtrer la chronologie"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-            />
+            <h2 className="dash-h2">{semaine ? "Jour par jour" : "Chronologie"}</h2>
+            {semaine ? (
+              <span className="dash-chips-hint">cliquer pour ouvrir la journée</span>
+            ) : (
+              <input
+                ref={filterRef}
+                type="text"
+                className="dash-filter"
+                placeholder="filtrer"
+                aria-label="Filtrer la chronologie"
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+              />
+            )}
           </div>
-          <Timeline
-            events={events}
-            filterDir={filterDir}
-            filterText={filterText}
-            colors={colors}
-            onOpenTicket={openLink}
-          />
+          {semaine ? (
+            <WeekDays rows={weekRows} selectedDay={day} onSelect={ouvrirJour} />
+          ) : (
+            <Timeline
+              events={events}
+              filterDir={filterDir}
+              filterText={filterText}
+              colors={colors}
+              onOpenTicket={openLink}
+            />
+          )}
         </div>
       </div>
     </div>
