@@ -11,6 +11,7 @@ import { openFolderDialog } from "./lib/openFolder";
 import { injectPaths } from "./lib/injectFiles";
 import { resolvePaneId, toCssPoint } from "./lib/dropTarget";
 import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
+import { nextDelayMs, DIRTY_BUDGET, PORTS_BUDGET } from "./lib/pollSchedule";
 import "./App.css";
 
 const EMPTY_BTN: CSSProperties = {
@@ -25,7 +26,15 @@ const EMPTY_BTN: CSSProperties = {
 
 export default function App() {
   useShortcuts();
-  const { workspaces, activeId, addPane, showToast, toast, clearToast } = useWorkspaceStore();
+  // Sélecteurs ciblés, jamais `useWorkspaceStore()` nu : s'abonner au store entier
+  // faisait re-render tout l'arbre (Sidebar + tous les PaneTree) à CHAQUE tour de sonde.
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeId = useWorkspaceStore((s) => s.activeId);
+  const toast = useWorkspaceStore((s) => s.toast);
+  // Actions : références stables créées une fois par Zustand.
+  const addPane = useWorkspaceStore((s) => s.addPane);
+  const showToast = useWorkspaceStore((s) => s.showToast);
+  const clearToast = useWorkspaceStore((s) => s.clearToast);
   // Ctrl+Shift+B : consommation au rendu du booléen basculé par toggleSidebar (K.5).
   const sidebarVisible = useWorkspaceStore((s) => s.sidebarVisible);
 
@@ -98,9 +107,10 @@ export default function App() {
     return () => clearTimeout(h);
   }, [toast, clearToast]);
 
-  // Poller git (~2s) : rafraîchit la branche affichée dans la sidebar.
-  // Workspaces interrogés en parallèle (Promise.all) ; garde in-flight : sur un
-  // repo lent (NFS), le tick suivant ne se superpose pas au précédent.
+  // Sonde branche (~2s) : GRATUITE (`symbolic-ref` lit .git/HEAD, 0,00 s mesuré sur
+  // un repo de 20 000 fichiers). Elle peut donc rester à cadence fixe et en parallèle.
+  // Volontairement séparée du dirty : les fusionner faisait payer un `git status`
+  // complet juste pour rafraîchir un nom de branche.
   useEffect(() => {
     let running = false;
     const tick = async () => {
@@ -111,10 +121,9 @@ export default function App() {
         await Promise.all(
           s.workspaces.map(async (w) => {
             try {
-              const info = await invoke<{ branch: string | null; dirty: boolean }>("git_info", {
-                cwd: w.cwd,
-              });
-              if (info.branch) s.setGit(w.id, info.branch, info.dirty);
+              const branch = await invoke<string | null>("git_branch", { cwd: w.cwd });
+              // HEAD détachée / hors repo → null : on garde la dernière branche connue.
+              if (branch) s.setBranch(w.id, branch);
             } catch {
               /* commande indisponible (backend pas prêt) ou cwd hors repo */
             }
@@ -129,36 +138,89 @@ export default function App() {
     return () => clearInterval(h);
   }, []);
 
-  // Poller ports (~2s) : union des ports ouverts par tous les panes de chaque
-  // workspace. Workspaces ET panes en parallèle ; même garde in-flight.
+  // Sonde dirty : CHÈRE et irréductible (lstat de chaque fichier suivi — 6,14 s sur
+  // ~/dev/monorepo, et ~19 s-CPU de plus dans le hook fanotify d'un antivirus).
+  // Boucle auto-ordonnancée : chaque workspace porte sa propre échéance, déduite du coût
+  // de SA dernière sonde (pollSchedule). Un repo géant dégrade sa seule fraîcheur, sans
+  // saturer le CPU ni retarder les autres.
+  // Séquentiel, JAMAIS en parallèle : lancer un `git status` par workspace d'un coup
+  // saturait le disque et le scan on-access de l'antivirus.
   useEffect(() => {
-    let running = false;
-    const tick = async () => {
-      if (running) return;
-      running = true;
-      try {
-        const s = useWorkspaceStore.getState();
-        await Promise.all(
-          s.workspaces.map(async (w) => {
-            const ptyIds = w.panes
-              .map((paneId) => s.panePtys[paneId])
-              .filter((id): id is number => id !== undefined);
-            const results = await Promise.all(
-              ptyIds.map((ptyId) =>
-                invoke<number[]>("workspace_ports", { ptyId }).catch(() => [] as number[]),
-              ),
-            );
-            const ports = new Set<number>(results.flat());
-            s.setPorts(w.id, [...ports].sort((a, b) => a - b));
-          }),
-        );
-      } finally {
-        running = false;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const dueAt = new Map<string, number>(); // wsId -> date de la prochaine sonde
+
+    const round = async () => {
+      const { workspaces } = useWorkspaceStore.getState();
+      for (const w of workspaces) {
+        if (stopped) return;
+        if ((dueAt.get(w.id) ?? 0) > Date.now()) continue;
+        const started = performance.now();
+        try {
+          const dirty = await invoke<boolean>("git_dirty", { cwd: w.cwd });
+          // La sonde dure des secondes : le dossier du workspace a pu changer
+          // entre-temps (setCwd, édition inline du dossier). Écrire le résultat
+          // sans revérifier afficherait le dirty de l'ANCIEN dossier.
+          const still = useWorkspaceStore.getState().workspaces.find((x) => x.id === w.id);
+          if (still?.cwd === w.cwd) useWorkspaceStore.getState().setDirty(w.id, dirty);
+        } catch {
+          /* commande indisponible (backend pas prêt) ou cwd hors repo */
+        }
+        // L'échéance est posée même en cas d'échec : sinon un cwd cassé serait resondé en boucle.
+        dueAt.set(w.id, Date.now() + nextDelayMs(performance.now() - started, DIRTY_BUDGET));
       }
+      const live = new Set(workspaces.map((w) => w.id));
+      for (const id of [...dueAt.keys()]) if (!live.has(id)) dueAt.delete(id);
+      // Réveil de contrôle à 1 s : c'est ce qui fait sonder un workspace tout juste
+      // ouvert sans attendre l'échéance (jusqu'à 2 min) d'un voisin lent. Le tour
+      // ne coûte qu'un parcours de Map quand aucune échéance n'est atteinte.
+      if (!stopped) timer = setTimeout(round, 1000);
     };
-    const h = setInterval(tick, 2000);
-    tick();
-    return () => clearInterval(h);
+    void round();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  // Sonde ports : union des ports ouverts par les panes de chaque workspace. Même
+  // ordonnancement adaptatif que le dirty — le parcours de /proc du sous-arbre reste
+  // bien moins cher, mais pas gratuit sur un pane qui fait tourner un node.
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const dueAt = new Map<string, number>();
+
+    const round = async () => {
+      const s = useWorkspaceStore.getState();
+      for (const w of s.workspaces) {
+        if (stopped) return;
+        if ((dueAt.get(w.id) ?? 0) > Date.now()) continue;
+        const started = performance.now();
+        const ptyIds = w.panes
+          .map((paneId) => s.panePtys[paneId])
+          .filter((id): id is number => id !== undefined);
+        const results = await Promise.all(
+          ptyIds.map((ptyId) =>
+            invoke<number[]>("workspace_ports", { ptyId }).catch(() => [] as number[]),
+          ),
+        );
+        const ports = new Set<number>(results.flat());
+        useWorkspaceStore.getState().setPorts(
+          w.id,
+          [...ports].sort((a, b) => a - b),
+        );
+        dueAt.set(w.id, Date.now() + nextDelayMs(performance.now() - started, PORTS_BUDGET));
+      }
+      const live = new Set(s.workspaces.map((w) => w.id));
+      for (const id of [...dueAt.keys()]) if (!live.has(id)) dueAt.delete(id);
+      if (!stopped) timer = setTimeout(round, 1000);
+    };
+    void round();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   const active = workspaces.find((w) => w.id === activeId);

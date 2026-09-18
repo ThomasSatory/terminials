@@ -61,7 +61,10 @@ interface WorkspaceState {
   setColor: (wsId: string, color: string) => void;
   setNotification: (wsId: string, n: Notification, paneId?: string) => void;
   setActive: (wsId: string) => void;
-  setGit: (wsId: string, branch: string, dirty: boolean) => void;
+  /** Sonde branche (gratuite, cadence fixe) — indépendante de `setDirty`. */
+  setBranch: (wsId: string, branch: string) => void;
+  /** Sonde dirty (chère, cadence adaptative) — indépendante de `setBranch`. */
+  setDirty: (wsId: string, dirty: boolean) => void;
   setPorts: (wsId: string, ports: number[]) => void;
   setStatus: (wsId: string, status: { label: string; color?: string }) => void;
   setProgress: (wsId: string, progress: { value: number; label?: string }) => void;
@@ -124,6 +127,11 @@ export function setLastFolder(path: string): void {
   } catch {
     /* quota dépassé ou localStorage désactivé : on ignore */
   }
+}
+
+/** Égalité de deux listes de ports (déjà triées côté Rust). */
+function sameNumbers(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
 /** Réécrit la sauvegarde complète (après chaque action qui change la liste des workspaces). */
@@ -285,14 +293,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // activer le workspace lit le fallback, PAS les anneaux par pane
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, unread: false } : w)),
     })),
-  setGit: (wsId, branch, dirty) =>
-    set((s) => ({
-      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, branch, dirty } : w)),
-    })),
+  // Les deux sondes git sont séparées : la branche est gratuite et rafraîchie à
+  // cadence fixe, le dirty coûte des secondes et se raréfie tout seul. Les fusionner
+  // reviendrait à payer le dirty pour afficher la branche (cf. lib/pollSchedule.ts).
+  setBranch: (wsId, branch) =>
+    set((s) => {
+      const w = s.workspaces.find((x) => x.id === wsId);
+      // Sonde périodique : rendre l'état INCHANGÉ quand rien n'a bougé, sinon
+      // chaque tick réalloue `workspaces` → Zustand notifie → re-render de tout
+      // l'arbre pour rien.
+      if (!w || w.branch === branch) return s;
+      return { workspaces: s.workspaces.map((x) => (x.id === wsId ? { ...x, branch } : x)) };
+    }),
+  setDirty: (wsId, dirty) =>
+    set((s) => {
+      const w = s.workspaces.find((x) => x.id === wsId);
+      if (!w || w.dirty === dirty) return s;
+      return { workspaces: s.workspaces.map((x) => (x.id === wsId ? { ...x, dirty } : x)) };
+    }),
   setPorts: (wsId, ports) =>
-    set((s) => ({
-      workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, ports } : w)),
-    })),
+    set((s) => {
+      const w = s.workspaces.find((x) => x.id === wsId);
+      // Comparaison par CONTENU : la sonde reconstruit un tableau neuf à chaque tour
+      // (les ports sont déjà triés côté Rust, l'ordre est donc stable).
+      if (!w || sameNumbers(w.ports, ports)) return s;
+      return { workspaces: s.workspaces.map((x) => (x.id === wsId ? { ...x, ports } : x)) };
+    }),
   setStatus: (wsId, status) =>
     set((s) => ({
       workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, status } : w)),

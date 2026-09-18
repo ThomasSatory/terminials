@@ -517,3 +517,90 @@ describe("persistance v2", () => {
     expect(ws(id).cwd).toBe("/a");
   });
 });
+
+/** Les pollers git et ports réécrivent l'état à chaque tick, même quand rien n'a bougé.
+    Sans court-circuit, chaque tick réallouait `workspaces` → Zustand notifie → re-render
+    de tout l'arbre (App s'abonne au store entier). Les sondes doivent être idempotentes. */
+describe("sondes idempotentes (git, ports)", () => {
+  beforeEach(() => store().reset());
+
+  it("setBranch sur une valeur identique ne réalloue pas l'état", () => {
+    const id = store().addWorkspace("/a");
+    store().setBranch(id, "master");
+    const before = store().workspaces;
+    store().setBranch(id, "master");
+    expect(store().workspaces).toBe(before);
+  });
+
+  it("setDirty sur une valeur identique ne réalloue pas l'état", () => {
+    const id = store().addWorkspace("/a");
+    store().setDirty(id, true);
+    const before = store().workspaces;
+    store().setDirty(id, true);
+    expect(store().workspaces).toBe(before);
+  });
+
+  it("les sondes ne notifient aucun abonné quand rien ne change", () => {
+    const id = store().addWorkspace("/a");
+    store().setBranch(id, "master");
+    store().setDirty(id, true);
+    store().setPorts(id, [8080]);
+    let notified = 0;
+    const unsub = useWorkspaceStore.subscribe(() => notified++);
+    store().setBranch(id, "master");
+    store().setDirty(id, true);
+    store().setPorts(id, [8080]);
+    unsub();
+    expect(notified).toBe(0);
+  });
+
+  it("setBranch et setDirty sont indépendants : l'une ne touche pas l'autre", () => {
+    // La branche est sondée à 2 s (gratuite), le dirty bien plus rarement (cher) :
+    // un rafraîchissement de branche ne doit jamais écraser le dirty connu.
+    const id = store().addWorkspace("/a");
+    store().setDirty(id, true);
+    store().setBranch(id, "feature/x");
+    expect(ws(id).dirty).toBe(true);
+    expect(ws(id).branch).toBe("feature/x");
+    store().setDirty(id, false);
+    expect(ws(id).branch).toBe("feature/x");
+    expect(ws(id).dirty).toBe(false);
+  });
+
+  it("setBranch et setDirty propagent un vrai changement", () => {
+    const id = store().addWorkspace("/a");
+    store().setBranch(id, "master");
+    store().setBranch(id, "feature/x");
+    expect(ws(id).branch).toBe("feature/x");
+    store().setDirty(id, true);
+    expect(ws(id).dirty).toBe(true);
+  });
+
+  it("setPorts compare le CONTENU, pas la référence du tableau", () => {
+    const id = store().addWorkspace("/a");
+    store().setPorts(id, [3000, 8080]);
+    const before = store().workspaces;
+    store().setPorts(id, [3000, 8080]); // même contenu, tableau neuf
+    expect(store().workspaces).toBe(before);
+  });
+
+  it("setPorts propage un ajout, un retrait et un passage à vide", () => {
+    const id = store().addWorkspace("/a");
+    store().setPorts(id, [3000]);
+    store().setPorts(id, [3000, 8080]);
+    expect(ws(id).ports).toEqual([3000, 8080]);
+    store().setPorts(id, [8080]);
+    expect(ws(id).ports).toEqual([8080]);
+    store().setPorts(id, []);
+    expect(ws(id).ports).toEqual([]);
+  });
+
+  it("une sonde sur un workspace disparu ne réalloue pas l'état", () => {
+    store().addWorkspace("/a");
+    const before = store().workspaces;
+    store().setBranch("ws:inexistant", "master");
+    store().setDirty("ws:inexistant", true);
+    store().setPorts("ws:inexistant", [1234]);
+    expect(store().workspaces).toBe(before);
+  });
+});

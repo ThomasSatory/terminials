@@ -9,29 +9,49 @@ pub struct GitInfo {
     pub dirty: bool,
 }
 
-/// Branche courante + état dirty d'un cwd. Hors repo git → branch None, dirty false.
+/// Branche courante d'un cwd. Hors repo git ou HEAD détachée → None.
+///
+/// Sonde GRATUITE : `symbolic-ref` lit `.git/HEAD`, il ne stat aucun fichier suivi
+/// (mesuré à 0,00 s sur un repo de 20 000 fichiers). Elle est donc sondée à
+/// intervalle fixe, séparément du dirty. Ne pas la fusionner avec `is_dirty` dans
+/// une sonde unique : ce serait payer le prix du dirty pour rafraîchir la branche.
 ///
 /// `symbolic-ref --short HEAD` renvoie la branche même sur un repo sans commit (HEAD non-né),
 /// contrairement à `rev-parse --abbrev-ref HEAD`. Sur HEAD détaché, renvoie None.
-pub fn git_info(cwd: &str) -> GitInfo {
-    let branch = Command::new("git")
+pub fn branch(cwd: &str) -> Option<String> {
+    Command::new("git")
         .args(["symbolic-ref", "--short", "HEAD"])
         .current_dir(cwd)
         .output()
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+}
 
-    let dirty = Command::new("git")
+/// Le worktree a-t-il des modifications (suivies ou non) ? Hors repo git → false.
+///
+/// Sonde CHÈRE, et irréductiblement : le coût est le `lstat` de chaque fichier
+/// suivi. Mesures sur ~/dev/monorepo (20 401 fichiers suivis) :
+/// `status --porcelain` 6,14 s · `status --untracked-files=no` 5,43 s ·
+/// `diff --quiet` 6,05 s — et `core.fsmonitor` reste inopérant. Aucune variante
+/// n'est bon marché, donc l'appelant doit espacer les appels selon leur coût
+/// mesuré (`src/lib/pollSchedule.ts`), jamais les lancer sur un intervalle fixe.
+pub fn is_dirty(cwd: &str) -> bool {
+    Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(cwd)
         .output()
         .ok()
         .map(|o| !o.stdout.is_empty())
-        .unwrap_or(false);
+        .unwrap_or(false)
+}
 
-    GitInfo { branch, dirty }
+/// Branche + état dirty en un appel. Conservé pour les appels ponctuels ;
+/// les sondes périodiques utilisent `branch` et `is_dirty` séparément, à des
+/// cadences différentes.
+pub fn git_info(cwd: &str) -> GitInfo {
+    GitInfo { branch: branch(cwd), dirty: is_dirty(cwd) }
 }
 
 /// Statut d'un fichier modifié. Un fichier à la fois staged et modifié (porcelain `MM`)
@@ -250,6 +270,68 @@ mod tests {
     fn does_not_panic_outside_repo() {
         // Ne doit pas paniquer hors d'un repo git.
         let _ = git_info("/");
+    }
+
+    // ---- sondes séparées : branch (gratuite) / is_dirty (chère) ----
+
+    #[test]
+    fn branch_seule_lit_la_branche_sans_scanner_le_worktree() {
+        let dir = tmp_repo("branch-only");
+        write_file(&dir, "sale.txt", b"non suivi\n");
+        // La branche ne dépend pas de l'état du worktree : un fichier non suivi
+        // ne la change pas, et `symbolic-ref` ne stat pas les fichiers suivis.
+        assert_eq!(branch(dir.to_str().unwrap()).as_deref(), Some("main"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn branch_hors_repo_ou_head_detachee_rend_none() {
+        assert!(branch("/").is_none());
+        let dir = tmp_repo("detached");
+        write_file(&dir, "a.txt", b"x\n");
+        git(&dir, &["add", "a.txt"]);
+        git(&dir, &["commit", "-qm", "c1"]);
+        let sha = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        let sha = String::from_utf8_lossy(&sha.stdout).trim().to_string();
+        git(&dir, &["checkout", "-q", &sha]);
+        assert!(branch(dir.to_str().unwrap()).is_none(), "HEAD détachée → None");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_dirty_distingue_propre_modifie_et_non_suivi() {
+        let dir = tmp_repo("dirty");
+        write_file(&dir, "a.txt", b"v1\n");
+        git(&dir, &["add", "a.txt"]);
+        git(&dir, &["commit", "-qm", "c1"]);
+        assert!(!is_dirty(dir.to_str().unwrap()), "repo propre");
+
+        write_file(&dir, "a.txt", b"v2\n");
+        assert!(is_dirty(dir.to_str().unwrap()), "fichier suivi modifié");
+
+        git(&dir, &["checkout", "--", "a.txt"]);
+        write_file(&dir, "b.txt", b"nouveau\n");
+        assert!(is_dirty(dir.to_str().unwrap()), "fichier non suivi");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn is_dirty_hors_repo_est_false() {
+        assert!(!is_dirty("/"));
+    }
+
+    #[test]
+    fn git_info_reste_la_composition_des_deux_sondes() {
+        let dir = tmp_repo("compose");
+        write_file(&dir, "a.txt", b"v1\n");
+        let info = git_info(dir.to_str().unwrap());
+        assert_eq!(info.branch, branch(dir.to_str().unwrap()));
+        assert_eq!(info.dirty, is_dirty(dir.to_str().unwrap()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ---- changed_files ----
