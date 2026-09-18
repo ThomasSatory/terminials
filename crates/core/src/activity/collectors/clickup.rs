@@ -1,6 +1,6 @@
 //! Collecteur d'événements `clickup_change` à partir des tickets liés aux commits.
 
-use crate::activity::providers::clickup::{ClickupClient, ClickupError, RawTask};
+use crate::activity::providers::clickup::{ClickupBatch, ClickupError, ClickupQuery, ClickupSource, RawTask};
 use crate::activity::store::Store;
 use crate::activity::{EventKind, NewEvent};
 
@@ -15,54 +15,33 @@ fn map_err(e: ClickupError) -> String {
     }
 }
 
-/// Étapes 1→4 de la spec §4. Sans token → `Ok(0)` sans appel. Cursor `clickup` = date_updated
-/// max (ms) ; `clickup:user`, `clickup:team` sont résolus une fois puis mémorisés.
-pub fn collect(
-    store: &Store,
-    client: Option<&ClickupClient>,
-    from: i64,
-    to: i64,
-    now: i64,
-) -> Result<usize, String> {
-    let client = match client {
-        Some(c) if !c.token.is_empty() => c,
-        _ => return Ok(0),
-    };
-
-    let user = match store.get_cursor("clickup:user").map_err(|e| e.to_string())? {
-        Some(v) => v.parse::<u64>().map_err(|e| e.to_string())?,
-        None => {
-            let id = client.current_user_id().map_err(map_err)?;
-            store
-                .set_cursor("clickup:user", &id.to_string())
-                .map_err(|e| e.to_string())?;
-            id
-        }
-    };
-    let team = match store.get_cursor("clickup:team").map_err(|e| e.to_string())? {
-        Some(v) => v.parse::<u64>().map_err(|e| e.to_string())?,
-        None => {
-            let id = client.first_team_id().map_err(map_err)?;
-            store
-                .set_cursor("clickup:team", &id.to_string())
-                .map_err(|e| e.to_string())?;
-            id
-        }
-    };
-
-    let since_ms = match store.get_cursor("clickup").map_err(|e| e.to_string())? {
+/// Lectures du store à faire **avant** l'appel à la source : borne de
+/// modification (curseur `clickup`, défaut 30 jours en arrière) et tickets dont
+/// l'état en base est périmé. Aucune écriture, aucun appel réseau.
+pub fn prepare(store: &Store, from: i64, to: i64, now: i64) -> Result<ClickupQuery, String> {
+    let updated_since_ms = match store.get_cursor("clickup").map_err(|e| e.to_string())? {
         Some(v) => v.parse::<i64>().map_err(|e| e.to_string())?,
         None => now * 1000 - TRENTE_JOURS_MS,
     };
+    let resolve_ids = store
+        .stale_ticket_ids(from, to, now - UN_JOUR, MAX_TICKETS_PERIMES)
+        .map_err(|e| e.to_string())?;
+    Ok(ClickupQuery { updated_since_ms, resolve_ids })
+}
 
-    let updated = client
-        .tasks_updated_since(team, user, since_ms)
-        .map_err(map_err)?;
+/// Écritures du store à faire **après** l'appel à la source. Rend le nombre
+/// d'événements `clickup_change` réellement insérés.
+///
+/// Le curseur n'avance que s'il y a eu des tâches modifiées, et jamais en
+/// arrière : une horloge ClickUp en retard rejouerait sinon la même fenêtre à
+/// chaque collecte.
+pub fn apply(store: &Store, batch: &ClickupBatch, since_ms: i64, now: i64) -> Result<usize, String> {
     let mut inserted = 0usize;
-    if !updated.is_empty() {
-        let events: Vec<NewEvent> = updated.iter().map(change_event).collect();
+    if !batch.updated.is_empty() {
+        let events: Vec<NewEvent> = batch.updated.iter().map(change_event).collect();
         inserted = store.insert_events(&events).map_err(|e| e.to_string())?;
-        let max_updated = updated
+        let max_updated = batch
+            .updated
             .iter()
             .map(|t| t.date_updated_ms)
             .max()
@@ -73,23 +52,35 @@ pub fn collect(
             .map_err(|e| e.to_string())?;
     }
 
-    let open = client.open_tasks(team, user).map_err(map_err)?;
-    let open_tasks: Vec<_> = open.iter().map(RawTask::to_open_task).collect();
+    let open_tasks: Vec<_> = batch.open.iter().map(RawTask::to_open_task).collect();
     store
         .replace_open_tasks(&open_tasks, now)
         .map_err(|e| e.to_string())?;
 
-    let stale_ids = store
-        .stale_ticket_ids(from, to, now - UN_JOUR, MAX_TICKETS_PERIMES)
-        .map_err(|e| e.to_string())?;
-    for id in stale_ids {
-        // Une erreur de résolution individuelle est ignorée (ticket transitoirement indisponible).
-        if let Ok(t) = client.task(&id) {
-            let _ = store.upsert_tickets(&[t.to_ticket_info()], now);
-        }
+    let tickets: Vec<_> = batch.resolved.iter().map(RawTask::to_ticket_info).collect();
+    if !tickets.is_empty() {
+        store.upsert_tickets(&tickets, now).map_err(|e| e.to_string())?;
     }
 
     Ok(inserted)
+}
+
+/// Étapes 1→4 de la spec §4, composées. Sans source → `Ok(0)` sans appel.
+///
+/// L'appelant Tauri n'utilise pas cette composition : il intercale la libération
+/// du verrou du store entre `prepare` et `fetch`, puis le reprend pour `apply`.
+/// Elle reste le point d'entrée des tests, qui n'ont pas de verrou à gérer.
+pub fn collect(
+    store: &Store,
+    source: Option<&dyn ClickupSource>,
+    from: i64,
+    to: i64,
+    now: i64,
+) -> Result<usize, String> {
+    let Some(source) = source else { return Ok(0) };
+    let query = prepare(store, from, to, now)?;
+    let batch = source.fetch(&query).map_err(map_err)?;
+    apply(store, &batch, query.updated_since_ms, now)
 }
 
 /// Pur : tâche → événement `clickup_change`.
@@ -115,6 +106,7 @@ pub fn change_event(t: &RawTask) -> NewEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::activity::providers::clickup::ClickupClient;
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
@@ -190,9 +182,121 @@ mod tests {
     }
 
     #[test]
-    fn collect_sans_client_ne_fait_rien() {
+    fn collect_sans_source_ne_fait_rien() {
         let store = Store::open_in_memory().unwrap();
         assert_eq!(collect(&store, None, 0, 1, 1).unwrap(), 0);
+    }
+
+    fn tache(id: &str, ms: i64) -> RawTask {
+        RawTask {
+            id: id.into(),
+            name: format!("tâche {id}"),
+            status: "en cours".into(),
+            status_type: "open".into(),
+            url: format!("https://app.clickup.com/t/{id}"),
+            date_updated_ms: ms,
+            due_date_ms: None,
+            priority: None,
+            list_name: None,
+        }
+    }
+
+    #[test]
+    fn prepare_sans_curseur_remonte_de_trente_jours() {
+        let store = Store::open_in_memory().unwrap();
+        let q = prepare(&store, 0, 1, 1_789_560_000).unwrap();
+        assert_eq!(q.updated_since_ms, 1_789_560_000 * 1000 - TRENTE_JOURS_MS);
+        assert!(q.resolve_ids.is_empty());
+    }
+
+    #[test]
+    fn prepare_reprend_le_curseur_et_les_tickets_perimes() {
+        let store = Store::open_in_memory().unwrap();
+        store.set_cursor("clickup", "1789550000000").unwrap();
+        store
+            .insert_events(&[NewEvent {
+                ts: 1_789_550_000,
+                kind: EventKind::Commit,
+                workspace_dir: Some("/a".into()),
+                branch: None,
+                title: "c".into(),
+                body: None,
+                ticket_ids: vec!["86c1abc".into()],
+                source_ref: "sha".into(),
+            }])
+            .unwrap();
+        let q = prepare(&store, 1_789_500_000, 1_789_600_000, 1_789_560_000).unwrap();
+        assert_eq!(q.updated_since_ms, 1_789_550_000_000);
+        assert_eq!(q.resolve_ids, vec!["86c1abc".to_string()]);
+    }
+
+    #[test]
+    fn apply_insere_avance_le_curseur_et_remplit_les_tables() {
+        let store = Store::open_in_memory().unwrap();
+        let batch = ClickupBatch {
+            updated: vec![tache("a1", 1_789_550_000_000), tache("a2", 1_789_560_000_000)],
+            open: vec![tache("o1", 1_789_540_000_000)],
+            resolved: vec![tache("r1", 1_789_530_000_000)],
+        };
+        let n = apply(&store, &batch, 1_789_500_000_000, 1_789_560_001).unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(store.get_cursor("clickup").unwrap().as_deref(), Some("1789560000000"));
+        assert_eq!(store.open_tasks().unwrap()[0].id, "o1");
+        assert_eq!(store.tickets_by_ids(&["r1".into()]).unwrap()[0].name, "tâche r1");
+    }
+
+    #[test]
+    fn apply_sans_tache_modifiee_n_avance_pas_le_curseur_mais_vide_les_ouvertes() {
+        let store = Store::open_in_memory().unwrap();
+        store.set_cursor("clickup", "1789550000000").unwrap();
+        let n = apply(&store, &ClickupBatch::default(), 1_789_550_000_000, 1_789_560_000).unwrap();
+        assert_eq!(n, 0);
+        assert_eq!(store.get_cursor("clickup").unwrap().as_deref(), Some("1789550000000"));
+        assert!(store.open_tasks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_ne_recule_jamais_le_curseur() {
+        // Une tâche modifiée « avant » la borne (horloges désynchronisées côté
+        // ClickUp) ne doit pas rejouer indéfiniment la même fenêtre.
+        let store = Store::open_in_memory().unwrap();
+        let batch = ClickupBatch { updated: vec![tache("a1", 10)], ..Default::default() };
+        apply(&store, &batch, 1_000_000, 1).unwrap();
+        assert_eq!(store.get_cursor("clickup").unwrap().as_deref(), Some("1000000"));
+    }
+
+    /// Source en mémoire : mémorise la requête reçue et rend un lot figé.
+    struct SourceFausse {
+        recu: std::sync::Mutex<Option<ClickupQuery>>,
+        lot: ClickupBatch,
+    }
+    impl ClickupSource for SourceFausse {
+        fn fetch(&self, q: &ClickupQuery) -> Result<ClickupBatch, ClickupError> {
+            *self.recu.lock().unwrap() = Some(q.clone());
+            Ok(self.lot.clone())
+        }
+        fn name(&self) -> &'static str {
+            "fausse"
+        }
+    }
+
+    #[test]
+    fn collect_compose_prepare_fetch_et_apply() {
+        let store = Store::open_in_memory().unwrap();
+        store.set_cursor("clickup", "1789500000000").unwrap();
+        let source = SourceFausse {
+            recu: Default::default(),
+            lot: ClickupBatch {
+                updated: vec![tache("a1", 1_789_550_000_000)],
+                open: vec![tache("o1", 1_789_540_000_000)],
+                resolved: vec![],
+            },
+        };
+        let n = collect(&store, Some(&source), 1_789_500_000, 1_789_600_000, 1_789_560_000).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(source.recu.lock().unwrap().as_ref().unwrap().updated_since_ms, 1_789_500_000_000);
+        assert_eq!(store.get_cursor("clickup").unwrap().as_deref(), Some("1789550000000"));
+        assert_eq!(store.open_tasks().unwrap()[0].id, "o1");
     }
 
     #[test]
@@ -207,7 +311,9 @@ mod tests {
         let (base, _) = stub_router(routes, 6);
         let client = ClickupClient {
             base_url: base,
-            token: "t".into(),
+            // Jeton propre à ce test : le cache mémoire des identifiants
+            // (utilisateur, équipe) est global au process et indexé par jeton.
+            token: "jeton-du-test-collect".into(),
             timeout: std::time::Duration::from_secs(5),
         };
         let store = Store::open_in_memory().unwrap();
@@ -234,6 +340,5 @@ mod tests {
             store.get_cursor("clickup").unwrap().as_deref(),
             Some("1789550000000")
         );
-        assert_eq!(store.get_cursor("clickup:user").unwrap().as_deref(), Some("7"));
     }
 }
