@@ -28,7 +28,11 @@ impl Default for LlmSettings {
         let mut extra_headers = BTreeMap::new();
         extra_headers.insert("x-env".to_string(), "dev".to_string());
         Self {
-            provider: LlmProviderKind::Openai,
+            // `claude -p` par défaut : le jeton Gemma est un JWT de 6 h, trop
+            // court pour être recollé à la main chaque matin. Les champs Gemma
+            // ci-dessous restent renseignés, ils resservent tels quels si on
+            // rebascule le fournisseur sur `openai`.
+            provider: LlmProviderKind::ClaudeCli,
             base_url: "https://llm.example.com/gemma4-31b".into(),
             model: "google/gemma-4-31B-it".into(),
             token: String::new(),
@@ -135,9 +139,9 @@ pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn defauts_pointent_sur_gemma_openai_compatible() {
+    fn defauts_sur_claude_cli_en_gardant_les_champs_gemma() {
         let s = Settings::default();
-        assert_eq!(s.llm.provider, LlmProviderKind::Openai);
+        assert_eq!(s.llm.provider, LlmProviderKind::ClaudeCli);
         assert_eq!(s.llm.base_url, "https://llm.example.com/gemma4-31b");
         assert_eq!(s.llm.model, "google/gemma-4-31B-it");
         assert_eq!(s.llm.extra_headers.get("x-env").map(String::as_str), Some("dev"));

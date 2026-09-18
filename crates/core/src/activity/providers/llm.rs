@@ -1,6 +1,11 @@
 //! Client LLM (OpenAI-compatible / Ollama / Claude CLI) pour la génération des synthèses.
+use crate::activity::providers::claude_process::{run_claude_p, ClaudeProcessError};
 use crate::activity::settings::{LlmProviderKind, LlmSettings};
 use std::time::Duration;
+
+/// Modèle imposé à `claude -p`, quel que soit `LlmSettings.model` : les réglages
+/// de modèle ne concernent que les API OpenAI-compatibles et Ollama.
+pub const MODELE_CLAUDE_CLI: &str = "sonnet";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LlmError {
@@ -56,11 +61,13 @@ pub struct Ollama {
 
 /// Fournisseur basé sur le binaire `claude` en mode non interactif (`claude -p`).
 ///
+/// Le modèle n'est pas configurable : c'est toujours `MODELE_CLAUDE_CLI`. Le
+/// champ `model` des réglages reste réservé aux deux autres fournisseurs.
+///
 /// `binary` permet de pointer vers un exécutable arbitraire (par défaut `"claude"`,
 /// résolu via `PATH`) — utile pour les tests, qui évitent ainsi de manipuler la
 /// variable d'environnement `PATH` partagée par tout le process de test.
 pub struct ClaudeCli {
-    pub model: String,
     pub timeout: Duration,
     pub binary: String,
 }
@@ -176,73 +183,22 @@ impl LlmProvider for Ollama {
 
 impl LlmProvider for ClaudeCli {
     fn name(&self) -> String {
-        format!("claude-cli:{}", self.model)
+        format!("claude-cli:{MODELE_CLAUDE_CLI}")
     }
 
     fn complete(&self, req: &LlmRequest) -> Result<String, LlmError> {
-        use std::io::Write;
-        use std::process::{Command, Stdio};
-
-        let mut child = Command::new(&self.binary)
-            .args(["-p", "--model", &self.model, "--output-format", "text"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| LlmError::Network(e.to_string()))?;
-
         let input = format!("{}\n\n---\n\n{}", req.system, req.user);
-        if let Some(mut stdin) = child.stdin.take() {
-            // Écrit dans un thread séparé : le process peut remplir son tube stdout
-            // avant que nous ayons fini d'écrire, ce qui bloquerait sinon.
-            std::thread::spawn(move || {
-                let _ = stdin.write_all(input.as_bytes());
-            });
-        }
-        let stdout_reader = child.stdout.take().map(|mut out| {
-            std::thread::spawn(move || {
-                use std::io::Read;
-                let mut buf = String::new();
-                let _ = out.read_to_string(&mut buf);
-                buf
-            })
-        });
-        let stderr_reader = child.stderr.take().map(|mut err| {
-            std::thread::spawn(move || {
-                use std::io::Read;
-                let mut buf = String::new();
-                let _ = err.read_to_string(&mut buf);
-                buf
-            })
-        });
-
-        let start = std::time::Instant::now();
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {
-                    if start.elapsed() >= self.timeout {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(LlmError::Timeout);
-                    }
-                    std::thread::sleep(Duration::from_millis(100));
-                }
-                Err(e) => return Err(LlmError::Network(e.to_string())),
-            }
-        };
-
-        let stdout = stdout_reader.and_then(|h| h.join().ok()).unwrap_or_default();
-        let stderr = stderr_reader.and_then(|h| h.join().ok()).unwrap_or_default();
-
-        if !status.success() {
-            let code = status.code().unwrap_or(-1);
-            return Err(LlmError::Http {
-                status: code.max(0) as u16,
-                body: stderr.chars().take(500).collect(),
-            });
-        }
-        Ok(stdout.trim().to_string())
+        run_claude_p(
+            &self.binary,
+            &["-p", "--model", MODELE_CLAUDE_CLI, "--output-format", "text"],
+            &input,
+            self.timeout,
+        )
+        .map_err(|e| match e {
+            ClaudeProcessError::Spawn(msg) => LlmError::Network(msg),
+            ClaudeProcessError::Timeout => LlmError::Timeout,
+            ClaudeProcessError::Failed { code, stderr } => LlmError::Http { status: code.max(0) as u16, body: stderr },
+        })
     }
 }
 
@@ -272,7 +228,6 @@ pub fn from_settings(s: &LlmSettings) -> Box<dyn LlmProvider> {
             timeout,
         }),
         LlmProviderKind::ClaudeCli => Box::new(ClaudeCli {
-            model: s.model.clone(),
             timeout,
             binary: "claude".to_string(),
         }),
@@ -389,15 +344,43 @@ mod tests {
         // On évite de manipuler `PATH` (variable globale au process, partagée par
         // tous les tests exécutés en parallèle) : `binary` pointe directement vers
         // un chemin inexistant, ce qui reproduit le même échec de spawn.
-        let p = ClaudeCli { model: "sonnet".into(), timeout: std::time::Duration::from_secs(2), binary: "/nonexistent/claude".into() };
+        let p = ClaudeCli { timeout: std::time::Duration::from_secs(2), binary: "/nonexistent/claude".into() };
         assert!(matches!(p.complete(&req()), Err(LlmError::Network(_))));
+    }
+    #[test]
+    fn claude_cli_impose_sonnet_et_ignore_le_modele_des_reglages() {
+        // Le modèle des réglages (Gemma) ne doit jamais atteindre la ligne de
+        // commande : `claude -p` tourne toujours sur Sonnet.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let chemin = dir.path().join("faux-claude");
+        std::fs::write(&chemin, "#!/bin/sh\necho \"$*\"\n").unwrap();
+        std::fs::set_permissions(&chemin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let p = ClaudeCli { timeout: std::time::Duration::from_secs(10), binary: chemin.display().to_string() };
+        let mut args = p.complete(&req());
+        // Les tests tournent en parallèle : un fils forké ailleurs peut tenir
+        // brièvement le descripteur d'écriture du script (`ETXTBSY`).
+        for _ in 0..20 {
+            match &args {
+                Err(LlmError::Network(msg)) if msg.contains("os error 26") => {
+                    std::thread::sleep(Duration::from_millis(50));
+                    args = p.complete(&req());
+                }
+                _ => break,
+            }
+        }
+        let args = args.unwrap();
+        assert!(args.contains("--model sonnet"), "{args}");
+        assert!(!args.contains("gemma"), "le modèle des réglages ne doit pas être transmis : {args}");
+        assert_eq!(p.name(), "claude-cli:sonnet");
     }
     #[test]
     fn from_settings_choisit_le_bon_fournisseur() {
         let mut s = crate::activity::settings::LlmSettings::default();
+        assert_eq!(from_settings(&s).name(), "claude-cli:sonnet", "défaut : claude -p");
+        s.provider = crate::activity::settings::LlmProviderKind::Openai;
         assert_eq!(from_settings(&s).name(), "openai:google/gemma-4-31B-it");
         s.provider = crate::activity::settings::LlmProviderKind::ClaudeCli;
-        s.model = "sonnet".into();
-        assert_eq!(from_settings(&s).name(), "claude-cli:sonnet");
+        assert_eq!(from_settings(&s).name(), "claude-cli:sonnet", "même avec le modèle Gemma dans les réglages");
     }
 }
