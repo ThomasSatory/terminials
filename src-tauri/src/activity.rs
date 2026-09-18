@@ -13,9 +13,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use terminials_core::activity::collectors::shell::ShellPairer;
 use terminials_core::activity::collectors::{claude, clickup, git};
-use terminials_core::activity::providers::clickup::ClickupClient;
+use terminials_core::activity::providers::clickup::{self as clickup_provider, ClickupSource as SourceClickup};
 use terminials_core::activity::providers::llm::{self, LlmError};
-use terminials_core::activity::settings::{self, ScheduleSettings, Settings};
+use terminials_core::activity::settings::{self, ClickupSource as SourceReglee, ScheduleSettings, Settings};
 use terminials_core::activity::shell_integration::{default_shims_dir, install_shims};
 use terminials_core::activity::store::{Store, StoreResult};
 use terminials_core::activity::summaries::{self, SummaryKind};
@@ -27,8 +27,13 @@ use terminials_core::activity::{
 const MAX_ERREURS: usize = 20;
 /// Cadence de collecte git + Claude Code (secondes).
 const CADENCE_GIT_CLAUDE: i64 = 300;
-/// Cadence de collecte ClickUp (secondes) : l'API est distante et bien plus lente.
-const CADENCE_CLICKUP: i64 = 900;
+/// Cadence de collecte ClickUp par clé API (secondes) : l'API est distante et
+/// bien plus lente que git.
+const CADENCE_CLICKUP_API: i64 = 900;
+/// Cadence de collecte ClickUp par le MCP de Claude Code (secondes). Un
+/// `claude -p` dure une à deux minutes : toutes les 15 minutes, il monopoliserait
+/// la machine pour rien.
+const CADENCE_CLICKUP_MCP: i64 = 3600;
 /// Période du planificateur.
 const PERIODE_TICK: Duration = Duration::from_secs(60);
 /// Fenêtre relue à chaque collecte ClickUp (7 jours en arrière, 1 jour en avant).
@@ -158,6 +163,7 @@ pub fn plan_tick(
     last_summary_day: Option<&str>,
     last_summary_attempt: Option<i64>,
     schedule: &ScheduleSettings,
+    cadence_clickup: i64,
 ) -> TickPlan {
     use chrono::{Datelike, Timelike, Weekday};
 
@@ -180,7 +186,7 @@ pub fn plan_tick(
 
     TickPlan {
         collect_git_claude: du_pour(last, "git", now_utc, CADENCE_GIT_CLAUDE),
-        collect_clickup: du_pour(last, "clickup", now_utc, CADENCE_CLICKUP),
+        collect_clickup: du_pour(last, "clickup", now_utc, cadence_clickup),
         summaries_for,
     }
 }
@@ -279,22 +285,29 @@ fn pousser_erreurs(st: &ActivityState, nouvelles: &[String]) {
 /// Exécute les collecteurs demandés, met à jour l'horodatage de chaque source et
 /// émet `activity-updated` après chacune.
 ///
-/// Le verrou du store est pris source par source (et relâché entre deux) : la
-/// collecte ClickUp fait des appels réseau verrou tenu, mais elle est la seule
-/// écrivain de sa table et le reste de l'app ne fait que lire — acceptable en v1,
-/// le client HTTP a son propre délai maximum.
+/// Le verrou du store est pris source par source (et relâché entre deux). Pour
+/// ClickUp il est en plus relâché *pendant* l'appel à la source : par le MCP de
+/// Claude Code, cet appel est un `claude -p` d'une à deux minutes, et le
+/// dashboard doit continuer à répondre pendant ce temps.
 pub fn run_collect(app: &AppHandle, st: &ActivityState, sources: &[&str]) -> CollectReport {
     let now = now_s();
     let mut report = CollectReport::default();
 
-    let (patterns, author, token) = {
+    let (patterns, author, reglages_clickup) = {
         let s = lecture(&st.settings);
-        (s.ticket_patterns.clone(), s.git.author_email.clone(), s.clickup.token.clone())
+        (s.ticket_patterns.clone(), s.git.author_email.clone(), s.clickup.clone())
     };
-    let client = if token.is_empty() { None } else { Some(ClickupClient::new(&token)) };
+    let source_clickup = clickup_provider::from_settings(&reglages_clickup);
 
     for source in sources {
-        {
+        if *source == "clickup" {
+            let from = now - FENETRE_CLICKUP_ARRIERE;
+            let to = now + FENETRE_CLICKUP_AVANT;
+            match collecter_clickup(st, source_clickup.as_deref(), from, to, now) {
+                Ok(n) => report.clickup += n,
+                Err(e) => report.errors.push(format!("collecte ClickUp : {e}")),
+            }
+        } else {
             let guard = match store_ouvert(st) {
                 Ok(g) => g,
                 Err(msg) => {
@@ -315,14 +328,6 @@ pub fn run_collect(app: &AppHandle, st: &ActivityState, sources: &[&str]) -> Col
                         Err(e) => report.errors.push(format!("collecte Claude Code : {e}")),
                     }
                 }
-                "clickup" => {
-                    let from = now - FENETRE_CLICKUP_ARRIERE;
-                    let to = now + FENETRE_CLICKUP_AVANT;
-                    match clickup::collect(store, client.as_ref(), from, to, now) {
-                        Ok(n) => report.clickup += n,
-                        Err(e) => report.errors.push(format!("collecte ClickUp : {e}")),
-                    }
-                }
                 autre => report.errors.push(format!("source de collecte inconnue : {autre}")),
             }
         }
@@ -332,6 +337,31 @@ pub fn run_collect(app: &AppHandle, st: &ActivityState, sources: &[&str]) -> Col
 
     pousser_erreurs(st, &report.errors);
     report
+}
+
+/// Collecte ClickUp en trois temps, le verrou du store n'étant **jamais** tenu
+/// pendant `fetch` : lectures sous verrou, verrou relâché, appel à la source,
+/// verrou repris pour les écritures. Sans source configurée, `Ok(0)`.
+fn collecter_clickup(
+    st: &ActivityState,
+    source: Option<&dyn SourceClickup>,
+    from: i64,
+    to: i64,
+    now: i64,
+) -> Result<usize, String> {
+    let Some(source) = source else { return Ok(0) };
+
+    let query = {
+        let guard = store_ouvert(st)?;
+        let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
+        clickup::prepare(store, from, to, now)?
+    };
+
+    let batch = source.fetch(&query).map_err(|e| e.to_string())?;
+
+    let guard = store_ouvert(st)?;
+    let store = guard.as_ref().expect("store présent : garanti par store_ouvert");
+    clickup::apply(store, &batch, query.updated_since_ms, now)
 }
 
 /// Génère les synthèses du jour `day` (bilan + reste à faire, plus la synthèse
@@ -442,7 +472,14 @@ pub fn doit_avancer_curseur(resultats: &[Result<(), String>]) -> bool {
 fn tick(app: &AppHandle) {
     let st = app.state::<Arc<ActivityState>>().inner().clone();
 
-    let schedule = lecture(&st.settings).schedule.clone();
+    let (schedule, source_clickup) = {
+        let s = lecture(&st.settings);
+        (s.schedule.clone(), s.clickup.source)
+    };
+    let cadence_clickup = match source_clickup {
+        SourceReglee::ClaudeMcp => CADENCE_CLICKUP_MCP,
+        SourceReglee::Api | SourceReglee::Off => CADENCE_CLICKUP_API,
+    };
     let last = verrou(&st.last_collect).clone();
     let dernier_jour =
         verrou(&st.store).as_ref().and_then(|s| s.get_cursor(CURSEUR_DERNIER_JOUR).ok().flatten());
@@ -458,6 +495,7 @@ fn tick(app: &AppHandle) {
         dernier_jour.as_deref(),
         dernier_essai,
         &schedule,
+        cadence_clickup,
     );
 
     let mut sources: Vec<&str> = Vec::new();
@@ -772,6 +810,43 @@ mod tests {
         st
     }
 
+    /// Même exigence côté ClickUp : par le MCP de Claude Code, `fetch` est un
+    /// `claude -p` d'une à deux minutes. Verrou tenu, le dashboard et les threads
+    /// lecteurs des PTY resteraient bloqués tout ce temps.
+    #[test]
+    fn le_verrou_du_store_est_libre_pendant_le_fetch_clickup() {
+        use terminials_core::activity::providers::clickup::{
+            ClickupBatch, ClickupError, ClickupQuery, ClickupSource as SourceClickupTrait,
+        };
+
+        struct Sonde<'a> {
+            st: &'a ActivityState,
+            verrou_libre: Mutex<Option<bool>>,
+        }
+        impl SourceClickupTrait for Sonde<'_> {
+            fn fetch(&self, _q: &ClickupQuery) -> Result<ClickupBatch, ClickupError> {
+                *self.verrou_libre.lock().unwrap() = Some(self.st.store.try_lock().is_ok());
+                Ok(ClickupBatch::default())
+            }
+            fn name(&self) -> &'static str {
+                "sonde"
+            }
+        }
+
+        let st = etat_de_test_avec_store();
+        let sonde = Sonde { st: &st, verrou_libre: Mutex::new(None) };
+        let maintenant = now_s();
+        assert_eq!(
+            collecter_clickup(&st, Some(&sonde), maintenant - 86_400, maintenant, maintenant).unwrap(),
+            0
+        );
+        assert_eq!(
+            *sonde.verrou_libre.lock().unwrap(),
+            Some(true),
+            "le verrou du store doit être relâché pendant fetch"
+        );
+    }
+
     /// Le cœur du correctif de concurrence : pendant `provider.complete()`, qui dure
     /// jusqu'à 120 s, le verrou du store doit être **libre**. Sinon le thread lecteur
     /// de chaque PTY se bloque dans l'écriture des événements shell, et les commandes
@@ -875,23 +950,23 @@ mod tests {
 
     #[test]
     fn premier_tick_collecte_tout_et_ne_resume_pas_avant_l_heure() {
-        let p = plan_tick(0, at(6, 59, "2026-09-16"), &HashMap::new(), None, None, &ScheduleSettings::default());
+        let p = plan_tick(0, at(6, 59, "2026-09-16"), &HashMap::new(), None, None, &ScheduleSettings::default(), CADENCE_CLICKUP_API);
         assert!(p.collect_git_claude && p.collect_clickup && p.summaries_for.is_none());
     }
 
     #[test]
     fn a_7h_un_mercredi_resume_la_veille_une_seule_fois() {
-        let p = plan_tick(0, at(7, 0, "2026-09-16"), &HashMap::new(), None, None, &ScheduleSettings::default());
+        let p = plan_tick(0, at(7, 0, "2026-09-16"), &HashMap::new(), None, None, &ScheduleSettings::default(), CADENCE_CLICKUP_API);
         assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 15).unwrap()));
-        let p2 = plan_tick(0, at(7, 1, "2026-09-16"), &HashMap::new(), Some("2026-09-16"), None, &ScheduleSettings::default());
+        let p2 = plan_tick(0, at(7, 1, "2026-09-16"), &HashMap::new(), Some("2026-09-16"), None, &ScheduleSettings::default(), CADENCE_CLICKUP_API);
         assert!(p2.summaries_for.is_none());
     }
 
     #[test]
     fn lundi_resume_vendredi_et_weekend_ne_resume_pas() {
-        let p = plan_tick(0, at(9, 0, "2026-09-21"), &HashMap::new(), None, None, &ScheduleSettings::default());
+        let p = plan_tick(0, at(9, 0, "2026-09-21"), &HashMap::new(), None, None, &ScheduleSettings::default(), CADENCE_CLICKUP_API);
         assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 18).unwrap()));
-        assert!(plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, None, &ScheduleSettings::default()).summaries_for.is_none());
+        assert!(plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, None, &ScheduleSettings::default(), CADENCE_CLICKUP_API).summaries_for.is_none());
     }
 
     #[test]
@@ -899,16 +974,34 @@ mod tests {
         let mut last = HashMap::new();
         last.insert("git".to_string(), 1000);
         last.insert("clickup".to_string(), 1000);
-        let p = plan_tick(1200, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), None, &ScheduleSettings::default());
+        let p = plan_tick(1200, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), None, &ScheduleSettings::default(), CADENCE_CLICKUP_API);
         assert!(!p.collect_git_claude && !p.collect_clickup);
-        let p = plan_tick(1400, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), None, &ScheduleSettings::default());
+        let p = plan_tick(1400, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), None, &ScheduleSettings::default(), CADENCE_CLICKUP_API);
         assert!(p.collect_git_claude && !p.collect_clickup);
+    }
+
+    #[test]
+    fn la_cadence_clickup_depend_de_la_source() {
+        // Un `claude -p` de collecte dure une à deux minutes : toutes les 15 min
+        // comme l'API HTTP, il monopoliserait la machine pour rien.
+        let mut last = HashMap::new();
+        last.insert("clickup".to_string(), 1000);
+        let du = |maintenant: i64, cadence: i64| {
+            plan_tick(maintenant, at(10, 0, "2026-09-16"), &last, Some("2026-09-16"), None, &ScheduleSettings::default(), cadence)
+                .collect_clickup
+        };
+        assert_eq!(CADENCE_CLICKUP_API, 900);
+        assert_eq!(CADENCE_CLICKUP_MCP, 3600);
+        assert!(du(1000 + 900, CADENCE_CLICKUP_API), "clé API : 15 min");
+        assert!(!du(1000 + 900, CADENCE_CLICKUP_MCP), "MCP : 15 min, trop tôt");
+        assert!(!du(1000 + 3599, CADENCE_CLICKUP_MCP));
+        assert!(du(1000 + 3600, CADENCE_CLICKUP_MCP), "MCP : une fois par heure");
     }
 
     #[test]
     fn le_weekend_resume_quand_weekdays_only_est_faux() {
         let schedule = ScheduleSettings { hour: 7, minute: 0, weekdays_only: false };
-        let p = plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, None, &schedule);
+        let p = plan_tick(0, at(9, 0, "2026-09-19"), &HashMap::new(), None, None, &schedule, CADENCE_CLICKUP_API);
         // Samedi 19/09 → dernier jour ouvré = vendredi 18/09.
         assert_eq!(p.summaries_for, Some(chrono::NaiveDate::from_ymd_opt(2026, 9, 18).unwrap()));
     }
@@ -921,7 +1014,7 @@ mod tests {
         // succès). Une tentative toutes les 30 min suffit au rattrapage.
         let maintenant = 1_000_000;
         let plan = |essai: Option<i64>| {
-            plan_tick(maintenant, at(7, 30, "2026-09-16"), &HashMap::new(), None, essai, &ScheduleSettings::default())
+            plan_tick(maintenant, at(7, 30, "2026-09-16"), &HashMap::new(), None, essai, &ScheduleSettings::default(), CADENCE_CLICKUP_API)
                 .summaries_for
         };
         assert!(plan(None).is_some(), "aucune tentative encore : on lance");
