@@ -10,10 +10,14 @@ use crate::activity::providers::claude_process::{run_claude_p, ClaudeProcessErro
 use crate::activity::settings::{ClickupSettings, ClickupSource as SourceReglee};
 use crate::activity::{OpenTask, TicketInfo};
 
-/// Délai maximum d'un `claude -p` de collecte ClickUp. Le test de faisabilité
-/// a mis 82 s pour une seule liste ; trois listes et des tâches à résoudre
-/// peuvent facilement doubler cela.
-const DELAI_MCP: Duration = Duration::from_secs(240);
+/// Délai maximum d'un `claude -p` de collecte ClickUp.
+///
+/// Mesuré : 82 s pour une seule liste (test de faisabilité), **248 s** pour les
+/// trois listes pleines (50 tâches ouvertes, 50 modifiées sur 30 jours, 2 à
+/// résoudre). Dix minutes laissent de la marge à une première collecte, la plus
+/// chargée. Le verrou du store est relâché pendant tout ce temps, et la cadence
+/// est d'une collecte par heure.
+const DELAI_MCP: Duration = Duration::from_secs(600);
 /// Bornes annoncées au modèle, pour éviter des réponses interminables.
 const MAX_TACHES: usize = 50;
 
