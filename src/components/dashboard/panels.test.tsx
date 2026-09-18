@@ -1,13 +1,31 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { OpenTasks } from "./OpenTasks";
+import { champsLlmDetailles } from "./SettingsPanel";
 import { summaryFooter, scheduleSentence } from "./SummaryPanel";
-import type { OpenTask, Summary } from "../../lib/activityApi";
+import { clickupActif, type OpenTask, type Summary } from "../../lib/activityApi";
+
+describe("clickupActif", () => {
+  it("le MCP est actif sans jeton, la clé API exige un jeton, « off » n'est jamais actif", () => {
+    expect(clickupActif({ source: "claude_mcp", token: "" })).toBe(true);
+    expect(clickupActif({ source: "api", token: "" })).toBe(false);
+    expect(clickupActif({ source: "api", token: "pk_1" })).toBe(true);
+    expect(clickupActif({ source: "off", token: "pk_1" })).toBe(false);
+  });
+});
+
+describe("champsLlmDetailles", () => {
+  it("cachés pour claude -p, montrés pour les API configurables", () => {
+    expect(champsLlmDetailles("claude_cli")).toBe(false);
+    expect(champsLlmDetailles("openai")).toBe(true);
+    expect(champsLlmDetailles("ollama")).toBe(true);
+  });
+});
 
 describe("OpenTasks", () => {
-  it("sans token affiche l'invite à ajouter un token ClickUp", () => {
-    const html = renderToStaticMarkup(<OpenTasks tasks={[]} hasToken={false} onOpen={() => {}} />);
-    expect(html).toContain("Ajouter un token ClickUp");
+  it("ClickUp inactif affiche l'invite à l'activer dans les réglages", () => {
+    const html = renderToStaticMarkup(<OpenTasks tasks={[]} active={false} onOpen={() => {}} />);
+    expect(html).toContain("Activer ClickUp dans les réglages");
   });
 
   it("avec 2 tâches : triées par échéance (sans échéance en dernier) et affiche le statut", () => {
@@ -22,7 +40,7 @@ describe("OpenTasks", () => {
       },
     ];
     const html = renderToStaticMarkup(
-      <OpenTasks tasks={tasks} hasToken={true} onOpen={() => {}} />,
+      <OpenTasks tasks={tasks} active={true} onOpen={() => {}} />,
     );
 
     const liCount = (html.match(/<li/g) ?? []).length;

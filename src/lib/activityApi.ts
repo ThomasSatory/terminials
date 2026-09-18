@@ -104,6 +104,14 @@ export interface ActivityStatus {
   dbError?: string | null;
 }
 
+/** D'où viennent les tâches ClickUp (miroir de `ClickupSource` côté Rust). */
+export type ClickupSource = "claude_mcp" | "api" | "off";
+
+export interface ClickupSettings {
+  source: ClickupSource;
+  token: string;
+}
+
 export interface ActivitySettings {
   llm: {
     provider: "openai" | "ollama" | "claude_cli";
@@ -115,9 +123,7 @@ export interface ActivitySettings {
     maxTokens: number;
     tokenCommand: string | null;
   };
-  clickup: {
-    token: string;
-  };
+  clickup: ClickupSettings;
   schedule: {
     hour: number;
     minute: number;
@@ -166,6 +172,14 @@ export const activityApi = {
   setSettings: (settings: ActivitySettings): Promise<void> =>
     invoke("activity_set_settings", { settings }),
 };
+
+/**
+ * Vrai si la collecte ClickUp est configurée. Le mode MCP n'a pas besoin de
+ * jeton : c'est Claude Code qui porte l'authentification du serveur `clickup`.
+ */
+export function clickupActif(clickup: ClickupSettings): boolean {
+  return clickup.source !== "off" && (clickup.source !== "api" || clickup.token !== "");
+}
 
 /** Vrai si `err` est une erreur de jeton LLM expiré (convention "unauthorized:" en préfixe). */
 export function isUnauthorized(err: unknown): boolean {

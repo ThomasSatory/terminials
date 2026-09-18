@@ -33,6 +33,15 @@ function textToList(text: string, sep: RegExp): string[] {
 }
 
 /**
+ * Vrai si le fournisseur LLM choisi expose des réglages détaillés (URL, modèle,
+ * jeton, en-têtes, température, max tokens). `claude -p` n'en a aucun : il tourne
+ * toujours sur Sonnet et s'authentifie tout seul.
+ */
+export function champsLlmDetailles(provider: ActivitySettings["llm"]["provider"]): boolean {
+  return provider !== "claude_cli";
+}
+
+/**
  * Panneau latéral droit « Réglages » (§8/§9) : formulaire complet des
  * réglages persistés, aux champs soulignés des jetons « Journal » (aucune
  * logique n'a changé avec la refonte, seulement l'habillage). Charge `getSettings` au montage ; « Enregistrer »
@@ -122,83 +131,122 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             })
           }
         >
-          <option value="openai">openai</option>
-          <option value="ollama">ollama</option>
-          <option value="claude_cli">claude_cli</option>
+          <option value="claude_cli">Claude Code (claude -p)</option>
+          <option value="openai">Gemma / API OpenAI compatible</option>
+          <option value="ollama">Ollama</option>
         </select>
       </label>
 
-      <label>
-        URL de base
-        <input
-          className="dash-field"
-          type="text"
-          value={settings.llm.baseUrl}
-          onChange={(e) => update({ llm: { ...settings.llm, baseUrl: e.target.value } })}
-        />
-      </label>
+      {!champsLlmDetailles(settings.llm.provider) && (
+        <p className="dash-settings-note">Modèle : sonnet (claude -p)</p>
+      )}
+
+      {champsLlmDetailles(settings.llm.provider) && (
+        <>
+          <label>
+            URL de base
+            <input
+              className="dash-field"
+              type="text"
+              value={settings.llm.baseUrl}
+              onChange={(e) => update({ llm: { ...settings.llm, baseUrl: e.target.value } })}
+            />
+          </label>
+
+          <label>
+            Modèle
+            <input
+              className="dash-field"
+              type="text"
+              value={settings.llm.model}
+              onChange={(e) => update({ llm: { ...settings.llm, model: e.target.value } })}
+            />
+          </label>
+
+          <label>
+            Jeton LLM
+            <input
+              className="dash-field"
+              type="password"
+              value={settings.llm.token}
+              onChange={(e) => update({ llm: { ...settings.llm, token: e.target.value } })}
+            />
+          </label>
+
+          <label>
+            En-têtes supplémentaires (une par ligne, « clé: valeur »)
+            <textarea
+              className="dash-field"
+              value={extraHeadersText}
+              onChange={(e) => setExtraHeadersText(e.target.value)}
+            />
+          </label>
+
+          <label>
+            Température
+            <input
+              className="dash-field"
+              type="number"
+              step="0.1"
+              value={settings.llm.temperature}
+              onChange={(e) =>
+                update({ llm: { ...settings.llm, temperature: Number(e.target.value) } })
+              }
+            />
+          </label>
+
+          <label>
+            Max tokens
+            <input
+              className="dash-field"
+              type="number"
+              value={settings.llm.maxTokens}
+              onChange={(e) =>
+                update({ llm: { ...settings.llm, maxTokens: Number(e.target.value) } })
+              }
+            />
+          </label>
+        </>
+      )}
 
       <label>
-        Modèle
-        <input
+        Source ClickUp
+        <select
           className="dash-field"
-          type="text"
-          value={settings.llm.model}
-          onChange={(e) => update({ llm: { ...settings.llm, model: e.target.value } })}
-        />
-      </label>
-
-      <label>
-        Jeton LLM
-        <input
-          className="dash-field"
-          type="password"
-          value={settings.llm.token}
-          onChange={(e) => update({ llm: { ...settings.llm, token: e.target.value } })}
-        />
-      </label>
-
-      <label>
-        En-têtes supplémentaires (une par ligne, « clé: valeur »)
-        <textarea
-          className="dash-field"
-          value={extraHeadersText}
-          onChange={(e) => setExtraHeadersText(e.target.value)}
-        />
-      </label>
-
-      <label>
-        Température
-        <input
-          className="dash-field"
-          type="number"
-          step="0.1"
-          value={settings.llm.temperature}
+          value={settings.clickup.source}
           onChange={(e) =>
-            update({ llm: { ...settings.llm, temperature: Number(e.target.value) } })
+            update({
+              clickup: {
+                ...settings.clickup,
+                source: e.target.value as ActivitySettings["clickup"]["source"],
+              },
+            })
           }
-        />
+        >
+          <option value="claude_mcp">Claude Code (MCP ClickUp)</option>
+          <option value="api">Clé API</option>
+          <option value="off">Désactivé</option>
+        </select>
       </label>
 
-      <label>
-        Max tokens
-        <input
-          className="dash-field"
-          type="number"
-          value={settings.llm.maxTokens}
-          onChange={(e) => update({ llm: { ...settings.llm, maxTokens: Number(e.target.value) } })}
-        />
-      </label>
+      {settings.clickup.source === "claude_mcp" && (
+        <p className="dash-settings-note">
+          Interroge ClickUp via claude -p (Sonnet), une fois par heure. Environ 1 à 2 minutes par
+          collecte.
+        </p>
+      )}
 
-      <label>
-        Token ClickUp
-        <input
-          className="dash-field"
-          type="password"
-          value={settings.clickup.token}
-          onChange={(e) => update({ clickup: { token: e.target.value } })}
-        />
-      </label>
+      {settings.clickup.source === "api" && (
+        <label>
+          Token ClickUp
+          <input
+            className="dash-field"
+            type="password"
+            value={settings.clickup.token}
+            onChange={(e) => update({ clickup: { ...settings.clickup, token: e.target.value } })}
+          />
+        </label>
+      )}
 
       <label>
         Heure de génération

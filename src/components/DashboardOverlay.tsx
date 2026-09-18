@@ -4,7 +4,7 @@ import { useDashboardStore } from "../store/dashboard";
 import { useWorkspaceStore } from "../store/workspace";
 import { focusPane } from "../lib/paneFocus";
 import { useActivityData, useSummary } from "../hooks/useActivityData";
-import { activityApi, type ActivitySettings } from "../lib/activityApi";
+import { activityApi, clickupActif, type ActivitySettings } from "../lib/activityApi";
 import {
   formatDayTitle,
   formatWeekLabel,
@@ -250,7 +250,7 @@ export function DashboardOverlay() {
                 <h2 className="dash-h2">Reste à faire</h2>
                 <OpenTasks
                   tasks={openTasks}
-                  hasToken={settings !== null && settings.clickup.token !== ""}
+                  active={settings !== null && clickupActif(settings.clickup)}
                   onOpen={openLink}
                 />
                 {/* En mode semaine, seuls les tickets restent : le texte du LLM

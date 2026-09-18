@@ -41,20 +41,20 @@ export function formatTaskDue(ts: number): string {
 /**
  * Tickets ClickUp ouverts, en tête de « Reste à faire » (tâche 17) : une ligne
  * par ticket, identifiant en pastille laiton, nom en serif, échéance à droite.
- * Triés par échéance puis priorité. Sans jeton ClickUp configuré, une simple
- * ligne atténuée invite à en ajouter un plutôt que d'appeler l'API.
+ * Triés par échéance puis priorité. ClickUp inactif (source « off », ou clé API
+ * sans jeton), une simple ligne atténuée renvoie aux réglages.
  */
 export function OpenTasks({
   tasks,
-  hasToken,
+  active,
   onOpen,
 }: {
   tasks: OpenTask[];
-  hasToken: boolean;
+  active: boolean;
   onOpen: (url: string) => void;
 }) {
-  if (!hasToken) {
-    return <p className="dash-tasks-empty">Ajouter un token ClickUp dans les réglages</p>;
+  if (!active) {
+    return <p className="dash-tasks-empty">Activer ClickUp dans les réglages</p>;
   }
 
   const sorted = [...tasks].sort(compareTasks);

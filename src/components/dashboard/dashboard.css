@@ -716,6 +716,15 @@
   font-size: 12.5px;
 }
 
+/* Ligne d'explication sous un select des réglages : ce que le mode choisi
+   implique, sans en faire un champ. */
+.dash-settings-note {
+  margin: -6px 0 0;
+  color: var(--dash-atenue);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .dash-settings-check {
   flex-direction: row !important;
   align-items: center;
