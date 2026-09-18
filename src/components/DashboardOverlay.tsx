@@ -6,14 +6,19 @@ import { useWorkspaceStore } from "../store/workspace";
 import { focusPane } from "../lib/paneFocus";
 import { useActivityData } from "../hooks/useActivityData";
 import { activityApi } from "../lib/activityApi";
-import { formatDayLabel, collectedAgoLabel } from "../lib/dashboardDay";
-import { StatTiles } from "./dashboard/StatTiles";
-import { HourChart } from "./dashboard/HourChart";
-import { WorkspaceBars } from "./dashboard/WorkspaceBars";
+import { formatDayTitle, formatWeekLabel, collectedAgoLabel } from "../lib/dashboardDay";
+import { statsSentence } from "../lib/statsSentence";
+import { WorkspaceChips } from "./dashboard/WorkspaceChips";
 import { Timeline } from "./dashboard/Timeline";
 import { SummaryPanel } from "./dashboard/SummaryPanel";
 import { OpenTasks } from "./dashboard/OpenTasks";
 import { SettingsPanel } from "./dashboard/SettingsPanel";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  GearIcon,
+} from "./dashboard/icons";
 import "./dashboard/dashboard.css";
 
 /** Ouvre un lien externe (ticket ClickUp, lien markdown du résumé) via le plugin opener,
@@ -27,6 +32,10 @@ function openLink(href: string): void {
  * `DiffOverlay` : conteneur focusable superposé à la grille, raccourcis clavier
  * propres au conteneur (aucun listener `window`). N'est jamais lié à un
  * workspace : ouvert même quand aucun workspace n'existe.
+ *
+ * Mise en page « Journal » (tâche 17) : barre du haut, en-tête (titre, phrase
+ * de chiffres, chips workspaces), puis deux colonnes — le bilan à gauche, la
+ * chronologie à droite.
  */
 export function DashboardOverlay() {
   const day = useDashboardStore((s) => s.day);
@@ -48,6 +57,8 @@ export function DashboardOverlay() {
 
   const containerRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
+
+  const byWorkspace = stats?.byWorkspace ?? [];
 
   // Home résolu une fois (comme la Sidebar) : abrège l'affichage des répertoires
   // de la timeline. Tant qu'il est vide/indisponible, Timeline affiche le chemin complet.
@@ -118,50 +129,78 @@ export function DashboardOverlay() {
 
   const agoLabel = collectedAgoLabel(status?.lastCollect ?? {}, Math.floor(Date.now() / 1000));
   const hasErrors = (status?.errors.length ?? 0) > 0;
+  const semaine = mode === "week";
+  // Les chevrons déplacent d'un jour ou d'une semaine selon le mode ; les
+  // raccourcis [ et ] restent, eux, au pas d'un jour.
+  const pas = semaine ? 7 : 1;
 
   return (
     <div ref={containerRef} tabIndex={-1} className="dash-overlay" onKeyDown={onKeyDown}>
       <div className="dash-toolbar">
-        <span className="dash-toolbar-left" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button className="icon-btn" title="Jour précédent ( [ )" onClick={() => shiftDay(-1)}>
-            ◂
+        <span className="dash-toolbar-left">
+          <button
+            className="dash-icon-btn"
+            aria-label={semaine ? "Semaine précédente" : "Jour précédent"}
+            title={semaine ? "Semaine précédente" : "Jour précédent ( [ )"}
+            onClick={() => shiftDay(-pas)}
+          >
+            <ChevronLeftIcon />
           </button>
-          <span>{formatDayLabel(day)}</span>
-          <button className="icon-btn" title="Jour suivant ( ] )" onClick={() => shiftDay(1)}>
-            ▸
+          <button
+            className="dash-icon-btn"
+            aria-label={semaine ? "Semaine suivante" : "Jour suivant"}
+            title={semaine ? "Semaine suivante" : "Jour suivant ( ] )"}
+            onClick={() => shiftDay(pas)}
+          >
+            <ChevronRightIcon />
           </button>
-          <button type="button" onClick={today}>
-            Aujourd'hui
+          <button type="button" className="dash-text-btn" onClick={today}>
+            {semaine ? "Cette semaine" : "Aujourd'hui"}
           </button>
-          <span className="dash-seg">
-            <button type="button" aria-pressed={mode === "day"} onClick={() => setMode("day")}>
-              Jour
-            </button>
-            <button type="button" aria-pressed={mode === "week"} onClick={() => setMode("week")}>
-              Semaine
-            </button>
-          </span>
+          <span className="dash-sep" />
+          <button
+            type="button"
+            className="dash-text-btn"
+            aria-pressed={!semaine}
+            onClick={() => setMode("day")}
+          >
+            Jour
+          </button>
+          <button
+            type="button"
+            className="dash-text-btn"
+            aria-pressed={semaine}
+            onClick={() => setMode("week")}
+          >
+            Semaine
+          </button>
         </span>
-        <span className="dash-toolbar-right" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ color: "#8a8a8a" }} title={hasErrors ? status!.errors.join("\n") : undefined}>
+        <span className="dash-toolbar-right">
+          <span className="dash-collected" title={hasErrors ? status!.errors.join("\n") : undefined}>
             {agoLabel}
             {hasErrors && " ⚠"}
           </span>
-          <button type="button" onClick={() => bumpGenerate()}>
-            Générer maintenant
+          <button type="button" className="dash-pill" onClick={() => bumpGenerate()}>
+            Regénérer la synthèse
           </button>
           <button
-            className="icon-btn"
-            title="Réglages"
+            className="dash-icon-btn"
+            aria-label="Réglages"
             aria-pressed={settingsOpen}
             onClick={() => setSettingsOpen(!settingsOpen)}
           >
-            ⚙
+            <GearIcon />
           </button>
-          <button className="icon-btn" title="Fermer (Échap)" onClick={close}>
-            ×
+          <button className="dash-icon-btn" aria-label="Fermer" title="Fermer (Échap)" onClick={close}>
+            <CloseIcon />
           </button>
         </span>
+      </div>
+
+      <div className="dash-header">
+        <h1 className="dash-title">{semaine ? formatWeekLabel(day) : formatDayTitle(day)}</h1>
+        {stats && <p className="dash-sentence">{statsSentence(stats.totals, stats.byWorkspace)}</p>}
+        <WorkspaceChips rows={byWorkspace} selected={filterDir} onSelect={setFilterDir} />
       </div>
 
       <div className="dash-body">
@@ -170,73 +209,53 @@ export function DashboardOverlay() {
             <>
               <div className="dash-skeleton" style={{ height: 70 }} />
               <div className="dash-skeleton" style={{ height: 140 }} />
-              <div className="dash-skeleton" style={{ height: 90 }} />
-              <div className="dash-skeleton" style={{ height: 200 }} />
             </>
           ) : error ? (
-            <div className="dash-banner dash-banner-error">
+            <div className="dash-banner-error">
               <p>{error}</p>
-              <button type="button" onClick={reload}>
+              <button type="button" className="dash-pill" onClick={reload}>
                 Réessayer
               </button>
             </div>
-          ) : (
-            <>
-              <StatTiles totals={stats!.totals} />
-              <div className="dash-card">
-                <HourChart
-                  data={
-                    mode === "day"
-                      ? { kind: "hour", byHour: stats!.byHour }
-                      : { kind: "day", byDay: stats!.byDay }
-                  }
-                />
-              </div>
-              <WorkspaceBars rows={stats!.byWorkspace} selected={filterDir} onSelect={setFilterDir} />
-              <input
-                ref={filterRef}
-                className="dash-input"
-                placeholder="filtrer ( / )"
-                value={filterText}
-                onChange={(e) => setFilterText(e.target.value)}
-              />
-              {events.length === 0 ? (
-                <p style={{ color: "#6f6f6f" }}>Aucune activité ce jour</p>
-              ) : (
-                <Timeline
-                  events={events}
-                  filterDir={filterDir}
-                  filterText={filterText}
-                  onOpenTicket={openLink}
-                  home={home}
-                />
-              )}
-            </>
-          )}
-        </div>
-
-        <div className="dash-right" style={{ position: "relative" }}>
-          {settingsOpen && (
-            <div
-              style={{
-                position: "absolute",
-                inset: 0,
-                zIndex: 5,
-                background: "#1e1e1e",
-                overflow: "auto",
-              }}
-            >
-              <SettingsPanel onClose={() => setSettingsOpen(false)} />
-            </div>
-          )}
-          {mode === "day" ? (
+          ) : mode === "day" ? (
             <>
               <SummaryPanel kind="bilan" title="Bilan" onOpenLink={openLink} />
               <OpenTasks tasks={openTasks} hasToken={clickupToken !== ""} onOpen={openLink} />
               <SummaryPanel kind="reste_a_faire" title="Reste à faire" onOpenLink={openLink} />
             </>
           ) : (
-            <SummaryPanel kind="semaine" title="Semaine" onOpenLink={openLink} />
+            <SummaryPanel kind="semaine" title="Bilan de la semaine" onOpenLink={openLink} />
+          )}
+        </div>
+
+        <div className="dash-right">
+          {settingsOpen && (
+            <div className="dash-settings-overlay">
+              <SettingsPanel onClose={() => setSettingsOpen(false)} />
+            </div>
+          )}
+          <div className="dash-tl-head">
+            <h2 className="dash-h2">Chronologie</h2>
+            <input
+              ref={filterRef}
+              type="text"
+              className="dash-filter"
+              placeholder="filtrer"
+              aria-label="Filtrer la chronologie"
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+            />
+          </div>
+          {events.length === 0 ? (
+            <p className="dash-tl-empty">Aucune activité ce jour</p>
+          ) : (
+            <Timeline
+              events={events}
+              filterDir={filterDir}
+              filterText={filterText}
+              onOpenTicket={openLink}
+              home={home}
+            />
           )}
         </div>
       </div>

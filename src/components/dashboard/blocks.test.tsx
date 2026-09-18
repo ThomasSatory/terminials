@@ -1,75 +1,42 @@
 import { describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { StatTiles } from "./StatTiles";
-import { HourChart } from "./HourChart";
-import { WorkspaceBars } from "./WorkspaceBars";
+import { WorkspaceChips } from "./WorkspaceChips";
 import { Timeline } from "./Timeline";
-import type { ActivityEvent, HourCounts, WorkspaceCount } from "../../lib/activityApi";
+import type { ActivityEvent, WorkspaceCount } from "../../lib/activityApi";
 
-function zeroHours(): HourCounts[] {
-  return Array.from({ length: 24 }, (_, hour) => ({
-    hour,
-    commit: 0,
-    claude_prompt: 0,
-    shell_cmd: 0,
-    clickup_change: 0,
-  }));
-}
-
-describe("StatTiles", () => {
-  it("affiche les valeurs et libellés, dont la durée formatée", () => {
-    const html = renderToStaticMarkup(
-      createElement(StatTiles, {
-        totals: { commits: 5, prompts: 3, commands: 8, tickets: 2, activeMinutes: 65 },
-      }),
-    );
-    expect(html).toContain("5");
-    expect(html).toContain("commits");
-    expect(html).toContain("1 h 05");
-  });
-});
-
-describe("HourChart", () => {
-  it("mode heure : une barre par heure visible (plage par défaut = 14)", () => {
-    const html = renderToStaticMarkup(
-      createElement(HourChart, { data: { kind: "hour", byHour: zeroHours() } }),
-    );
-    const matches = html.match(/class="bar"/g) ?? [];
-    expect(matches.length).toBe(14);
-  });
-
-  it("rend un rect vert (#2ecc71) pour un commit à 9h", () => {
-    const hours = zeroHours();
-    hours[9].commit = 1;
-    const html = renderToStaticMarkup(
-      createElement(HourChart, { data: { kind: "hour", byHour: hours } }),
-    );
-    expect(html).toContain('fill="#2ecc71"');
-  });
-});
-
-describe("WorkspaceBars", () => {
+describe("WorkspaceChips", () => {
   const rows: WorkspaceCount[] = [
     { dir: "/home/x/dev/a", name: "a", events: 10, commits: 4 },
     { dir: "/home/x/dev/b", name: "b", events: 3, commits: 1 },
   ];
 
-  it("rend une barre par ligne", () => {
+  it("un chip par workspace, avec sa teinte et son compteur", () => {
     const html = renderToStaticMarkup(
-      createElement(WorkspaceBars, { rows, selected: null, onSelect: () => {} }),
+      createElement(WorkspaceChips, { rows, selected: null, onSelect: () => {} }),
     );
-    expect((html.match(/dash-wsbar/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect((html.match(/dash-chip"/g) ?? []).length).toBe(2);
     expect(html).toContain(">a<");
     expect(html).toContain(">b<");
+    // Le plus actif prend le laiton, le suivant la teinte 2 de la palette.
+    expect(html).toContain("background:#c9a36a");
+    expect(html).toContain("background:#9bb08a");
+    expect(html).toContain("cliquer pour filtrer");
   });
 
-  it("marque la ligne sélectionnée avec aria-pressed", () => {
+  it("marque le chip sélectionné avec aria-pressed", () => {
     const html = renderToStaticMarkup(
-      createElement(WorkspaceBars, { rows, selected: "/home/x/dev/a", onSelect: () => {} }),
+      createElement(WorkspaceChips, { rows, selected: "/home/x/dev/a", onSelect: () => {} }),
     );
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain('aria-pressed="false"');
+  });
+
+  it("sans workspace, aucune rangée n'est rendue", () => {
+    const html = renderToStaticMarkup(
+      createElement(WorkspaceChips, { rows: [], selected: null, onSelect: () => {} }),
+    );
+    expect(html).toBe("");
   });
 });
 
