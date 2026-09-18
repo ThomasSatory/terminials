@@ -14,6 +14,7 @@ import { Timeline } from "./dashboard/Timeline";
 import { SummaryPanel } from "./dashboard/SummaryPanel";
 import { OpenTasks } from "./dashboard/OpenTasks";
 import { SettingsPanel } from "./dashboard/SettingsPanel";
+import "./dashboard/dashboard.css";
 
 /** Ouvre un lien externe (ticket ClickUp, lien markdown du résumé) via le plugin opener,
     plutôt que la navigation par défaut du webview. */
