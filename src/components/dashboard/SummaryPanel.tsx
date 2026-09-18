@@ -1,97 +1,118 @@
 import { useState } from "react";
 import { Markdown } from "./Markdown";
-import { useSummary } from "../../hooks/useActivityData";
-import { activityApi, type Summary, type SummaryKind } from "../../lib/activityApi";
+import { activityApi, type ActivitySettings, type Summary } from "../../lib/activityApi";
 import { formatHm } from "../../lib/dashboardDay";
+import type { SummaryUi } from "../../lib/summaryState";
 
-/** Pied de résumé (§8) : « généré à HH:MM par <model> ». Fonction pure, testée sans rendu. */
+type Schedule = ActivitySettings["schedule"];
+
+/** Pied de la colonne gauche : « Synthèse générée à HH:MM par <model> ». Pur, testé sans rendu. */
 export function summaryFooter(summary: Summary): string {
-  return `généré à ${formatHm(summary.generatedAt)} par ${summary.model}`;
+  return `Synthèse générée à ${formatHm(summary.generatedAt)} par ${summary.model}`;
 }
 
 /**
- * Panneau de résumé LLM (Bilan / Reste à faire texte / Semaine, §8, colonne
- * droite). Pas de test de rendu (dépend du hook + de `invoke`) : voir
- * `summaryFooter` ci-dessus pour la partie pure testée.
+ * Phrase de rappel de la génération automatique, affichée sous le bouton quand
+ * aucune synthèse n'existe. Construite depuis les réglages réels : inutile de
+ * promettre 7 h du lundi au vendredi si l'utilisateur a changé l'horaire.
  */
-export function SummaryPanel({
-  kind,
-  title,
-  onOpenLink,
-}: {
-  kind: SummaryKind;
-  title: string;
-  onOpenLink: (href: string) => void;
-}) {
-  const { ui, generate } = useSummary(kind);
-  const [tokenInput, setTokenInput] = useState("");
-  const [savingToken, setSavingToken] = useState(false);
+export function scheduleSentence(schedule: Schedule): string {
+  const heure = schedule.minute === 0 ? `${schedule.hour} h` : `${schedule.hour} h ${schedule.minute}`;
+  const jours = schedule.weekdaysOnly ? "du lundi au vendredi" : "chaque jour";
+  return `La synthèse se génère seule à ${heure} ${jours}.`;
+}
 
-  async function saveTokenAndRetry() {
-    setSavingToken(true);
+/** Saisie d'un nouveau jeton LLM après un refus, puis nouvelle tentative. */
+function TokenExpire({ generate }: { generate: (force: boolean) => void }) {
+  const [token, setToken] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function enregistrerPuisReessayer() {
+    setSaving(true);
     try {
       const settings = await activityApi.getSettings();
-      settings.llm.token = tokenInput;
+      settings.llm.token = token;
       await activityApi.setSettings(settings);
       generate(true);
     } finally {
-      setSavingToken(false);
+      setSaving(false);
     }
   }
 
   return (
-    <div className="dash-card dash-summary">
-      <h3>{title}</h3>
+    <div className="dash-banner-warning">
+      <p>Jeton LLM expiré</p>
+      <input
+        className="dash-field"
+        type="password"
+        value={token}
+        placeholder="Nouveau jeton"
+        onChange={(e) => setToken(e.target.value)}
+      />
+      <button type="button" className="dash-pill" onClick={enregistrerPuisReessayer} disabled={saving}>
+        Valider
+      </button>
+    </div>
+  );
+}
 
-      {ui.status === "idle" && (
-        <button type="button" onClick={() => generate(false)}>
-          Générer
-        </button>
+/**
+ * Bilan du jour ou de la semaine (colonne gauche, tâche 17) : un titre serif
+ * laiton et la prose du LLM. Composant de présentation pur — l'état vient du
+ * hook `useSummary` tenu par l'overlay, qui a besoin du même résumé pour le
+ * pied de colonne.
+ */
+export function SummaryPanel({
+  title,
+  ui,
+  generate,
+  onOpenLink,
+  schedule,
+}: {
+  title: string;
+  ui: SummaryUi;
+  generate: (force: boolean) => void;
+  onOpenLink: (href: string) => void;
+  schedule?: Schedule;
+}) {
+  return (
+    <div className="dash-section">
+      <h2 className="dash-h2">{title}</h2>
+
+      {(ui.status === "loading" || ui.status === "idle") && (
+        <div className="dash-skeleton" style={{ height: 90 }} />
       )}
-
-      {ui.status === "loading" && <div className="dash-skeleton" />}
 
       {/* Cache vide : ce n'est pas une erreur, la génération reste un geste explicite. */}
       {ui.status === "absent" && (
-        <>
-          <p>Aucune synthèse pour ce jour</p>
-          <button type="button" onClick={() => generate(false)}>
-            Générer maintenant
-          </button>
-        </>
+        <div className="dash-absent">
+          <p className="dash-absent-text">Aucune synthèse pour cette journée.</p>
+          <div className="dash-absent-actions">
+            <button
+              type="button"
+              className="dash-pill dash-pill-accent"
+              onClick={() => generate(false)}
+            >
+              Générer la synthèse
+            </button>
+          </div>
+          {schedule && <p className="dash-absent-note">{scheduleSentence(schedule)}</p>}
+        </div>
       )}
 
       {ui.status === "ok" && (
         <>
-          <Markdown text={ui.summary.text} onOpenLink={onOpenLink} />
-          <p className="dash-summary-footer">
-            {summaryFooter(ui.summary)}{" "}
-            <button type="button" onClick={() => generate(true)} aria-label="Régénérer">
-              {ui.refreshing ? "…" : "↻"}
-            </button>
-          </p>
+          <div className="dash-prose">
+            <Markdown text={ui.summary.text} onOpenLink={onOpenLink} />
+          </div>
           {/* Un échec de régénération ne doit jamais faire disparaître le résumé en
               cache (§10) : on l'affiche toujours ci-dessus, avec un bandeau d'erreur
               en plus plutôt qu'à sa place. */}
-          {ui.lastError === "unauthorized" && (
-            <div className="dash-banner dash-banner-warning">
-              <p>Jeton LLM expiré</p>
-              <input
-                className="dash-input"
-                type="password"
-                value={tokenInput}
-                placeholder="Nouveau jeton"
-                onChange={(e) => setTokenInput(e.target.value)}
-              />
-              <button type="button" onClick={saveTokenAndRetry} disabled={savingToken}>
-                Valider
-              </button>
-            </div>
-          )}
+          {ui.lastError === "unauthorized" && <TokenExpire generate={generate} />}
           {ui.lastError !== undefined && ui.lastError !== "unauthorized" && (
-            <div className="dash-banner dash-banner-error">
+            <div className="dash-banner-error">
               <p>{ui.lastError}</p>
-              <button type="button" onClick={() => generate(true)}>
+              <button type="button" className="dash-pill" onClick={() => generate(true)}>
                 Réessayer
               </button>
             </div>
@@ -99,30 +120,37 @@ export function SummaryPanel({
         </>
       )}
 
-      {ui.status === "unauthorized" && (
-        <div className="dash-banner dash-banner-warning">
-          <p>Jeton LLM expiré</p>
-          <input
-            className="dash-input"
-            type="password"
-            value={tokenInput}
-            placeholder="Nouveau jeton"
-            onChange={(e) => setTokenInput(e.target.value)}
-          />
-          <button type="button" onClick={saveTokenAndRetry} disabled={savingToken}>
-            Valider
-          </button>
-        </div>
-      )}
+      {ui.status === "unauthorized" && <TokenExpire generate={generate} />}
 
       {ui.status === "error" && (
-        <div className="dash-banner dash-banner-error">
+        <div className="dash-banner-error">
           <p>{ui.message}</p>
-          <button type="button" onClick={() => generate(false)}>
+          <button type="button" className="dash-pill" onClick={() => generate(false)}>
             Réessayer
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Texte « reste à faire » du LLM, rendu **sous** les tickets ClickUp et sur la
+ * même grille (repère « note » à gauche, cf. `dashboard.css`). Tant qu'aucune
+ * synthèse n'existe, rien ne s'affiche : les tickets suffisent, et le bouton de
+ * génération vit dans le bilan juste au-dessus.
+ */
+export function SummaryText({
+  ui,
+  onOpenLink,
+}: {
+  ui: SummaryUi;
+  onOpenLink: (href: string) => void;
+}) {
+  if (ui.status !== "ok") return null;
+  return (
+    <div className="dash-reste">
+      <Markdown text={ui.summary.text} onOpenLink={onOpenLink} />
     </div>
   );
 }

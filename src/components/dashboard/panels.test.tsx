@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { OpenTasks } from "./OpenTasks";
-import { summaryFooter } from "./SummaryPanel";
+import { summaryFooter, scheduleSentence } from "./SummaryPanel";
 import type { OpenTask, Summary } from "../../lib/activityApi";
 
 describe("OpenTasks", () => {
@@ -38,8 +38,21 @@ describe("OpenTasks", () => {
   });
 });
 
+describe("scheduleSentence", () => {
+  it("heure ronde, jours ouvrés", () => {
+    expect(scheduleSentence({ hour: 7, minute: 0, weekdaysOnly: true })).toBe(
+      "La synthèse se génère seule à 7 h du lundi au vendredi.",
+    );
+  });
+  it("heure avec minutes, tous les jours", () => {
+    expect(scheduleSentence({ hour: 6, minute: 30, weekdaysOnly: false })).toBe(
+      "La synthèse se génère seule à 6 h 30 chaque jour.",
+    );
+  });
+});
+
 describe("summaryFooter", () => {
-  it("formate « généré à HH:MM par <model> »", () => {
+  it("formate « Synthèse générée à HH:MM par <model> »", () => {
     const summary: Summary = {
       day: "2026-09-17",
       text: "…",
@@ -47,6 +60,8 @@ describe("summaryFooter", () => {
       generatedAt: Math.floor(new Date(2026, 8, 17, 7, 2, 0).getTime() / 1000),
       cached: true,
     };
-    expect(summaryFooter(summary)).toBe("généré à 07:02 par openai:google/gemma-4-31B-it");
+    expect(summaryFooter(summary)).toBe(
+      "Synthèse générée à 07:02 par openai:google/gemma-4-31B-it",
+    );
   });
 });

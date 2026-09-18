@@ -31,17 +31,18 @@ function compareTasks(a: OpenTask, b: OpenTask): number {
   return priorityRank(a.priority) - priorityRank(b.priority);
 }
 
-function formatDueDate(ts: number): string {
-  const d = new Date(ts * 1000);
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  return `${day}/${month}`;
+const DUE_FORMAT = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric" });
+
+/** Échéance courte d'une tâche, ex. "ven. 19". Pure, testée sans rendu. */
+export function formatTaskDue(ts: number): string {
+  return DUE_FORMAT.format(new Date(ts * 1000));
 }
 
 /**
- * Section « Reste à faire » (partie haute, §8) : tâches ClickUp ouvertes,
- * triées par échéance puis priorité. Sans jeton ClickUp configuré, invite à
- * en ajouter un dans les réglages plutôt que d'appeler l'API.
+ * Tickets ClickUp ouverts, en tête de « Reste à faire » (tâche 17) : une ligne
+ * par ticket, identifiant en pastille laiton, nom en serif, échéance à droite.
+ * Triés par échéance puis priorité. Sans jeton ClickUp configuré, une simple
+ * ligne atténuée invite à en ajouter un plutôt que d'appeler l'API.
  */
 export function OpenTasks({
   tasks,
@@ -53,37 +54,34 @@ export function OpenTasks({
   onOpen: (url: string) => void;
 }) {
   if (!hasToken) {
-    return (
-      <div className="dash-card dash-open-tasks">
-        <p className="dash-banner">Ajouter un token ClickUp dans ⚙</p>
-      </div>
-    );
+    return <p className="dash-tasks-empty">Ajouter un token ClickUp dans les réglages</p>;
   }
 
   const sorted = [...tasks].sort(compareTasks);
 
   return (
-    <div className="dash-card dash-open-tasks">
-      <ul>
-        {sorted.map((task) => (
-          <li key={task.id} className="dash-task">
-            <a
-              href={task.url}
-              onClick={(e) => {
-                e.preventDefault();
-                onOpen(task.url);
-              }}
-            >
-              {task.name}
-            </a>
-            <span className="dash-task-status">{task.status}</span>
-            {task.dueDate != null && (
-              <span className="dash-task-due">{formatDueDate(task.dueDate)}</span>
-            )}
-            {task.listName && <span className="dash-task-list">{task.listName}</span>}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <ul className="dash-tasks">
+      {sorted.map((task) => (
+        <li key={task.id} className="dash-task">
+          <a
+            className="dash-task-id"
+            href={task.url}
+            title={task.listName ?? task.status}
+            onClick={(e) => {
+              e.preventDefault();
+              onOpen(task.url);
+            }}
+          >
+            {task.id}
+          </a>
+          <span className="dash-task-name" title={task.status}>
+            {task.name}
+          </span>
+          {task.dueDate != null && (
+            <span className="dash-task-due">{formatTaskDue(task.dueDate)}</span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }

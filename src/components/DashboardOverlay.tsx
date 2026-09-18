@@ -4,13 +4,13 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useDashboardStore } from "../store/dashboard";
 import { useWorkspaceStore } from "../store/workspace";
 import { focusPane } from "../lib/paneFocus";
-import { useActivityData } from "../hooks/useActivityData";
-import { activityApi } from "../lib/activityApi";
+import { useActivityData, useSummary } from "../hooks/useActivityData";
+import { activityApi, type ActivitySettings } from "../lib/activityApi";
 import { formatDayTitle, formatWeekLabel, collectedAgoLabel } from "../lib/dashboardDay";
 import { statsSentence } from "../lib/statsSentence";
 import { WorkspaceChips } from "./dashboard/WorkspaceChips";
 import { Timeline } from "./dashboard/Timeline";
-import { SummaryPanel } from "./dashboard/SummaryPanel";
+import { SummaryPanel, SummaryText, summaryFooter } from "./dashboard/SummaryPanel";
 import { OpenTasks } from "./dashboard/OpenTasks";
 import { SettingsPanel } from "./dashboard/SettingsPanel";
 import {
@@ -54,6 +54,11 @@ export function DashboardOverlay() {
   const bumpGenerate = useDashboardStore((s) => s.bumpGenerate);
 
   const { loading, events, stats, openTasks, status, error, reload } = useActivityData();
+  const semaine = mode === "week";
+  // Un seul panneau de bilan : son kind suit le mode. Le « reste à faire » est
+  // toujours lu (cache seulement), il n'apparaît qu'en mode jour.
+  const bilan = useSummary(semaine ? "semaine" : "bilan");
+  const reste = useSummary("reste_a_faire");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
@@ -69,16 +74,17 @@ export function DashboardOverlay() {
       .catch(() => {});
   }, []);
 
-  // Présence d'un token ClickUp (section « Reste à faire », §8) : lue une fois
-  // au montage puis à chaque bumpRefresh (déclenché après un enregistrement des
-  // réglages par SettingsPanel), pour refléter l'ajout d'un token sans rouvrir.
-  const [clickupToken, setClickupToken] = useState<string>("");
+  // Réglages (jeton ClickUp de « Reste à faire », horaire rappelé par l'état
+  // « aucune synthèse ») : lus une fois au montage puis à chaque bumpRefresh
+  // (déclenché après un enregistrement par SettingsPanel), pour refléter un
+  // changement sans rouvrir l'overlay.
+  const [settings, setSettings] = useState<ActivitySettings | null>(null);
   useEffect(() => {
     let cancelled = false;
     activityApi
       .getSettings()
       .then((s) => {
-        if (!cancelled) setClickupToken(s.clickup.token);
+        if (!cancelled) setSettings(s);
       })
       .catch(() => {});
     return () => {
@@ -129,7 +135,6 @@ export function DashboardOverlay() {
 
   const agoLabel = collectedAgoLabel(status?.lastCollect ?? {}, Math.floor(Date.now() / 1000));
   const hasErrors = (status?.errors.length ?? 0) > 0;
-  const semaine = mode === "week";
   // Les chevrons déplacent d'un jour ou d'une semaine selon le mode ; les
   // raccourcis [ et ] restent, eux, au pas d'un jour.
   const pas = semaine ? 7 : 1;
@@ -217,14 +222,30 @@ export function DashboardOverlay() {
                 Réessayer
               </button>
             </div>
-          ) : mode === "day" ? (
-            <>
-              <SummaryPanel kind="bilan" title="Bilan" onOpenLink={openLink} />
-              <OpenTasks tasks={openTasks} hasToken={clickupToken !== ""} onOpen={openLink} />
-              <SummaryPanel kind="reste_a_faire" title="Reste à faire" onOpenLink={openLink} />
-            </>
           ) : (
-            <SummaryPanel kind="semaine" title="Bilan de la semaine" onOpenLink={openLink} />
+            <>
+              <SummaryPanel
+                title={semaine ? "Bilan de la semaine" : "Bilan"}
+                ui={bilan.ui}
+                generate={bilan.generate}
+                onOpenLink={openLink}
+                schedule={settings?.schedule}
+              />
+              <div className="dash-section">
+                <h2 className="dash-h2">Reste à faire</h2>
+                <OpenTasks
+                  tasks={openTasks}
+                  hasToken={settings !== null && settings.clickup.token !== ""}
+                  onOpen={openLink}
+                />
+                {/* En mode semaine, seuls les tickets restent : le texte du LLM
+                    porte sur la journée. */}
+                {!semaine && <SummaryText ui={reste.ui} onOpenLink={openLink} />}
+              </div>
+              {bilan.ui.status === "ok" && (
+                <p className="dash-footnote">{summaryFooter(bilan.ui.summary)}</p>
+              )}
+            </>
           )}
         </div>
 
