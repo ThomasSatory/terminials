@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchShortcut, paneNavTarget, type KeyLike, type ShortcutAction } from "./shortcuts";
+import { matchShortcut, type KeyLike, type ShortcutAction } from "./shortcuts";
 
 // Fabrique d'événements clavier minimaux (matching par code physique uniquement).
 const k = (code: string, mods: Partial<Omit<KeyLike, "code">> = {}): KeyLike => ({
@@ -17,12 +17,14 @@ describe("matchShortcut — couche Ctrl+Shift (convention gnome-terminal)", () =
   const CASES: Array<[string, ShortcutAction]> = [
     ["KeyO", { type: "open-folder" }],
     ["KeyN", { type: "new-workspace" }],
-    ["KeyT", { type: "new-pane" }],
-    ["KeyW", { type: "close-pane" }],
+    ["KeyT", { type: "new-tab" }],
+    ["KeyW", { type: "close-tab" }],
     ["KeyQ", { type: "close-workspace" }],
     ["KeyR", { type: "rename-workspace" }],
     ["KeyD", { type: "toggle-diff" }],
     ["KeyB", { type: "toggle-sidebar" }],
+    ["KeyG", { type: "new-group" }],
+    ["KeyE", { type: "toggle-group" }],
   ];
   it.each(CASES)("Ctrl+Shift+%s", (code, expected) => {
     expect(matchShortcut(cs(code))).toEqual(expected);
@@ -43,7 +45,7 @@ describe("matchShortcut — couche Ctrl+Shift (convention gnome-terminal)", () =
 });
 
 describe("matchShortcut — refus des Ctrl+lettre nus (réservés à readline)", () => {
-  it.each(["KeyN", "KeyT", "KeyW", "KeyO", "KeyQ", "KeyR", "KeyD", "KeyB", "KeyC", "KeyV"])(
+  it.each(["KeyN", "KeyT", "KeyW", "KeyO", "KeyQ", "KeyR", "KeyD", "KeyB", "KeyG", "KeyE", "KeyC", "KeyV"])(
     "Ctrl+%s nu → null",
     (code) => {
       expect(matchShortcut(c(code))).toBeNull();
@@ -61,11 +63,6 @@ describe("matchShortcut — navigation de workspaces", () => {
     expect(matchShortcut(c("PageDown"))).toEqual({ type: "next-workspace" });
   });
 
-  it("Ctrl+Shift+PageUp/PageDown → null (hors table)", () => {
-    expect(matchShortcut(cs("PageUp"))).toBeNull();
-    expect(matchShortcut(cs("PageDown"))).toBeNull();
-  });
-
   it("Ctrl+Digit1..9 (SANS Shift) → select-workspace 0-based", () => {
     expect(matchShortcut(c("Digit1"))).toEqual({ type: "select-workspace", index: 0 });
     expect(matchShortcut(c("Digit5"))).toEqual({ type: "select-workspace", index: 4 });
@@ -77,12 +74,11 @@ describe("matchShortcut — navigation de workspaces", () => {
     expect(matchShortcut(cs("ArrowDown"))).toEqual({ type: "move-workspace", dir: "down" });
   });
 
-  it("les flèches verticales sans Ctrl+Shift ne déplacent rien", () => {
-    // Ctrl seul et Shift seul restent au shell (readline, sélection) ; Alt+flèches
-    // sont déjà le focus directionnel de pane.
+  it("les flèches verticales sans Ctrl+Shift ne font rien (Alt+↑/↓ rendus au shell)", () => {
     expect(matchShortcut(c("ArrowUp"))).toBeNull();
     expect(matchShortcut(k("ArrowDown", { shiftKey: true }))).toBeNull();
-    expect(matchShortcut(a("ArrowUp"))).toEqual({ type: "focus-pane", dir: "up" });
+    expect(matchShortcut(a("ArrowUp"))).toBeNull();
+    expect(matchShortcut(a("ArrowDown"))).toBeNull();
   });
 
   it("Ctrl+Digit0, Ctrl+Shift+Digit1, Digit1 nu → null", () => {
@@ -92,15 +88,15 @@ describe("matchShortcut — navigation de workspaces", () => {
   });
 });
 
-describe("matchShortcut — focus directionnel Alt+flèches", () => {
-  const DIRS: Array<[string, "left" | "right" | "up" | "down"]> = [
-    ["ArrowLeft", "left"],
-    ["ArrowRight", "right"],
-    ["ArrowUp", "up"],
-    ["ArrowDown", "down"],
-  ];
-  it.each(DIRS)("Alt+%s", (code, dir) => {
-    expect(matchShortcut(a(code))).toEqual({ type: "focus-pane", dir });
+describe("matchShortcut — onglets", () => {
+  it("Alt+←/→ → onglet précédent/suivant", () => {
+    expect(matchShortcut(a("ArrowLeft"))).toEqual({ type: "prev-tab" });
+    expect(matchShortcut(a("ArrowRight"))).toEqual({ type: "next-tab" });
+  });
+
+  it("Ctrl+Shift+PageUp/PageDown → déplacement de l'onglet actif", () => {
+    expect(matchShortcut(cs("PageUp"))).toEqual({ type: "move-tab", dir: "left" });
+    expect(matchShortcut(cs("PageDown"))).toEqual({ type: "move-tab", dir: "right" });
   });
 
   it("Ctrl+Alt+flèche et Alt+Shift+flèche → null", () => {
@@ -110,63 +106,5 @@ describe("matchShortcut — focus directionnel Alt+flèches", () => {
 
   it("flèche nue → null", () => {
     expect(matchShortcut(k("ArrowLeft"))).toBeNull();
-  });
-});
-
-describe("paneNavTarget — géométries de la grille fixe (PaneTree gridStyle)", () => {
-  it("1 pane [a] : aucune direction", () => {
-    for (const dir of ["left", "right", "up", "down"] as const) {
-      expect(paneNavTarget(1, 0, dir)).toBeNull();
-    }
-  });
-
-  it("2 panes [a b]", () => {
-    expect(paneNavTarget(2, 0, "right")).toBe(1);
-    expect(paneNavTarget(2, 1, "left")).toBe(0);
-    expect(paneNavTarget(2, 0, "left")).toBeNull();
-    expect(paneNavTarget(2, 0, "up")).toBeNull();
-    expect(paneNavTarget(2, 0, "down")).toBeNull();
-    expect(paneNavTarget(2, 1, "right")).toBeNull();
-  });
-
-  it("3 panes [a b / c c] (c s'étend sur les 2 colonnes ; up depuis c → a)", () => {
-    expect(paneNavTarget(3, 0, "right")).toBe(1);
-    expect(paneNavTarget(3, 0, "down")).toBe(2);
-    expect(paneNavTarget(3, 1, "left")).toBe(0);
-    expect(paneNavTarget(3, 1, "down")).toBe(2);
-    expect(paneNavTarget(3, 2, "up")).toBe(0);
-    expect(paneNavTarget(3, 0, "left")).toBeNull();
-    expect(paneNavTarget(3, 0, "up")).toBeNull();
-    expect(paneNavTarget(3, 1, "right")).toBeNull();
-    expect(paneNavTarget(3, 1, "up")).toBeNull();
-    expect(paneNavTarget(3, 2, "down")).toBeNull();
-    expect(paneNavTarget(3, 2, "left")).toBeNull();
-    expect(paneNavTarget(3, 2, "right")).toBeNull();
-  });
-
-  it("4 panes [a b / c d]", () => {
-    expect(paneNavTarget(4, 0, "right")).toBe(1);
-    expect(paneNavTarget(4, 0, "down")).toBe(2);
-    expect(paneNavTarget(4, 1, "left")).toBe(0);
-    expect(paneNavTarget(4, 1, "down")).toBe(3);
-    expect(paneNavTarget(4, 2, "right")).toBe(3);
-    expect(paneNavTarget(4, 2, "up")).toBe(0);
-    expect(paneNavTarget(4, 3, "left")).toBe(2);
-    expect(paneNavTarget(4, 3, "up")).toBe(1);
-    expect(paneNavTarget(4, 0, "left")).toBeNull();
-    expect(paneNavTarget(4, 0, "up")).toBeNull();
-    expect(paneNavTarget(4, 1, "right")).toBeNull();
-    expect(paneNavTarget(4, 1, "up")).toBeNull();
-    expect(paneNavTarget(4, 2, "left")).toBeNull();
-    expect(paneNavTarget(4, 2, "down")).toBeNull();
-    expect(paneNavTarget(4, 3, "right")).toBeNull();
-    expect(paneNavTarget(4, 3, "down")).toBeNull();
-  });
-
-  it("count ou current hors géométrie → null", () => {
-    expect(paneNavTarget(4, 4, "left")).toBeNull();
-    expect(paneNavTarget(0, 0, "left")).toBeNull();
-    expect(paneNavTarget(5, 0, "right")).toBeNull();
-    expect(paneNavTarget(2, -1, "right")).toBeNull();
   });
 });

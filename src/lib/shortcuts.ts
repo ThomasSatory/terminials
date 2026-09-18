@@ -7,17 +7,21 @@
 export type ShortcutAction =
   | { type: "open-folder" }
   | { type: "new-workspace" }
-  | { type: "new-pane" }
-  | { type: "close-pane" }
+  | { type: "new-tab" }
+  | { type: "close-tab" }
   | { type: "close-workspace" }
   | { type: "rename-workspace" }
   | { type: "toggle-diff" }
   | { type: "toggle-sidebar" }
+  | { type: "new-group" }
+  | { type: "toggle-group" } // replie/déplie le groupe du workspace actif
   | { type: "prev-workspace" }
   | { type: "next-workspace" }
+  | { type: "prev-tab" }
+  | { type: "next-tab" }
+  | { type: "move-tab"; dir: "left" | "right" } // réordonne l'onglet actif
   | { type: "move-workspace"; dir: "up" | "down" } // réordonne, ne navigue pas
-  | { type: "select-workspace"; index: number } // 0-based, Digit1..Digit9
-  | { type: "focus-pane"; dir: "left" | "right" | "up" | "down" };
+  | { type: "select-workspace"; index: number }; // 0-based, Digit1..Digit9
 
 /** Sous-ensemble de KeyboardEvent nécessaire au matching (testable sans DOM). */
 export interface KeyLike {
@@ -29,19 +33,23 @@ export interface KeyLike {
 
 /** Couche Ctrl+Shift (convention gnome-terminal), indexée par `code` physique.
  *  KeyC et KeyV sont volontairement ABSENTS : Ctrl+Shift+C/V = copier/coller
- *  du terminal. Les flèches verticales y côtoient les lettres : elles déplacent
- *  le workspace actif dans la sidebar (Alt+flèches, elles, focusent un pane). */
+ *  du terminal. Les flèches verticales déplacent le workspace actif dans la
+ *  sidebar ; PageUp/PageDown déplacent l'onglet actif dans sa barre. */
 const CTRL_SHIFT: Record<string, ShortcutAction> = {
   KeyO: { type: "open-folder" },
   KeyN: { type: "new-workspace" }, // nouvel espace direct sur ~, sans dialog
-  KeyT: { type: "new-pane" },
-  KeyW: { type: "close-pane" },
+  KeyT: { type: "new-tab" },
+  KeyW: { type: "close-tab" },
   KeyQ: { type: "close-workspace" },
   KeyR: { type: "rename-workspace" },
   KeyD: { type: "toggle-diff" },
   KeyB: { type: "toggle-sidebar" },
+  KeyG: { type: "new-group" },
+  KeyE: { type: "toggle-group" },
   ArrowUp: { type: "move-workspace", dir: "up" },
   ArrowDown: { type: "move-workspace", dir: "down" },
+  PageUp: { type: "move-tab", dir: "left" },
+  PageDown: { type: "move-tab", dir: "right" },
 };
 
 /**
@@ -52,21 +60,13 @@ const CTRL_SHIFT: Record<string, ShortcutAction> = {
 export function matchShortcut(e: KeyLike): ShortcutAction | null {
   const { code, ctrlKey, shiftKey, altKey } = e;
 
-  // Alt+flèches : focus directionnel de pane (sans Ctrl ni Shift).
+  // Alt+←/→ : onglet précédent/suivant (sans Ctrl ni Shift). Alt+↑/↓ restent
+  // au shell : plus de grille, donc plus de focus directionnel.
   if (altKey) {
     if (ctrlKey || shiftKey) return null;
-    switch (code) {
-      case "ArrowLeft":
-        return { type: "focus-pane", dir: "left" };
-      case "ArrowRight":
-        return { type: "focus-pane", dir: "right" };
-      case "ArrowUp":
-        return { type: "focus-pane", dir: "up" };
-      case "ArrowDown":
-        return { type: "focus-pane", dir: "down" };
-      default:
-        return null;
-    }
+    if (code === "ArrowLeft") return { type: "prev-tab" };
+    if (code === "ArrowRight") return { type: "next-tab" };
+    return null;
   }
 
   if (!ctrlKey) return null;
@@ -80,26 +80,4 @@ export function matchShortcut(e: KeyLike): ShortcutAction | null {
   const digit = /^Digit([1-9])$/.exec(code);
   if (digit) return { type: "select-workspace", index: Number(digit[1]) - 1 };
   return null;
-}
-
-type Dir = "left" | "right" | "up" | "down";
-
-/** Voisin directionnel dans la grille fixe de PaneTree :
- *  1:[a]  2:[a b]  3:[a b / c c]  4:[a b / c d].
- *  Pour 3 panes, « up » depuis c (qui s'étend sur les 2 colonnes) cible a. */
-const NAV_TABLE: Record<number, Array<Partial<Record<Dir, number>>>> = {
-  1: [{}],
-  2: [{ right: 1 }, { left: 0 }],
-  3: [{ right: 1, down: 2 }, { left: 0, down: 2 }, { up: 0 }],
-  4: [
-    { right: 1, down: 2 },
-    { left: 0, down: 3 },
-    { right: 3, up: 0 },
-    { left: 2, up: 1 },
-  ],
-};
-
-/** Index du pane cible, ou null au bord de la grille / hors géométrie. */
-export function paneNavTarget(count: number, current: number, dir: Dir): number | null {
-  return NAV_TABLE[count]?.[current]?.[dir] ?? null;
 }

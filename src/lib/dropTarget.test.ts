@@ -48,10 +48,10 @@ describe("toCssPoint", () => {
 
 describe("resolveTargetPty", () => {
   const state = {
-    panePtys: { p1: 11, p2: 22 },
+    tabPtys: { p1: 11, p2: 22 },
     workspaces: [
-      { id: "w1", activePaneId: "p1" },
-      { id: "w2", activePaneId: "p2" },
+      { id: "w1", activeTabId: "p1" },
+      { id: "w2", activeTabId: "p2" },
     ],
     activeId: "w2",
   };

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dropBoundary, finalIndex, moveItem, type RowRect } from "./reorder";
+import { dropBoundary, finalIndex, moveItem, resolveDrop, type RowRect, type SidebarRow } from "./reorder";
 
 /** Trois lignes de 40 px collées, comme la sidebar : [0,40[ [40,80[ [80,120[. */
 const ROWS: RowRect[] = [
@@ -107,5 +107,59 @@ describe("moveItem", () => {
     const arr = ["a", "b"];
     expect(moveItem(arr, 0, 2)).toBe(arr);
     expect(moveItem(arr, 0, -1)).toBe(arr);
+  });
+});
+
+describe("resolveDrop — sidebar à groupes", () => {
+  // Lignes de 40 px : [x hors-groupe] [en-tête G] [a∈G] [b∈G] [en-tête H (replié)]
+  const ROWS_G: SidebarRow[] = [
+    { top: 0, height: 40, kind: "ws", groupId: null },
+    { top: 40, height: 40, kind: "group", groupId: "G" },
+    { top: 80, height: 40, kind: "ws", groupId: "G" },
+    { top: 120, height: 40, kind: "ws", groupId: "G" },
+    { top: 160, height: 40, kind: "group", groupId: "H" },
+  ];
+
+  it("au-dessus de tout → hors-groupe, index 0", () => {
+    expect(resolveDrop(ROWS_G, -5, "ws")).toEqual({ kind: "workspace", groupId: null, index: 0, boundary: 0 });
+  });
+
+  it("moitié basse d'un hors-groupe → hors-groupe, après lui", () => {
+    expect(resolveDrop(ROWS_G, 30, "ws")).toEqual({ kind: "workspace", groupId: null, index: 1, boundary: 1 });
+  });
+
+  it("DANS un en-tête → into-group (fin du groupe), même replié", () => {
+    expect(resolveDrop(ROWS_G, 50, "ws")).toEqual({ kind: "into-group", groupId: "G" });
+    expect(resolveDrop(ROWS_G, 199, "ws")).toEqual({ kind: "into-group", groupId: "H" });
+  });
+
+  it("entre deux membres d'un groupe → index dans le groupe", () => {
+    // moitié basse de a (y=110) → frontière 3 → après a → index 1 dans G
+    expect(resolveDrop(ROWS_G, 110, "ws")).toEqual({ kind: "workspace", groupId: "G", index: 1, boundary: 3 });
+    // moitié haute de a (y=85) → frontière 2, ligne au-dessus = en-tête G → tête de G
+    expect(resolveDrop(ROWS_G, 85, "ws")).toEqual({ kind: "workspace", groupId: "G", index: 0, boundary: 2 });
+  });
+
+  it("sous le dernier membre d'un groupe → fin de ce groupe", () => {
+    expect(resolveDrop(ROWS_G, 150, "ws")).toEqual({ kind: "workspace", groupId: "G", index: 2, boundary: 4 });
+  });
+
+  it("sous tout, dernier élément = en-tête replié → tête de ce groupe", () => {
+    expect(resolveDrop(ROWS_G, 500, "ws")).toEqual({ kind: "workspace", groupId: "H", index: 0, boundary: 5 });
+  });
+
+  it("groupe tiré : seules les frontières entre en-têtes comptent", () => {
+    // au-dessus de l'en-tête G (dans le hors-groupe) → index 0, trait avant G (ligne 1)
+    expect(resolveDrop(ROWS_G, 10, "group")).toEqual({ kind: "group", index: 0, boundary: 1 });
+    // au milieu des membres de G → après G, avant H → index 1, trait avant H (ligne 4)
+    expect(resolveDrop(ROWS_G, 100, "group")).toEqual({ kind: "group", index: 1, boundary: 4 });
+    // sous H → index 2, trait en fin
+    expect(resolveDrop(ROWS_G, 500, "group")).toEqual({ kind: "group", index: 2, boundary: 5 });
+  });
+
+  it("liste sans groupe : dégénère en dropBoundary", () => {
+    const flat: SidebarRow[] = ROWS.map((r) => ({ ...r, kind: "ws", groupId: null }));
+    expect(resolveDrop(flat, 75, "ws")).toEqual({ kind: "workspace", groupId: null, index: 2, boundary: 2 });
+    expect(resolveDrop(flat, 75, "group")).toEqual({ kind: "group", index: 0, boundary: 3 });
   });
 });

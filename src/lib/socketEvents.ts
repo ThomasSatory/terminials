@@ -46,13 +46,13 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
   const p2 = listen<AgentNotification>("agent-notification", (e) => {
     const s = store();
     const { workspaceId, ptyId, title, body } = e.payload;
-    // Inversion panePtys (ptyId → paneId) : cible le pane émetteur (anneau bleu).
-    // Pane introuvable (fermé entre-temps, ptyId absent) → fallback unread
-    // au niveau workspace (setNotification sans paneId).
+    // Inversion tabPtys (ptyId → tabId) : cible l’onglet émetteur (point bleu).
+    // Onglet introuvable (fermé entre-temps, ptyId absent) → fallback unread
+    // au niveau workspace (setNotification sans tabId).
     const entry =
       ptyId === undefined
         ? undefined
-        : Object.entries(s.panePtys).find(([, id]) => id === ptyId);
+        : Object.entries(s.tabPtys).find(([, id]) => id === ptyId);
     s.setNotification(workspaceId, { title, body }, entry?.[0]);
   });
 
