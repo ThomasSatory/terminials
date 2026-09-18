@@ -1,17 +1,20 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   useWorkspaceStore,
-  MAX_PANES,
   hasAttention,
-  loadSavedWorkspaces,
+  groupHasAttention,
+  sidebarOrder,
+  navigableOrder,
+  loadSavedState,
   getLastFolder,
   setLastFolder,
-  type SavedWorkspace,
+  type SavedState,
 } from "./workspace";
 import { PALETTE, basename } from "../lib/palette";
 
 const store = () => useWorkspaceStore.getState();
 const ws = (id: string) => store().workspaces.find((w) => w.id === id)!;
+const tabIds = (id: string) => ws(id).tabs.map((t) => t.id);
 
 /** Stub localStorage minimal (les tests tournent en environnement node, sans DOM). */
 function localStorageStub(): Storage {
@@ -35,13 +38,14 @@ function localStorageStub(): Storage {
 describe("workspace store", () => {
   beforeEach(() => store().reset());
 
-  it("crée un workspace avec 1 pane, nom = basename, couleur de la palette", () => {
+  it("crée un workspace avec 1 onglet, nom = basename, couleur de la palette, hors-groupe", () => {
     const id = store().addWorkspace("/home/x/dev/terminals");
     const w = ws(id);
     expect(w.cwd).toBe("/home/x/dev/terminals");
     expect(w.name).toBe(basename("/home/x/dev/terminals"));
-    expect(w.panes).toHaveLength(1);
-    expect(w.activePaneId).toBe(w.panes[0]);
+    expect(w.tabs).toHaveLength(1);
+    expect(w.activeTabId).toBe(w.tabs[0].id);
+    expect(w.groupId).toBeNull();
     expect(PALETTE).toContain(w.color);
   });
 
@@ -52,50 +56,76 @@ describe("workspace store", () => {
     expect(b.color).toBe(PALETTE[1]);
   });
 
-  it("ajoute des panes jusqu'à MAX_PANES puis refuse", () => {
+  it("addTab n'a pas de limite et rend le nouvel onglet actif", () => {
     const id = store().addWorkspace("/tmp");
-    expect(store().addPane(id)).toBe(true); // 2
-    expect(store().addPane(id)).toBe(true); // 3
-    expect(store().addPane(id)).toBe(true); // 4
-    expect(ws(id).panes).toHaveLength(MAX_PANES);
-    expect(store().addPane(id)).toBe(false); // 5e refusé
-    expect(ws(id).panes).toHaveLength(MAX_PANES);
+    for (let i = 0; i < 6; i++) store().addTab(id);
+    expect(ws(id).tabs).toHaveLength(7);
+    expect(ws(id).activeTabId).toBe(ws(id).tabs[6].id);
   });
 
-  it("addPane rend le nouveau pane actif", () => {
+  it("closeTab ferme un onglet ; fermer le dernier ferme le workspace", () => {
     const id = store().addWorkspace("/tmp");
-    store().addPane(id);
-    const w = ws(id);
-    expect(w.activePaneId).toBe(w.panes[1]);
+    store().addTab(id);
+    store().closeTab(id, tabIds(id)[1]);
+    expect(ws(id).tabs).toHaveLength(1);
+    store().closeTab(id, tabIds(id)[0]);
+    expect(store().workspaces).toEqual([]);
+    expect(store().activeId).toBeNull();
   });
 
-  it("ferme un pane, re-flow, jamais en dessous de 1", () => {
+  it("closeTab de l'onglet actif active le voisin de GAUCHE", () => {
     const id = store().addWorkspace("/tmp");
-    store().addPane(id);
-    const second = ws(id).panes[1];
-    store().closePane(id, second);
-    expect(ws(id).panes).toHaveLength(1);
-    const last = ws(id).panes[0];
-    store().closePane(id, last); // fermer le dernier = no-op
-    expect(ws(id).panes).toHaveLength(1);
+    store().addTab(id);
+    store().addTab(id); // tabs = [t0, t1, t2], actif t2
+    store().closeTab(id, tabIds(id)[2]);
+    expect(ws(id).activeTabId).toBe(tabIds(id)[1]);
   });
 
-  it("recalcule le pane actif si l'actif est fermé", () => {
+  it("closeTab du premier onglet actif active celui qui prend sa place", () => {
     const id = store().addWorkspace("/tmp");
-    store().addPane(id); // actif = panes[1]
-    store().closePane(id, ws(id).activePaneId!);
-    expect(ws(id).activePaneId).toBe(ws(id).panes[0]);
+    store().addTab(id);
+    const [t0, t1] = tabIds(id);
+    store().setActiveTab(id, t0);
+    store().closeTab(id, t0);
+    expect(ws(id).activeTabId).toBe(t1);
   });
 
-  it("recalcule le pane actif en fermant un pane du milieu", () => {
+  it("closeTab d'un onglet inactif ne change pas l'actif", () => {
     const id = store().addWorkspace("/tmp");
-    store().addPane(id); // 2
-    store().addPane(id); // 3 → panes = [p0, p1, p2]
-    const middle = ws(id).panes[1];
-    store().setActivePane(id, middle);
-    store().closePane(id, middle);
-    expect(ws(id).panes).toHaveLength(2);
-    expect(ws(id).activePaneId).toBe(ws(id).panes[0]);
+    store().addTab(id);
+    store().addTab(id); // actif t2
+    const [t0, , t2] = tabIds(id);
+    store().closeTab(id, t0);
+    expect(ws(id).activeTabId).toBe(t2);
+    expect(ws(id).tabs).toHaveLength(2);
+  });
+
+  it("closeTab d'un id inconnu est un no-op", () => {
+    const id = store().addWorkspace("/tmp");
+    store().closeTab(id, "tab:fantome");
+    expect(ws(id).tabs).toHaveLength(1);
+  });
+
+  it("moveTab réordonne les onglets, no-op hors bornes", () => {
+    const id = store().addWorkspace("/tmp");
+    store().addTab(id);
+    store().addTab(id);
+    const [t0, t1, t2] = tabIds(id);
+    store().moveTab(id, t0, 2);
+    expect(tabIds(id)).toEqual([t1, t2, t0]);
+    const before = ws(id);
+    store().moveTab(id, t0, 7);
+    expect(ws(id)).toBe(before);
+  });
+
+  it("setTabTitle pose le titre, idempotent sur la même valeur", () => {
+    const id = store().addWorkspace("/tmp");
+    const t0 = tabIds(id)[0];
+    store().setTabTitle(id, t0, "vim");
+    expect(ws(id).tabs[0].title).toBe("vim");
+    const before = store().workspaces;
+    store().setTabTitle(id, t0, "vim");
+    expect(store().workspaces).toBe(before);
   });
 
   it("renomme un workspace, nom vide retombe sur le basename", () => {
@@ -120,12 +150,12 @@ describe("workspace store", () => {
     expect(ws(id).name).toBe("app");
   });
 
-  it("setCwd ne touche que le workspace visé, et pas ses panes", () => {
+  it("setCwd ne touche que le workspace visé, et pas ses onglets", () => {
     const a = store().addWorkspace("/a");
     const b = store().addWorkspace("/b");
-    const panes = ws(a).panes;
+    const tabs = ws(a).tabs;
     store().setCwd(a, "/c");
-    expect(ws(a).panes).toEqual(panes);
+    expect(ws(a).tabs).toEqual(tabs);
     expect(ws(b).cwd).toBe("/b");
   });
 
@@ -135,11 +165,11 @@ describe("workspace store", () => {
     expect(ws(id).color).toBe("#123456");
   });
 
-  it("setNotification sans paneId pose le fallback unread + lastNotification", () => {
+  it("setNotification sans tabId pose le fallback unread + lastNotification", () => {
     const id = store().addWorkspace("/tmp");
     store().setNotification(id, { title: "x", body: "y" });
     expect(ws(id).unread).toBe(true);
-    expect(ws(id).unreadPanes).toEqual([]);
+    expect(ws(id).unreadTabs).toEqual([]);
     expect(ws(id).lastNotification).toEqual({ title: "x", body: "y" });
   });
 
@@ -152,61 +182,61 @@ describe("workspace store", () => {
     expect(ws(a).unread).toBe(false);
   });
 
-  it("setNotification avec paneId allume l'anneau du pane sans fallback", () => {
+  it("setNotification avec tabId allume le point de l'onglet sans fallback", () => {
     const id = store().addWorkspace("/tmp");
-    store().addPane(id); // panes = [p0, p1]
-    const p0 = ws(id).panes[0];
-    store().setNotification(id, { title: "n", body: "" }, p0);
-    expect(ws(id).unreadPanes).toEqual([p0]);
+    store().addTab(id);
+    const t0 = tabIds(id)[0];
+    store().setNotification(id, { title: "n", body: "" }, t0);
+    expect(ws(id).unreadTabs).toEqual([t0]);
     expect(ws(id).unread).toBe(false);
     expect(ws(id).lastNotification).toEqual({ title: "n", body: "" });
-    // idempotent : pas de doublon dans unreadPanes
-    store().setNotification(id, { title: "n2", body: "" }, p0);
-    expect(ws(id).unreadPanes).toEqual([p0]);
+    // idempotent : pas de doublon dans unreadTabs
+    store().setNotification(id, { title: "n2", body: "" }, t0);
+    expect(ws(id).unreadTabs).toEqual([t0]);
   });
 
-  it("setNotification avec un paneId inconnu retombe sur le fallback workspace", () => {
+  it("setNotification avec un tabId inconnu retombe sur le fallback workspace", () => {
     const id = store().addWorkspace("/tmp");
-    store().setNotification(id, { title: "n", body: "" }, "pane:fantome");
-    expect(ws(id).unreadPanes).toEqual([]);
+    store().setNotification(id, { title: "n", body: "" }, "tab:fantome");
+    expect(ws(id).unreadTabs).toEqual([]);
     expect(ws(id).unread).toBe(true);
   });
 
-  it("setActivePane éteint l'anneau du pane focusé, et seulement lui", () => {
+  it("setActiveTab éteint le point de l'onglet focusé, et seulement lui", () => {
     const id = store().addWorkspace("/tmp");
-    store().addPane(id);
-    const [p0, p1] = ws(id).panes;
-    store().setNotification(id, { title: "a", body: "" }, p0);
-    store().setNotification(id, { title: "b", body: "" }, p1);
-    store().setActivePane(id, p0);
-    expect(ws(id).unreadPanes).toEqual([p1]);
-    expect(ws(id).activePaneId).toBe(p0);
+    store().addTab(id);
+    const [t0, t1] = tabIds(id);
+    store().setNotification(id, { title: "a", body: "" }, t0);
+    store().setNotification(id, { title: "b", body: "" }, t1);
+    store().setActiveTab(id, t0);
+    expect(ws(id).unreadTabs).toEqual([t1]);
+    expect(ws(id).activeTabId).toBe(t0);
   });
 
-  it("setActive ne touche pas aux anneaux par pane", () => {
+  it("setActive ne touche pas aux points par onglet", () => {
     const a = store().addWorkspace("/a");
     store().addWorkspace("/b");
-    const p0 = ws(a).panes[0];
-    store().setNotification(a, { title: "n", body: "" }, p0);
+    const t0 = tabIds(a)[0];
+    store().setNotification(a, { title: "n", body: "" }, t0);
     store().setActive(a);
-    expect(ws(a).unreadPanes).toEqual([p0]);
+    expect(ws(a).unreadTabs).toEqual([t0]);
   });
 
-  it("closePane purge l'anneau du pane fermé", () => {
+  it("closeTab purge le point de l'onglet fermé", () => {
     const id = store().addWorkspace("/tmp");
-    store().addPane(id);
-    const p1 = ws(id).panes[1];
-    store().setNotification(id, { title: "n", body: "" }, p1);
-    store().closePane(id, p1);
-    expect(ws(id).unreadPanes).toEqual([]);
+    store().addTab(id);
+    const t1 = tabIds(id)[1];
+    store().setNotification(id, { title: "n", body: "" }, t1);
+    store().closeTab(id, t1);
+    expect(ws(id).unreadTabs).toEqual([]);
   });
 
-  it("hasAttention dérive fallback OU anneaux par pane", () => {
+  it("hasAttention dérive fallback OU points par onglet", () => {
     const id = store().addWorkspace("/tmp");
     expect(hasAttention(ws(id))).toBe(false);
-    store().setNotification(id, { title: "n", body: "" }, ws(id).panes[0]);
+    store().setNotification(id, { title: "n", body: "" }, tabIds(id)[0]);
     expect(hasAttention(ws(id))).toBe(true);
-    store().setActivePane(id, ws(id).panes[0]);
+    store().setActiveTab(id, tabIds(id)[0]);
     expect(hasAttention(ws(id))).toBe(false);
     store().setNotification(id, { title: "n", body: "" });
     expect(hasAttention(ws(id))).toBe(true);
@@ -266,6 +296,15 @@ describe("workspace store", () => {
     expect(store().newWorkspaceRequested).toBe(false);
   });
 
+
+  it("reset vide aussi les groupes et newGroupRequested", () => {
+    store().addGroup("g");
+    store().requestNewGroup(true);
+    store().reset();
+    expect(store().groups).toEqual([]);
+    expect(store().newGroupRequested).toBe(false);
+  });
+
   it("closeWorkspace du ws actif du milieu active le voisin précédent", () => {
     const a = store().addWorkspace("/a");
     const b = store().addWorkspace("/b");
@@ -299,17 +338,30 @@ describe("workspace store", () => {
     expect(store().workspaces.map((w) => w.id)).toEqual([b]);
   });
 
-  it("closeWorkspace purge les panePtys du ws fermé, pas ceux des autres", () => {
-    const a = store().addWorkspace("/a");
-    store().addPane(a);
+  it("closeWorkspace réactive le voisin dans l'ordre VISIBLE (groupes), pas dans le tableau", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a"); // hors-groupe
     const b = store().addWorkspace("/b");
-    const [pa0, pa1] = ws(a).panes;
-    const pb0 = ws(b).panes[0];
-    store().setPanePty(pa0, 10);
-    store().setPanePty(pa1, 11);
-    store().setPanePty(pb0, 20);
+    store().assignToGroup(b, g);
+    const c = store().addWorkspace("/c"); // hérite du groupe de b (actif)
+    // tableau : [a, b, c] ; visible : [a | g: b, c]. On fermera c : voisin visible = b.
+    store().setActive(c);
+    store().closeWorkspace(c);
+    expect(store().activeId).toBe(b);
+    expect(a).toBeTruthy();
+  });
+
+  it("closeWorkspace purge les tabPtys du ws fermé, pas ceux des autres", () => {
+    const a = store().addWorkspace("/a");
+    store().addTab(a);
+    const b = store().addWorkspace("/b");
+    const [ta0, ta1] = tabIds(a);
+    const tb0 = tabIds(b)[0];
+    store().setTabPty(ta0, 10);
+    store().setTabPty(ta1, 11);
+    store().setTabPty(tb0, 20);
     store().closeWorkspace(a);
-    expect(store().panePtys).toEqual({ [pb0]: 20 });
+    expect(store().tabPtys).toEqual({ [tb0]: 20 });
   });
 
   it("closeWorkspace d'un id inconnu est un no-op", () => {
@@ -361,12 +413,151 @@ describe("moveWorkspace", () => {
     store().moveWorkspace(a, -1);
     expect(store().workspaces.map((w) => w.cwd)).toEqual(["/a", "/b"]);
   });
+
+  it("l'index est relatif à l'APPARTENANCE : les hors-groupe ne bougent pas", () => {
+    const g = store().addGroup("g");
+    store().addWorkspace("/x"); // hors-groupe
+    const a = store().addWorkspace("/a");
+    store().assignToGroup(a, g);
+    const b = store().addWorkspace("/b"); // dans g (hérité)
+    const c = store().addWorkspace("/c"); // dans g
+    store().moveWorkspace(c, 0); // en tête DU GROUPE
+    const order = sidebarOrder(store().workspaces, store().groups).map((w) => w.cwd);
+    expect(order).toEqual(["/x", "/c", "/a", "/b"]);
+    expect(store().workspaces.find((w) => w.id === b)?.groupId).toBe(g);
+  });
 });
 
-describe("persistance v2", () => {
+describe("groupes", () => {
+  beforeEach(() => store().reset());
+  const cwds = (list: { cwd: string }[]) => list.map((w) => w.cwd);
+
+  it("addGroup crée un groupe déplié, nom vide → « Groupe », couleur de la palette", () => {
+    const g = store().addGroup("  ");
+    expect(store().groups).toEqual([{ id: g, name: "Groupe", color: PALETTE[0], collapsed: false }]);
+    const h = store().addGroup("h", "#123456");
+    expect(store().groups[1]).toMatchObject({ name: "h", color: "#123456" });
+  });
+
+  it("renameGroup, setGroupColor, toggleGroupCollapsed", () => {
+    const g = store().addGroup("g");
+    store().renameGroup(g, " projet ");
+    store().renameGroup(g, "  "); // vide ignoré
+    store().setGroupColor(g, "#abcdef");
+    store().toggleGroupCollapsed(g);
+    expect(store().groups[0]).toMatchObject({ name: "projet", color: "#abcdef", collapsed: true });
+    store().toggleGroupCollapsed(g);
+    expect(store().groups[0].collapsed).toBe(false);
+  });
+
+  it("assignToGroup place le workspace à l'index demandé dans le groupe", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    const c = store().addWorkspace("/c");
+    store().assignToGroup(a, g);
+    store().assignToGroup(b, g);
+    store().assignToGroup(c, g, 0); // en tête du groupe
+    expect(cwds(sidebarOrder(store().workspaces, store().groups))).toEqual(["/c", "/a", "/b"]);
+    expect(store().workspaces.every((w) => w.groupId === g)).toBe(true);
+  });
+
+  it("assignToGroup(null) dégroupe et place parmi les hors-groupe", () => {
+    const g = store().addGroup("g");
+    const x = store().addWorkspace("/x");
+    const a = store().addWorkspace("/a");
+    store().assignToGroup(a, g);
+    store().assignToGroup(a, null, 0);
+    expect(ws(a).groupId).toBeNull();
+    expect(cwds(sidebarOrder(store().workspaces, store().groups))).toEqual(["/a", "/x"]);
+    expect(x).toBeTruthy();
+  });
+
+  it("assignToGroup vers un groupe inconnu est un no-op", () => {
+    const a = store().addWorkspace("/a");
+    const before = store().workspaces;
+    store().assignToGroup(a, "grp:fantome");
+    expect(store().workspaces).toBe(before);
+  });
+
+  it("addWorkspace hérite du groupe du workspace actif et s'insère en fin de groupe", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a");
+    store().assignToGroup(a, g);
+    const x = store().addWorkspace("/x"); // hérite de g (a actif)
+    expect(ws(x).groupId).toBe(g);
+    store().setActive(a);
+    const y = store().addWorkspace("/y");
+    expect(cwds(sidebarOrder(store().workspaces, store().groups))).toEqual(["/a", "/x", "/y"]);
+    expect(y).toBeTruthy();
+  });
+
+  it("removeGroup dégroupe ses workspaces sans les fermer ni toucher aux onglets", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a");
+    store().addTab(a);
+    store().assignToGroup(a, g);
+    const tabs = ws(a).tabs;
+    store().removeGroup(g);
+    expect(store().groups).toEqual([]);
+    expect(ws(a).groupId).toBeNull();
+    expect(ws(a).tabs).toBe(tabs);
+  });
+
+  it("moveGroup réordonne les groupes, no-op hors bornes", () => {
+    const g = store().addGroup("g");
+    const h = store().addGroup("h");
+    store().moveGroup(h, 0);
+    expect(store().groups.map((x) => x.id)).toEqual([h, g]);
+    const before = store().groups;
+    store().moveGroup(h, 5);
+    expect(store().groups).toBe(before);
+  });
+
+  it("sidebarOrder : hors-groupe d'abord, puis les groupes dans leur ordre", () => {
+    const g = store().addGroup("g");
+    const h = store().addGroup("h");
+    const a = store().addWorkspace("/a");
+    store().assignToGroup(a, h);
+    store().addWorkspace("/b"); // dans h (hérité)
+    store().setActive(a);
+    const c = store().addWorkspace("/c");
+    store().assignToGroup(c, g);
+    const d = store().addWorkspace("/d");
+    store().assignToGroup(d, null);
+    expect(cwds(sidebarOrder(store().workspaces, store().groups))).toEqual(["/d", "/c", "/a", "/b"]);
+    store().moveGroup(h, 0);
+    expect(cwds(sidebarOrder(store().workspaces, store().groups))).toEqual(["/d", "/a", "/b", "/c"]);
+  });
+
+  it("navigableOrder saute les workspaces des groupes repliés", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a");
+    store().assignToGroup(a, g);
+    store().addWorkspace("/b"); // dans g
+    const c = store().addWorkspace("/c");
+    store().assignToGroup(c, null);
+    store().toggleGroupCollapsed(g);
+    expect(cwds(navigableOrder(store().workspaces, store().groups))).toEqual(["/c"]);
+    store().toggleGroupCollapsed(g);
+    expect(cwds(navigableOrder(store().workspaces, store().groups))).toEqual(["/c", "/a", "/b"]);
+  });
+
+  it("groupHasAttention remonte l'attention d'un membre", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a");
+    store().assignToGroup(a, g);
+    expect(groupHasAttention(store().workspaces, g)).toBe(false);
+    store().setNotification(a, { title: "n", body: "" }, tabIds(a)[0]);
+    expect(groupHasAttention(store().workspaces, g)).toBe(true);
+  });
+});
+
+describe("persistance v3", () => {
+  const V3_KEY = "terminials:workspaces:v3";
   const V2_KEY = "terminials:workspaces:v2";
-  const saved = (): SavedWorkspace[] =>
-    JSON.parse(localStorage.getItem(V2_KEY) ?? "[]") as SavedWorkspace[];
+  const saved = (): SavedState =>
+    JSON.parse(localStorage.getItem(V3_KEY) ?? '{"groups":[],"workspaces":[]}') as SavedState;
 
   beforeEach(() => {
     (globalThis as { localStorage?: Storage }).localStorage = localStorageStub();
@@ -377,126 +568,175 @@ describe("persistance v2", () => {
     delete (globalThis as { localStorage?: Storage }).localStorage;
   });
 
-  it("addWorkspace écrit la liste ordonnée {cwd,name,color,paneCount}", () => {
+  it("addWorkspace écrit {groups, workspaces} avec tabCount et groupIndex", () => {
     store().addWorkspace("/a");
     store().addWorkspace("/b");
-    expect(saved()).toEqual([
-      { cwd: "/a", name: "a", color: PALETTE[0], paneCount: 1 },
-      { cwd: "/b", name: "b", color: PALETTE[1], paneCount: 1 },
-    ]);
+    expect(saved()).toEqual({
+      groups: [],
+      workspaces: [
+        { cwd: "/a", name: "a", color: PALETTE[0], tabCount: 1, groupIndex: null },
+        { cwd: "/b", name: "b", color: PALETTE[1], tabCount: 1, groupIndex: null },
+      ],
+    });
   });
 
-  it("addPane et closePane réécrivent paneCount", () => {
+  it("addTab et closeTab réécrivent tabCount", () => {
     const id = store().addWorkspace("/a");
-    store().addPane(id);
-    expect(saved()[0].paneCount).toBe(2);
-    store().closePane(id, ws(id).panes[1]);
-    expect(saved()[0].paneCount).toBe(1);
+    store().addTab(id);
+    expect(saved().workspaces[0].tabCount).toBe(2);
+    store().closeTab(id, tabIds(id)[1]);
+    expect(saved().workspaces[0].tabCount).toBe(1);
   });
 
-  it("renameWorkspace et setColor réécrivent la sauvegarde", () => {
-    const id = store().addWorkspace("/a");
-    store().renameWorkspace(id, "agent");
-    store().setColor(id, "#123456");
-    expect(saved()[0]).toEqual({ cwd: "/a", name: "agent", color: "#123456", paneCount: 1 });
-  });
-
-  it("setCwd réécrit la sauvegarde", () => {
-    const id = store().addWorkspace("/a", "agent");
-    store().setCwd(id, "/b");
-    expect(saved()[0].cwd).toBe("/b");
-  });
-
-  it("moveWorkspace réécrit l'ordre persisté (l'ordre survit au redémarrage)", () => {
+  it("les groupes et l'appartenance sont persistés (index dans groups)", () => {
+    const g = store().addGroup("g", "#111111");
+    const h = store().addGroup("h", "#222222");
     const a = store().addWorkspace("/a");
+    store().assignToGroup(a, h);
+    store().toggleGroupCollapsed(g);
+    expect(saved().groups).toEqual([
+      { name: "g", color: "#111111", collapsed: true },
+      { name: "h", color: "#222222", collapsed: false },
+    ]);
+    expect(saved().workspaces[0].groupIndex).toBe(1);
+    store().removeGroup(g);
+    expect(saved().groups).toHaveLength(1);
+    expect(saved().workspaces[0].groupIndex).toBe(0);
+  });
+
+  it("renameWorkspace, setColor, setCwd, moveWorkspace, closeWorkspace réécrivent la sauvegarde", () => {
+    const a = store().addWorkspace("/a");
+    store().renameWorkspace(a, "agent");
+    store().setColor(a, "#123456");
+    expect(saved().workspaces[0]).toMatchObject({ cwd: "/a", name: "agent", color: "#123456" });
+    store().setCwd(a, "/z");
+    expect(saved().workspaces[0].cwd).toBe("/z");
     store().addWorkspace("/b");
     store().moveWorkspace(a, 1);
-    expect(saved().map((e) => e.cwd)).toEqual(["/b", "/a"]);
-  });
-
-  it("closeWorkspace retire l'entrée persistée", () => {
-    const a = store().addWorkspace("/a");
-    store().addWorkspace("/b");
+    expect(saved().workspaces.map((e) => e.cwd)).toEqual(["/b", "/z"]);
     store().closeWorkspace(a);
-    expect(saved().map((e) => e.cwd)).toEqual(["/b"]);
+    expect(saved().workspaces.map((e) => e.cwd)).toEqual(["/b"]);
   });
 
-  it("l'ancienne clé v1 n'est plus écrite", () => {
-    const id = store().addWorkspace("/a");
-    store().renameWorkspace(id, "agent");
-    store().setColor(id, "#123456");
-    expect(localStorage.getItem("terminials:workspaces")).toBeNull();
-  });
-
-  it("loadSavedWorkspaces relit la sauvegarde et filtre le JSON invalide", () => {
+  it("les anciennes clés v1/v2 ne sont plus écrites", () => {
     store().addWorkspace("/a");
-    expect(loadSavedWorkspaces()).toEqual([
-      { cwd: "/a", name: "a", color: PALETTE[0], paneCount: 1 },
-    ]);
-    localStorage.setItem(V2_KEY, "{pas du json");
-    expect(loadSavedWorkspaces()).toEqual([]);
+    expect(localStorage.getItem("terminials:workspaces")).toBeNull();
+    expect(localStorage.getItem(V2_KEY)).toBeNull();
+  });
+
+  it("loadSavedState relit la sauvegarde et filtre le JSON invalide", () => {
+    store().addWorkspace("/a");
+    expect(loadSavedState()).toEqual({
+      groups: [],
+      workspaces: [{ cwd: "/a", name: "a", color: PALETTE[0], tabCount: 1, groupIndex: null }],
+    });
+    localStorage.setItem(V3_KEY, "{pas du json");
+    expect(loadSavedState()).toEqual({ groups: [], workspaces: [] });
+    localStorage.setItem(
+      V3_KEY,
+      JSON.stringify({
+        groups: [{ name: "g", color: "#1" }, { nope: 1 }],
+        workspaces: [
+          { cwd: "/ok", name: "ok", color: "#111111", tabCount: 2, groupIndex: 0 },
+          { cwd: "/hors", name: "h", color: "#111111", tabCount: 1, groupIndex: 9 }, // index invalide → null
+          { n: 1 },
+        ],
+      }),
+    );
+    expect(loadSavedState()).toEqual({
+      groups: [{ name: "g", color: "#1", collapsed: false }],
+      workspaces: [
+        { cwd: "/ok", name: "ok", color: "#111111", tabCount: 2, groupIndex: 0 },
+        { cwd: "/hors", name: "h", color: "#111111", tabCount: 1, groupIndex: null },
+      ],
+    });
+  });
+
+  it("migration v2 → v3 : paneCount devient tabCount, tout hors-groupe, clé v2 supprimée", () => {
     localStorage.setItem(
       V2_KEY,
-      JSON.stringify([{ cwd: "/ok", name: "ok", color: "#111111", paneCount: 2 }, { n: 1 }]),
+      JSON.stringify([{ cwd: "/a", name: "a", color: "#111111", paneCount: 3 }, { n: 1 }]),
     );
-    expect(loadSavedWorkspaces()).toEqual([
-      { cwd: "/ok", name: "ok", color: "#111111", paneCount: 2 },
-    ]);
+    expect(loadSavedState()).toEqual({
+      groups: [],
+      workspaces: [{ cwd: "/a", name: "a", color: "#111111", tabCount: 3, groupIndex: null }],
+    });
+    expect(localStorage.getItem(V2_KEY)).toBeNull();
   });
 
-  it("restoreWorkspaces recrée les workspaces : ids frais, paneCount clampé, actif = premier", () => {
-    store().restoreWorkspaces([
-      { cwd: "/a", name: "agent", color: "#123456", paneCount: 2 },
-      { cwd: "/b", name: "b", color: "#654321", paneCount: 9 },
-      { cwd: "/c", name: "c", color: "#111111", paneCount: 0 },
-    ]);
+  it("un v3 présent (même vide) prime sur un v2 résiduel", () => {
+    localStorage.setItem(V2_KEY, JSON.stringify([{ cwd: "/old", name: "o", color: "#1", paneCount: 1 }]));
+    localStorage.setItem(V3_KEY, JSON.stringify({ groups: [], workspaces: [] }));
+    expect(loadSavedState()).toEqual({ groups: [], workspaces: [] });
+  });
+
+  it("restoreState recrée groupes et workspaces : ids frais, tabCount ≥ 1, appartenance, actif = premier", () => {
+    store().restoreState({
+      groups: [{ name: "g", color: "#0000ff", collapsed: true }],
+      workspaces: [
+        { cwd: "/a", name: "agent", color: "#123456", tabCount: 2, groupIndex: 0 },
+        { cwd: "/b", name: "b", color: "#654321", tabCount: 9, groupIndex: null },
+        { cwd: "/c", name: "c", color: "#111111", tabCount: 0, groupIndex: null },
+      ],
+    });
     const [a, b, c] = store().workspaces;
+    const [g] = store().groups;
+    expect(g).toMatchObject({ name: "g", color: "#0000ff", collapsed: true });
     expect(store().activeId).toBe(a.id);
     expect(a).toMatchObject({
       cwd: "/a",
       name: "agent",
       color: "#123456",
+      groupId: g.id,
       unread: false,
-      unreadPanes: [],
+      unreadTabs: [],
       diffOpen: false,
       ports: [],
     });
-    expect(a.panes).toHaveLength(2);
-    expect(a.activePaneId).toBe(a.panes[0]);
-    expect(b.panes).toHaveLength(MAX_PANES); // paneCount aberrant clampé à MAX_PANES
-    expect(c.panes).toHaveLength(1); // et au minimum 1
+    expect(a.tabs).toHaveLength(2);
+    expect(a.activeTabId).toBe(a.tabs[0].id);
+    expect(b.tabs).toHaveLength(9); // plus de borne haute
+    expect(b.groupId).toBeNull();
+    expect(c.tabs).toHaveLength(1); // et au minimum 1
     expect(new Set(store().workspaces.map((w) => w.id)).size).toBe(3); // ids frais uniques
-    expect(saved().map((e) => e.paneCount)).toEqual([2, 4, 1]); // sauvegarde réécrite normalisée
+    expect(saved().workspaces.map((e) => e.tabCount)).toEqual([2, 9, 1]); // sauvegarde réécrite normalisée
+    expect(saved().workspaces.map((e) => e.groupIndex)).toEqual([0, null, null]);
   });
 
-  it("restoreWorkspaces concatène sans écraser les workspaces créés pendant le boot", () => {
+  it("restoreState concatène sans écraser les workspaces créés pendant le boot", () => {
     // Un workspace créé pendant la fenêtre des invoke dir_exists du boot (bouton +,
     // commande socket) ne doit pas être détruit par la restauration.
     const live = store().addWorkspace("/live");
-    store().restoreWorkspaces([
-      { cwd: "/a", name: "a", color: "#111111", paneCount: 1 },
-      { cwd: "/b", name: "b", color: "#222222", paneCount: 1 },
-    ]);
+    store().restoreState({
+      groups: [],
+      workspaces: [
+        { cwd: "/a", name: "a", color: "#111111", tabCount: 1, groupIndex: null },
+        { cwd: "/b", name: "b", color: "#222222", tabCount: 1, groupIndex: null },
+      ],
+    });
     const workspaces = store().workspaces;
     expect(workspaces).toHaveLength(3);
     expect(workspaces[0].id).toBe(live); // l'existant reste en tête
     expect(workspaces.map((w) => w.cwd)).toEqual(["/live", "/a", "/b"]);
     expect(store().activeId).toBe(live); // et toujours actif (priorité à l'existant)
-    // La sauvegarde réécrite reflète bien les 3 workspaces.
-    expect(saved().map((e) => e.cwd)).toEqual(["/live", "/a", "/b"]);
+    expect(saved().workspaces.map((e) => e.cwd)).toEqual(["/live", "/a", "/b"]);
   });
 
-  it("restoreWorkspaces([]) laisse l'état vide", () => {
-    store().restoreWorkspaces([]);
+  it("restoreState vide laisse l'état vide", () => {
+    store().restoreState({ groups: [], workspaces: [] });
     expect(store().workspaces).toEqual([]);
+    expect(store().groups).toEqual([]);
     expect(store().activeId).toBeNull();
   });
 
   it("le round-robin de couleurs continue après les workspaces restaurés", () => {
-    store().restoreWorkspaces([
-      { cwd: "/a", name: "a", color: "#111111", paneCount: 1 },
-      { cwd: "/b", name: "b", color: "#222222", paneCount: 1 },
-    ]);
+    store().restoreState({
+      groups: [],
+      workspaces: [
+        { cwd: "/a", name: "a", color: "#111111", tabCount: 1, groupIndex: null },
+        { cwd: "/b", name: "b", color: "#222222", tabCount: 1, groupIndex: null },
+      ],
+    });
     const d = store().addWorkspace("/d");
     expect(ws(d).color).toBe(PALETTE[2]);
   });
@@ -510,7 +750,7 @@ describe("persistance v2", () => {
 
   it("sans localStorage : helpers no-op, actions du store inchangées", () => {
     delete (globalThis as { localStorage?: Storage }).localStorage;
-    expect(loadSavedWorkspaces()).toEqual([]);
+    expect(loadSavedState()).toEqual({ groups: [], workspaces: [] });
     expect(getLastFolder()).toBeUndefined();
     setLastFolder("/x"); // ne jette pas
     const id = store().addWorkspace("/a"); // ne jette pas
@@ -518,9 +758,6 @@ describe("persistance v2", () => {
   });
 });
 
-/** Les pollers git et ports réécrivent l'état à chaque tick, même quand rien n'a bougé.
-    Sans court-circuit, chaque tick réallouait `workspaces` → Zustand notifie → re-render
-    de tout l'arbre (App s'abonne au store entier). Les sondes doivent être idempotentes. */
 describe("sondes idempotentes (git, ports)", () => {
   beforeEach(() => store().reset());
 
