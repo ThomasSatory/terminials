@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { homeDir } from "@tauri-apps/api/path";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useDashboardStore } from "../store/dashboard";
 import { useWorkspaceStore } from "../store/workspace";
@@ -8,6 +7,7 @@ import { useActivityData, useSummary } from "../hooks/useActivityData";
 import { activityApi, type ActivitySettings } from "../lib/activityApi";
 import { formatDayTitle, formatWeekLabel, collectedAgoLabel } from "../lib/dashboardDay";
 import { statsSentence } from "../lib/statsSentence";
+import { assignWorkspaceColors } from "../lib/workspacePalette";
 import { WorkspaceChips } from "./dashboard/WorkspaceChips";
 import { Timeline } from "./dashboard/Timeline";
 import { SummaryPanel, SummaryText, summaryFooter } from "./dashboard/SummaryPanel";
@@ -64,15 +64,9 @@ export function DashboardOverlay() {
   const filterRef = useRef<HTMLInputElement>(null);
 
   const byWorkspace = stats?.byWorkspace ?? [];
-
-  // Home résolu une fois (comme la Sidebar) : abrège l'affichage des répertoires
-  // de la timeline. Tant qu'il est vide/indisponible, Timeline affiche le chemin complet.
-  const [home, setHome] = useState<string | undefined>(undefined);
-  useEffect(() => {
-    homeDir()
-      .then(setHome)
-      .catch(() => {});
-  }, []);
+  // Une teinte par workspace pour toute la plage affichée : chips, glyphes de
+  // la chronologie et barres du mode semaine partagent la même affectation.
+  const colors = useMemo(() => assignWorkspaceColors(byWorkspace), [byWorkspace]);
 
   // Réglages (jeton ClickUp de « Reste à faire », horaire rappelé par l'état
   // « aucune synthèse ») : lus une fois au montage puis à chaque bumpRefresh
@@ -267,17 +261,13 @@ export function DashboardOverlay() {
               onChange={(e) => setFilterText(e.target.value)}
             />
           </div>
-          {events.length === 0 ? (
-            <p className="dash-tl-empty">Aucune activité ce jour</p>
-          ) : (
-            <Timeline
-              events={events}
-              filterDir={filterDir}
-              filterText={filterText}
-              onOpenTicket={openLink}
-              home={home}
-            />
-          )}
+          <Timeline
+            events={events}
+            filterDir={filterDir}
+            filterText={filterText}
+            colors={colors}
+            onOpenTicket={openLink}
+          />
         </div>
       </div>
     </div>

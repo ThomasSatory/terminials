@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { WorkspaceChips } from "./WorkspaceChips";
 import { Timeline } from "./Timeline";
 import type { ActivityEvent, WorkspaceCount } from "../../lib/activityApi";
+import { assignWorkspaceColors } from "../../lib/workspacePalette";
 
 describe("WorkspaceChips", () => {
   const rows: WorkspaceCount[] = [
@@ -41,30 +42,77 @@ describe("WorkspaceChips", () => {
 });
 
 describe("Timeline", () => {
+  const colors = assignWorkspaceColors([
+    { dir: "/home/x/dev/a", name: "a", events: 10, commits: 4 },
+  ]);
+
+  function commit(ts: number, title: string, extra: Partial<ActivityEvent> = {}): ActivityEvent {
+    return {
+      id: ts,
+      ts,
+      kind: "commit",
+      workspaceDir: "/home/x/dev/a",
+      branch: "main",
+      title,
+      body: null,
+      ticketIds: [],
+      tickets: [],
+      ...extra,
+    };
+  }
+
+  const NEUF_HEURES = Math.floor(new Date(2025, 8, 17, 9, 30).getTime() / 1000);
+
   it("rend un lien ClickUp cliquable", () => {
     const events: ActivityEvent[] = [
-      {
-        id: 1,
-        ts: 1758100000,
-        kind: "commit",
-        workspaceDir: "/home/x/dev/a",
-        branch: "main",
-        title: "corrige le bug",
-        body: null,
+      commit(NEUF_HEURES, "corrige le bug", {
         ticketIds: ["86c1abc"],
         // status volontairement absent : le titre (tooltip statut) ne doit alors
         // pas apparaître sur le <a>, pour vérifier que seul href est ajouté.
-        tickets: [{ id: "86c1abc", name: "Bug X", status: null, url: "https://app.clickup.com/t/86c1abc" }],
-      },
+        tickets: [
+          { id: "86c1abc", name: "Bug X", status: null, url: "https://app.clickup.com/t/86c1abc" },
+        ],
+      }),
     ];
     const html = renderToStaticMarkup(
       createElement(Timeline, {
         events,
         filterDir: null,
         filterText: "",
+        colors,
         onOpenTicket: vi.fn(),
       }),
     );
     expect(html).toContain('<a href="https://app.clickup.com/t/86c1abc">');
+  });
+
+  it("une heure par groupe, avec le glyphe teinté du workspace", () => {
+    const html = renderToStaticMarkup(
+      createElement(Timeline, {
+        events: [commit(NEUF_HEURES, "store SQLite")],
+        filterDir: null,
+        filterText: "",
+        colors,
+        onOpenTicket: vi.fn(),
+      }),
+    );
+    expect(html).toContain(">9h<");
+    expect(html).toContain("dash-glyph-commit");
+    expect(html).toContain("color:#c9a36a");
+    expect(html).toContain("store SQLite");
+  });
+
+  it("aucun événement retenu : message vide en serif italique", () => {
+    const html = renderToStaticMarkup(
+      createElement(Timeline, {
+        events: [commit(NEUF_HEURES, "store SQLite")],
+        filterDir: null,
+        filterText: "introuvable",
+        colors,
+        onOpenTicket: vi.fn(),
+      }),
+    );
+    expect(html).toContain("dash-tl-empty");
+    expect(html).toContain("Aucune activité ce jour");
   });
 });

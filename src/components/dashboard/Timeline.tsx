@@ -1,75 +1,92 @@
 import type { ActivityEvent, EventKind } from "../../lib/activityApi";
-import { groupTimeline, eventIcon } from "../../lib/timelineGroups";
-import { formatHm } from "../../lib/dashboardDay";
-import { abbreviateHome } from "../../lib/paths";
-import { KIND_COLORS } from "../../lib/chartScale";
+import { groupByHour, type TimelineLine } from "../../lib/timelineHours";
 
-/** Couleur de l'icône par kind ; `claude_session` reprend le bleu Claude (absent de `KIND_COLORS`,
-    qui ne couvre que les 4 kinds comptés dans les statistiques). */
-const ICON_COLORS: Record<EventKind, string> = {
-  ...KIND_COLORS,
-  claude_session: KIND_COLORS.claude_prompt,
+/** Forme du glyphe par kind : rond plein pour un commit, losange bordé pour
+    Claude, chevron pour le shell, carré plein pour ClickUp. La couleur, elle,
+    vient du workspace et arrive en style inline. */
+const GLYPHES: Record<EventKind, string> = {
+  commit: "dash-glyph-commit",
+  claude_prompt: "dash-glyph-losange",
+  claude_session: "dash-glyph-losange",
+  shell_cmd: "dash-glyph-shell",
+  clickup_change: "dash-glyph-carre",
 };
 
-/** Un événement `claude_session` s'affiche en tête de son groupe (§8 du design). */
-function orderGroupEvents(events: ActivityEvent[]): ActivityEvent[] {
-  const sessions = events.filter((e) => e.kind === "claude_session");
-  const rest = events.filter((e) => e.kind !== "claude_session");
-  return [...sessions, ...rest];
+function Ligne({
+  line,
+  onOpenTicket,
+}: {
+  line: TimelineLine;
+  onOpenTicket: (url: string) => void;
+}) {
+  return (
+    <div className={line.muted ? "dash-line dash-line-muted" : "dash-line"}>
+      <span className={`dash-glyph ${GLYPHES[line.kind]}`} style={{ color: line.color }}>
+        {line.kind === "shell_cmd" ? ">" : null}
+      </span>
+      <span>
+        {line.text}
+        {line.tickets.map((ticket) => (
+          <span key={ticket.id}>
+            {" "}
+            <a
+              href={ticket.url}
+              title={ticket.status ?? undefined}
+              onClick={(e) => {
+                e.preventDefault();
+                onOpenTicket(ticket.url);
+              }}
+            >
+              {ticket.name ?? ticket.id}
+            </a>
+          </span>
+        ))}
+        {line.workspaceName && (
+          <span className="dash-ws-suffix" style={{ color: line.color }}>
+            {" "}
+            {line.workspaceName}
+          </span>
+        )}
+      </span>
+    </div>
+  );
 }
 
 /**
- * Timeline groupée par workspace (§8 du design) : ordre chronologique, icône
- * par kind, heure, texte, badges ticket cliquables. `home` (optionnel, résolu
- * par le parent via `homeDir()`) sert uniquement à abréger l'affichage du
- * répertoire ; ce composant ne fait lui-même aucun appel `invoke`.
+ * Chronologie du jour (tâche 17) : une règle verticale discrète, groupée par
+ * heure. Tout le calcul (filtrage, agrégation, teintes) est dans `groupByHour` ;
+ * ce composant ne fait que peindre, et ne fait aucun appel `invoke`.
  */
 export function Timeline({
   events,
   filterDir,
   filterText,
+  colors,
   onOpenTicket,
-  home,
 }: {
   events: ActivityEvent[];
   filterDir: string | null;
   filterText: string;
+  colors: Map<string, string>;
   onOpenTicket: (url: string) => void;
-  home?: string;
 }) {
-  const groups = groupTimeline(events, filterDir, filterText);
+  const hours = groupByHour(events, filterDir, filterText, colors);
+
+  if (hours.length === 0) {
+    return <p className="dash-tl-empty">Aucune activité ce jour</p>;
+  }
 
   return (
-    <div className="dash-timeline">
-      {groups.map((group) => (
-        <section className="dash-tl-group" key={group.dir ?? "__clickup__"}>
-          <header className="dash-tl-group-header">
-            <span className="dash-tl-group-name">{group.name}</span>
-            {group.dir && <span className="dash-tl-group-dir">{abbreviateHome(group.dir, home ?? "")}</span>}
-          </header>
-          {orderGroupEvents(group.events).map((ev) => (
-            <div className="dash-ev" key={ev.id}>
-              <span className="dash-ev-time">{formatHm(ev.ts)}</span>
-              <span className="dash-ev-icon" style={{ color: ICON_COLORS[ev.kind] }}>
-                {eventIcon(ev.kind)}
-              </span>
-              <span className="dash-ev-title">{ev.title}</span>
-              {ev.tickets.map((ticket) => (
-                <a
-                  key={ticket.id}
-                  href={ticket.url}
-                  title={ticket.status ?? undefined}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    onOpenTicket(ticket.url);
-                  }}
-                >
-                  {ticket.name ?? ticket.id}
-                </a>
-              ))}
-            </div>
-          ))}
-        </section>
+    <div className="dash-rule">
+      {hours.map((hour) => (
+        <div className="dash-hour" key={hour.hour}>
+          <span className="dash-hour-label">{hour.hour}h</span>
+          <div className="dash-hour-lines">
+            {hour.lines.map((line, i) => (
+              <Ligne key={i} line={line} onOpenTicket={onOpenTicket} />
+            ))}
+          </div>
+        </div>
       ))}
     </div>
   );
