@@ -128,7 +128,10 @@ let colorIndex = 0;
 const uid = (prefix: string) => `${prefix}:${counter++}`;
 
 // --- Persistance localStorage v3 (I/O hors réducteurs ; no-op si localStorage absent,
-//     cas des tests node). La clé v2 est migrée une fois puis supprimée. ---
+//     cas des tests node). La clé v2 est lue une fois si v3 est absente, puis LAISSÉE en
+//     place : un build antérieur (branche feat-dashboard, lecteur v2) partage le même
+//     localStorage WebKit et doit pouvoir redémarrer avec sa liste. Dès que v3 existe,
+//     v2 n'est plus consultée. ---
 const STORAGE_KEY = "terminials:workspaces:v3";
 const V2_KEY = "terminials:workspaces:v2";
 const LAST_FOLDER_KEY = "terminials:lastFolder";
@@ -172,9 +175,7 @@ export function loadSavedState(): SavedState {
     if (v3 === null) {
       const v2 = localStorage.getItem(V2_KEY);
       if (v2 === null) return empty;
-      const migrated = migrateV2(JSON.parse(v2));
-      localStorage.removeItem(V2_KEY);
-      return migrated ?? empty;
+      return migrateV2(JSON.parse(v2)) ?? empty;
     }
     const raw: unknown = JSON.parse(v3);
     if (!isRecord(raw)) return empty;

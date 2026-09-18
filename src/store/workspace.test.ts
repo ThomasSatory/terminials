@@ -435,7 +435,7 @@ describe("groupes", () => {
   it("addGroup crée un groupe déplié, nom vide → « Groupe », couleur de la palette", () => {
     const g = store().addGroup("  ");
     expect(store().groups).toEqual([{ id: g, name: "Groupe", color: PALETTE[0], collapsed: false }]);
-    const h = store().addGroup("h", "#123456");
+    store().addGroup("h", "#123456");
     expect(store().groups[1]).toMatchObject({ name: "h", color: "#123456" });
   });
 
@@ -624,6 +624,12 @@ describe("persistance v3", () => {
     expect(localStorage.getItem(V2_KEY)).toBeNull();
   });
 
+  it("une fois v3 écrite, un v2 résiduel modifié n'est plus relu", () => {
+    store().addWorkspace("/a"); // écrit v3
+    localStorage.setItem(V2_KEY, JSON.stringify([{ cwd: "/old", name: "o", color: "#1", paneCount: 1 }]));
+    expect(loadSavedState().workspaces.map((e) => e.cwd)).toEqual(["/a"]);
+  });
+
   it("loadSavedState relit la sauvegarde et filtre le JSON invalide", () => {
     store().addWorkspace("/a");
     expect(loadSavedState()).toEqual({
@@ -652,7 +658,7 @@ describe("persistance v3", () => {
     });
   });
 
-  it("migration v2 → v3 : paneCount devient tabCount, tout hors-groupe, clé v2 supprimée", () => {
+  it("migration v2 → v3 : paneCount devient tabCount, tout hors-groupe, clé v2 conservée (retour arrière possible)", () => {
     localStorage.setItem(
       V2_KEY,
       JSON.stringify([{ cwd: "/a", name: "a", color: "#111111", paneCount: 3 }, { n: 1 }]),
@@ -661,7 +667,7 @@ describe("persistance v3", () => {
       groups: [],
       workspaces: [{ cwd: "/a", name: "a", color: "#111111", tabCount: 3, groupIndex: null }],
     });
-    expect(localStorage.getItem(V2_KEY)).toBeNull();
+    expect(localStorage.getItem(V2_KEY)).not.toBeNull();
   });
 
   it("un v3 présent (même vide) prime sur un v2 résiduel", () => {

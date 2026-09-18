@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Sidebar } from "./components/Sidebar";
-import { PaneTree } from "./components/PaneTree";
+import { TabbedTerminals } from "./components/TabbedTerminals";
 import { DiffOverlay } from "./components/DiffOverlay";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { dispatchShortcut } from "./lib/shortcutDispatch";
@@ -10,7 +10,7 @@ import { registerSocketEvents } from "./lib/socketEvents";
 import { openFolderDialog } from "./lib/openFolder";
 import { injectPaths } from "./lib/injectFiles";
 import { resolvePaneId, toCssPoint } from "./lib/dropTarget";
-import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
+import { useWorkspaceStore, loadSavedState } from "./store/workspace";
 import { nextDelayMs, DIRTY_BUDGET, PORTS_BUDGET } from "./lib/pollSchedule";
 import "./App.css";
 
@@ -27,13 +27,11 @@ const EMPTY_BTN: CSSProperties = {
 export default function App() {
   useShortcuts();
   // Sélecteurs ciblés, jamais `useWorkspaceStore()` nu : s'abonner au store entier
-  // faisait re-render tout l'arbre (Sidebar + tous les PaneTree) à CHAQUE tour de sonde.
+  // faisait re-render tout l'arbre (Sidebar + tous les TabbedTerminals) à CHAQUE tour de sonde.
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeId = useWorkspaceStore((s) => s.activeId);
   const toast = useWorkspaceStore((s) => s.toast);
   // Actions : références stables créées une fois par Zustand.
-  const addPane = useWorkspaceStore((s) => s.addPane);
-  const showToast = useWorkspaceStore((s) => s.showToast);
   const clearToast = useWorkspaceStore((s) => s.clearToast);
   // Ctrl+Shift+B : consommation au rendu du booléen basculé par toggleSidebar (K.5).
   const sidebarVisible = useWorkspaceStore((s) => s.sidebarVisible);
@@ -42,29 +40,30 @@ export default function App() {
   // vide « Open folder » pendant les invoke dir_exists.
   const [booting, setBooting] = useState(true);
 
-  // Restauration des workspaces persistés au premier montage : chaque cwd est
-  // validé côté Rust ; dossier disparu → skippé + toast (jamais restauré :
+  // Restauration des groupes et workspaces persistés au premier montage : chaque cwd
+  // est validé côté Rust ; dossier disparu → skippé + toast (jamais restauré :
   // unread/status/progress/ports repartent à zéro, cf. contrat SavedWorkspace).
+  // Les groupes sont tous restaurés (même vides) : les groupIndex restent valides.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const saved = loadSavedWorkspaces();
-      if (saved.length > 0) {
+      const saved = loadSavedState();
+      if (saved.workspaces.length > 0 || saved.groups.length > 0) {
         const checks = await Promise.all(
-          saved.map((entry) =>
+          saved.workspaces.map((entry) =>
             invoke<boolean>("dir_exists", { path: entry.cwd }).catch(() => false),
           ),
         );
         if (cancelled) return;
-        const valid = saved.filter((_, i) => checks[i]);
-        const missing = saved.filter((_, i) => !checks[i]);
+        const valid = saved.workspaces.filter((_, i) => checks[i]);
+        const missing = saved.workspaces.filter((_, i) => !checks[i]);
         const s = useWorkspaceStore.getState();
         if (missing.length > 0) {
           s.showToast(
             `dossier introuvable, workspace ignoré : ${missing.map((m) => m.cwd).join(", ")}`,
           );
         }
-        if (valid.length > 0) s.restoreWorkspaces(valid);
+        s.restoreState({ groups: saved.groups, workspaces: valid });
       }
       if (!cancelled) setBooting(false);
     })();
@@ -75,7 +74,7 @@ export default function App() {
 
   // Glisser-déposer de fichiers : Tauri consomme le drop OS (dragDropEnabled par
   // défaut) et émet tauri://drag-drop — l'event `drop` du DOM ne remonte donc jamais.
-  // Les chemins sont écrits, quotés, dans le PTY du pane survolé (Claude Code lit le
+  // Les chemins sont écrits, quotés, dans le PTY de l'onglet survolé (Claude Code lit le
   // fichier). Tous types de fichiers : Claude Code lit aussi bien un .ts qu'un .png.
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent((event) => {
@@ -183,9 +182,9 @@ export default function App() {
     };
   }, []);
 
-  // Sonde ports : union des ports ouverts par les panes de chaque workspace. Même
+  // Sonde ports : union des ports ouverts par les onglets de chaque workspace. Même
   // ordonnancement adaptatif que le dirty — le parcours de /proc du sous-arbre reste
-  // bien moins cher, mais pas gratuit sur un pane qui fait tourner un node.
+  // bien moins cher, mais pas gratuit sur un onglet qui fait tourner un node.
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -197,8 +196,8 @@ export default function App() {
         if (stopped) return;
         if ((dueAt.get(w.id) ?? 0) > Date.now()) continue;
         const started = performance.now();
-        const ptyIds = w.panes
-          .map((paneId) => s.panePtys[paneId])
+        const ptyIds = w.tabs
+          .map((t) => s.tabPtys[t.id])
           .filter((id): id is number => id !== undefined);
         const results = await Promise.all(
           ptyIds.map((ptyId) =>
@@ -272,36 +271,16 @@ export default function App() {
                   {active.name}
                   {active.branch && <span style={{ color: "#6f6f6f" }}> — {active.branch}</span>}
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    {active.panes.map((paneId) => (
-                      <span
-                        key={paneId}
-                        style={{
-                          width: 7,
-                          height: 7,
-                          borderRadius: "50%",
-                          background: paneId === active.activePaneId ? active.color : "#3a3a3a",
-                        }}
-                      />
-                    ))}
-                  </span>
-                  <button
-                    className="icon-btn"
-                    onClick={() => {
-                      if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
-                    }}
-                    title="Nouveau terminal (Ctrl+Shift+T)"
-                  >
-                    +
-                  </button>
+                {/* Le compteur d'onglets et le + vivent désormais dans la barre d'onglets. */}
+                <span style={{ color: "#6f6f6f", fontSize: 12 }}>
+                  {active.tabs.length > 1 ? `${active.tabs.length} onglets` : ""}
                 </span>
               </div>
             )}
-            {/* Keep-alive : TOUS les workspaces restent montés en permanence, empilés.
-                Les inactifs sont masqués en visibility:hidden — JAMAIS display:none
-                (un conteneur 0×0 ferait fit() → resize_pty(0) → reflow shell cassé). */}
+            {/* Keep-alive : TOUS les workspaces (barre d'onglets + terminaux) restent montés
+                en permanence, empilés. Les inactifs sont masqués en visibility:hidden —
+                JAMAIS display:none (un conteneur 0×0 ferait fit() → resize_pty(0) → reflow
+                shell cassé). */}
             <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
               {workspaces.map((w) => (
                 <div
@@ -312,11 +291,12 @@ export default function App() {
                     visibility: w.id === activeId ? "visible" : "hidden",
                   }}
                 >
-                  <PaneTree ws={w} visible={w.id === activeId} />
+                  <TabbedTerminals ws={w} visible={w.id === activeId} />
                 </div>
               ))}
-              {/* Diff viewer : overlay au-dessus de la grille seule — sidebar et top bar restent visibles.
-                  La grille reste montée dessous (keep-alive) : risque PTY nul (spec §4). */}
+              {/* Diff viewer : overlay au-dessus de la zone terminal (barre d'onglets incluse) —
+                  sidebar et top bar restent visibles. Les terminaux restent montés dessous
+                  (keep-alive) : risque PTY nul (spec §4). */}
               {active?.diffOpen && <DiffOverlay ws={active} />}
             </div>
           </>
