@@ -1,0 +1,107 @@
+{
+ "open": [
+  {
+   "id": "86cx00001",
+   "name": "API-11519 | Réinitialisation des sessions cassée dans les scénarios de test",
+   "status": "code review",
+   "closed": false,
+   "url": "https://app.clickup.com/t/86cx00001",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789722228496
+  },
+  {
+   "id": "86cx00002",
+   "name": "API-10620 | Démarrage bloqué si la file de messages est indisponible",
+   "status": "programmé",
+   "closed": false,
+   "url": "https://app.clickup.com/t/86cx00002",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789721825145
+  },
+  {
+   "id": "86cx00003",
+   "name": "OPS-64212 | Code Review US - 2e passe",
+   "status": "backlog",
+   "closed": false,
+   "url": "https://app.clickup.com/t/86cx00003",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789721048930
+  },
+  {
+   "id": "86cx00004",
+   "name": "API-11543 | Code Review US - 2e passe",
+   "status": "en cours",
+   "closed": false,
+   "url": "https://app.clickup.com/t/86cx00004",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789720344259
+  },
+  {
+   "id": "86cx00005",
+   "name": "Daily",
+   "status": "backlog",
+   "closed": false,
+   "url": "https://app.clickup.com/t/86cx00005",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "API 180 (8/25 - 9/21)",
+   "updatedAt": 1789719849434
+  }
+ ],
+ "updated": [
+  {
+   "id": "86cx00001",
+   "name": "API-11519 | Réinitialisation des sessions cassée dans les scénarios de test",
+   "status": "code review",
+   "closed": false,
+   "url": "https://app.clickup.com/t/86cx00001",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789722228496
+  },
+  {
+   "id": "86cx00006",
+   "name": "API-11437 | Collision de codes entre deux catégories de documents",
+   "status": "programmé",
+   "closed": false,
+   "url": "https://app.clickup.com/t/86cx00006",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789719733873
+  },
+  {
+   "id": "86cx00007",
+   "name": "API-10690 | Notifications in-app non reçues",
+   "status": "terminé",
+   "closed": true,
+   "url": "https://app.clickup.com/t/86cx00007",
+   "dueDate": null,
+   "priority": "high",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789717640070
+  }
+ ],
+ "resolved": [
+  {
+   "id": "86cx00008",
+   "name": "API-11100 | HTTP 500 sur le report groupé de rendez-vous",
+   "status": "fermé",
+   "closed": true,
+   "url": "https://app.clickup.com/t/86cx00008",
+   "dueDate": null,
+   "priority": "normal",
+   "listName": "Backlog API / Backend",
+   "updatedAt": 1789717630119
+  }
+ ]
+}
