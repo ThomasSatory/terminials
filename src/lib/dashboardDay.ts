@@ -86,6 +86,60 @@ export function formatDayLabel(day: string): string {
   return DAY_LABEL_FORMAT.format(dayToDate(day));
 }
 
+const DAY_TITLE_FORMAT = new Intl.DateTimeFormat("fr-FR", {
+  weekday: "long",
+  day: "numeric",
+  month: "long",
+});
+
+const MONTH_FORMAT = new Intl.DateTimeFormat("fr-FR", { month: "long" });
+
+/** Passe la première lettre en majuscule (les libellés fr-FR d'Intl sont en minuscules). */
+function capitaliser(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Titre du jour affiché en h1 du dashboard, ex. "Mercredi 17 septembre".
+ * L'année est omise (comme dans `formatWeekLabel`) : le dashboard se lit au
+ * jour le jour. `formatDayLabel`, plus verbeux, reste disponible ailleurs.
+ */
+export function formatDayTitle(day: string): string {
+  return capitaliser(DAY_TITLE_FORMAT.format(dayToDate(day)));
+}
+
+/**
+ * Numéro de semaine ISO 8601 : la semaine 1 est celle qui contient le premier
+ * jeudi de l'année. On se déplace au jeudi de la semaine de `day`, puis on
+ * compte les semaines depuis le jeudi de la semaine 1.
+ */
+function isoWeekNumber(day: string): number {
+  const jeudi = dayToDate(day);
+  jeudi.setDate(jeudi.getDate() - ((jeudi.getDay() + 6) % 7) + 3);
+  const premierJeudi = new Date(jeudi.getFullYear(), 0, 4);
+  premierJeudi.setDate(premierJeudi.getDate() - ((premierJeudi.getDay() + 6) % 7) + 3);
+  const semaines = (jeudi.getTime() - premierJeudi.getTime()) / (7 * 24 * 3600 * 1000);
+  // `round` absorbe l'heure d'écart introduite par un changement d'heure entre
+  // les deux jeudis (une heure sur 168, sans effet sur l'arrondi).
+  return 1 + Math.round(semaines);
+}
+
+/**
+ * Libellé de la semaine ouvrée contenant `day` (§ tâche 17), ex.
+ * "Semaine 38, du 15 au 19 septembre". Quand la semaine est à cheval sur deux
+ * mois, chaque borne porte le sien : "du 29 septembre au 3 octobre".
+ */
+export function formatWeekLabel(day: string): string {
+  const { days } = weekRange(day);
+  const lundi = dayToDate(days[0]);
+  const vendredi = dayToDate(days[days.length - 1]);
+  const moisLundi = MONTH_FORMAT.format(lundi);
+  const moisVendredi = MONTH_FORMAT.format(vendredi);
+  const debut =
+    moisLundi === moisVendredi ? `${lundi.getDate()}` : `${lundi.getDate()} ${moisLundi}`;
+  return `Semaine ${isoWeekNumber(days[0])}, du ${debut} au ${vendredi.getDate()} ${moisVendredi}`;
+}
+
 /** Heure locale "HH:MM" d'un timestamp epoch secondes. */
 export function formatHm(ts: number): string {
   const d = new Date(ts * 1000);

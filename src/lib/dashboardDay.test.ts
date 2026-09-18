@@ -10,6 +10,8 @@ import {
   isWeekend,
   formatDayLabel,
   collectedAgoLabel,
+  formatDayTitle,
+  formatWeekLabel,
 } from "./dashboardDay";
 
 describe("dashboardDay", () => {
@@ -61,6 +63,28 @@ describe("dashboardDay", () => {
     expect(isWeekend("2026-09-19")).toBe(true);
     expect(isWeekend("2026-09-16")).toBe(false);
     expect(formatDayLabel("2026-09-16")).toBe("mercredi 16 septembre 2026");
+  });
+
+  describe("formatDayTitle", () => {
+    it("titre du jour avec une majuscule initiale, sans l'année", () => {
+      expect(formatDayTitle("2025-09-17")).toBe("Mercredi 17 septembre");
+    });
+  });
+
+  describe("formatWeekLabel", () => {
+    it("numéro ISO et bornes lundi → vendredi du même mois", () => {
+      expect(formatWeekLabel("2025-09-17")).toBe("Semaine 38, du 15 au 19 septembre");
+    });
+    it("semaine à cheval sur deux mois : le mois est répété", () => {
+      expect(formatWeekLabel("2025-10-01")).toBe("Semaine 40, du 29 septembre au 3 octobre");
+    });
+    it("le libellé ne dépend pas du jour choisi dans la semaine", () => {
+      expect(formatWeekLabel("2025-09-15")).toBe(formatWeekLabel("2025-09-19"));
+    });
+    it("première semaine de l'année (norme ISO 8601)", () => {
+      // Le 1er janvier 2026 est un jeudi : sa semaine ISO est la semaine 1.
+      expect(formatWeekLabel("2026-01-01")).toBe("Semaine 1, du 29 décembre au 2 janvier");
+    });
   });
 
   describe("collectedAgoLabel", () => {
