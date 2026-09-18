@@ -530,15 +530,31 @@ fn avec_store<T>(
 // ---------------------------------------------------------------------------
 
 /// Enregistre les dossiers des workspaces comme dépôts suivis (racine git déduite).
+/// Exécute `f` hors du thread principal. Les lectures du store attendent son
+/// verrou, que la collecte peut tenir plusieurs secondes (git sur de gros dépôts,
+/// réseau ClickUp) : sur le thread principal, cette attente figeait toute la
+/// fenêtre (« Terminials-app ne répond pas »).
+async fn hors_thread_principal<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("tâche interrompue : {e}"))?
+}
+
 #[tauri::command]
-pub fn activity_register_workspaces(
+pub async fn activity_register_workspaces(
     st: State<'_, Arc<ActivityState>>,
     dirs: Vec<String>,
 ) -> Result<(), String> {
-    // `repo_root` lance `git rev-parse` : calculé hors du verrou du store.
-    let roots: Vec<String> = dirs.iter().map(|d| repo_root(d)).collect();
-    let now = now_s();
-    avec_store(&st, |store| store.register_repos(&roots, now))
+    let st = st.inner().clone();
+    hors_thread_principal(move || {
+        // `repo_root` lance `git rev-parse` : calculé hors du verrou du store.
+        let roots: Vec<String> = dirs.iter().map(|d| repo_root(d)).collect();
+        let now = now_s();
+        avec_store(&st, |store| store.register_repos(&roots, now))
+    })
+    .await
 }
 
 /// Collecte immédiate des trois sources. Exécutée hors du thread principal pour
@@ -554,23 +570,26 @@ pub async fn activity_collect_now(app: AppHandle) -> Result<CollectReport, Strin
 }
 
 #[tauri::command]
-pub fn activity_query(
+pub async fn activity_query(
     st: State<'_, Arc<ActivityState>>,
     from: i64,
     to: i64,
     workspace_dir: Option<String>,
 ) -> Result<Vec<ActivityEvent>, String> {
-    avec_store(&st, |store| store.query(from, to, workspace_dir.as_deref()))
+    let st = st.inner().clone();
+    hors_thread_principal(move || avec_store(&st, |store| store.query(from, to, workspace_dir.as_deref())))
+        .await
 }
 
 #[tauri::command]
-pub fn activity_stats(
+pub async fn activity_stats(
     st: State<'_, Arc<ActivityState>>,
     from: i64,
     to: i64,
 ) -> Result<ActivityStats, String> {
+    let st = st.inner().clone();
     let offset = *chrono::Local::now().offset();
-    avec_store(&st, |store| store.stats(from, to, offset))
+    hors_thread_principal(move || avec_store(&st, |store| store.stats(from, to, offset))).await
 }
 
 /// Synthèse d'un jour. Hors thread principal : l'appel LLM peut durer jusqu'à 120 s.
@@ -617,7 +636,7 @@ pub async fn activity_summary(
 /// `semaine`, le jour lui-même sinon. La `Summary` rendue porte ce jour normalisé
 /// dans son champ `day` et `cached: true`.
 #[tauri::command]
-pub fn activity_summary_cached(
+pub async fn activity_summary_cached(
     st: State<'_, Arc<ActivityState>>,
     day: String,
     kind: String,
@@ -628,7 +647,10 @@ pub fn activity_summary_cached(
         .map_err(|e| format!("jour invalide {day:?} : {e}"))?;
     let cache_day = summaries::cache_day_for(date, kind_parse);
 
-    let stored = avec_store(&st, |store| store.get_summary(&cache_day, kind_parse.as_str()))?;
+    let st = st.inner().clone();
+    let stored =
+        hors_thread_principal(move || avec_store(&st, |store| store.get_summary(&cache_day, kind_parse.as_str())))
+            .await?;
     Ok(stored.map(|s| Summary {
         day: s.day,
         text: s.text,
@@ -639,8 +661,9 @@ pub fn activity_summary_cached(
 }
 
 #[tauri::command]
-pub fn activity_open_tasks(st: State<'_, Arc<ActivityState>>) -> Result<Vec<OpenTask>, String> {
-    avec_store(&st, |store| store.open_tasks())
+pub async fn activity_open_tasks(st: State<'_, Arc<ActivityState>>) -> Result<Vec<OpenTask>, String> {
+    let st = st.inner().clone();
+    hors_thread_principal(move || avec_store(&st, |store| store.open_tasks())).await
 }
 
 #[tauri::command]

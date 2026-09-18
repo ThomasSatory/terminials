@@ -107,9 +107,13 @@ pub fn commits_since(
     if !author_email.is_empty() {
         args.push(format!("--author={author_email}"));
     }
-    // `%D` (refnames de la pointe) évite un `branch --points-at` par commit : la
-    // branche dont le commit est la tête est déjà là, dans la sortie qu'on lit déjà.
-    args.push("--format=%x1e%H%x00%at%x00%D%x00%s%x00%b".to_string());
+    // `%D` (refnames de la pointe) et `%S` (la référence par laquelle `--all` a
+    // atteint le commit, grâce à `--source`) donnent la branche sans aucun
+    // sous-processus par commit. L'ancien `branch --all --contains <sha>` par
+    // commit coûtait plusieurs secondes sur un dépôt à 7 000 branches, et la
+    // collecte tenait le verrou du store pendant tout ce temps : interface figée.
+    args.push("--source".to_string());
+    args.push("--format=%x1e%H%x00%at%x00%D%x00%S%x00%s%x00%b".to_string());
     args.push("--numstat".to_string());
 
     let raw = run_git(dir, &args)?;
@@ -137,10 +141,11 @@ fn parse_log(dir: &str, raw: &str, ticket_patterns: &[String]) -> Vec<NewEvent> 
         if block.trim().is_empty() {
             continue;
         }
-        let mut parts = block.splitn(5, '\u{0}');
+        let mut parts = block.splitn(6, '\u{0}');
         let sha = parts.next().unwrap_or("").trim();
         let ts: i64 = parts.next().unwrap_or("0").trim().parse().unwrap_or(0);
         let refnames = parts.next().unwrap_or("");
+        let source = parts.next().unwrap_or("");
         let subject = parts.next().unwrap_or("").to_string();
         let rest = parts.next().unwrap_or("");
         if sha.is_empty() {
@@ -148,10 +153,10 @@ fn parse_log(dir: &str, raw: &str, ticket_patterns: &[String]) -> Vec<NewEvent> 
         }
 
         let (files, added, deleted, body_text) = parse_numstat_and_body(rest);
-        // Pointe d'une branche : `%D` suffit et coûte zéro sous-processus. Sinon
-        // seulement, on paie un `branch --all --contains` pour ce commit.
+        // Pointe d'une branche : `%D` fait foi. Sinon, la référence source (`%S`)
+        // par laquelle le parcours `--all` a atteint le commit. Zéro sous-processus.
         let tip = branches_from_refnames(refnames);
-        let branches = if tip.is_empty() { branches_containing(dir, sha) } else { tip };
+        let branches = if tip.is_empty() { branch_from_source(source) } else { tip };
         let branch = pick_branch(&branches);
 
         let branch_ref = branch.clone().unwrap_or_default();
@@ -207,16 +212,19 @@ fn numstat_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"^(\d+|-)\t(\d+|-)\t").unwrap())
 }
 
-/// Branches (locales ou distantes) contenant `sha`, `HEAD` et `*/HEAD` exclus.
-fn branches_containing(dir: &str, sha: &str) -> Vec<String> {
-    let Some(out) = git_out(dir, &["branch", "--all", "--contains", sha, "--format=%(refname:short)"])
-    else {
+/// Branche déduite de `%S` (`--source`) : `refs/heads/x` → `x`, `refs/remotes/origin/x`
+/// → `origin/x` (que `pick_branch` ramène à `x`). `HEAD`, `*/HEAD`, les tags et une
+/// source vide ne donnent rien.
+fn branch_from_source(source: &str) -> Vec<String> {
+    let s = source.trim();
+    if s.is_empty() || s == "HEAD" || s.ends_with("/HEAD") || s.starts_with("refs/tags/") {
         return Vec::new();
-    };
-    out.lines()
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty() && s != "HEAD" && !s.ends_with("/HEAD"))
-        .collect()
+    }
+    let name = s
+        .strip_prefix("refs/heads/")
+        .or_else(|| s.strip_prefix("refs/remotes/"))
+        .unwrap_or(s);
+    vec![name.to_string()]
 }
 
 /// Branches dont `sha` est la **pointe**, lues dans `%D` (`refnames`) du `git log`
@@ -402,6 +410,20 @@ mod tests {
         commit_at(dir, 60, &["-qm", "récent"]);
         let evs = commits_since(dir.to_str().unwrap(), 0, Some("moi@x.fr"), &[]).unwrap();
         assert_eq!(evs.len(), 2, "événements lus : {:?}", evs.iter().map(|e| &e.title).collect::<Vec<_>>());
+        // « ancien » n'est la pointe d'aucune branche : sa branche vient de `%S`
+        // (`--source`), sans `branch --contains` par commit.
+        let ancien = evs.iter().find(|e| e.title == "ancien").unwrap();
+        assert_eq!(ancien.branch.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn la_source_donne_la_branche_sans_sous_processus() {
+        assert_eq!(branch_from_source("refs/heads/feature/x"), vec!["feature/x".to_string()]);
+        assert_eq!(branch_from_source("refs/remotes/origin/main"), vec!["origin/main".to_string()]);
+        assert!(branch_from_source("refs/tags/v1").is_empty());
+        assert!(branch_from_source("refs/remotes/origin/HEAD").is_empty());
+        assert!(branch_from_source("HEAD").is_empty());
+        assert!(branch_from_source("").is_empty());
     }
 
     #[test]
