@@ -4,9 +4,11 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
+use chrono::{Local, NaiveDate};
 use serde_json::Value;
 
 use crate::activity::providers::claude_process::{run_claude_p, ClaudeProcessError};
+use crate::activity::sprint::est_sprint_actuel;
 use crate::activity::settings::{ClickupSettings, ClickupSource as SourceReglee};
 use crate::activity::{OpenTask, TicketInfo};
 
@@ -240,7 +242,13 @@ pub const ARGS_MCP: [&str; 7] = [
 ];
 
 /// Prompt envoyé sur stdin. Pur : testable sans sous-processus.
-pub fn prompt_mcp(q: &ClickupQuery) -> String {
+///
+/// La recette du périmètre « sprint en cours » est donnée explicitement : les US
+/// vivent dans un backlog et sont *rattachées* à une liste de sprint, si bien
+/// qu'un filtre par liste ne les retrouve pas — seule la recherche par
+/// emplacement les voit. `retenir_us` revérifie ensuite type et sprint sur la
+/// réponse, le prompt n'est pas le seul garde-fou.
+pub fn prompt_mcp(q: &ClickupQuery, aujourd_hui: NaiveDate) -> String {
     let resolus = if q.resolve_ids.is_empty() {
         "aucun identifiant n'est demandé, rends une liste vide".to_string()
     } else {
@@ -249,18 +257,36 @@ pub fn prompt_mcp(q: &ClickupQuery) -> String {
     format!(
         "Tu as accès aux outils MCP ClickUp. Réponds UNIQUEMENT avec un objet JSON, \
 sans texte autour ni balises markdown.\n\n\
+Nous sommes le {date}.\n\n\
 Trois listes à remplir :\n\
-- \"open\" : mes tâches ouvertes (assignées à moi, statut non fermé/terminé), au plus {max}.\n\
+- \"open\" : MES user stories du sprint en cours, non terminées, au plus {max}. \
+Marche à suivre, à respecter :\n\
+  1. Liste les listes de l'espace de travail. Les listes de sprint portent leur \
+période dans leur nom, par exemple « API 180 (8/25 - 9/21) » ou « Web 180 (9/1 - 9/28) ». \
+Retiens TOUTES celles dont la période contient le {date} — il y en a une par produit.\n\
+  2. Pour chacune, cherche les tâches qui m'y sont assignées. Ces tâches vivent \
+dans un backlog et sont rattachées au sprint : un filtre par liste ne les rend PAS, \
+il faut une recherche filtrée sur l'emplacement de la liste de sprint et sur mon \
+identifiant d'assigné.\n\
+  3. Écarte les tâches dont le type ClickUp est « Tâche » (le type par défaut, \
+souvent rendu `null`) : daily, réunions, grooming, sous-tâches de documentation. \
+Garde les « Story », « Bug », « Anomalie », « Technical story », etc.\n\
+  4. Écarte les tâches fermées ou terminées.\n\
 - \"updated\" : mes tâches modifiées depuis l'instant {since} (epoch millisecondes), \
-tâches fermées incluses, au plus {max}.\n\
-- \"resolved\" : {resolus}, tâches fermées incluses.\n\n\
+tâches fermées incluses, au plus {max}. Aucun filtre de sprint ni de type ici : \
+cette liste alimente la chronologie.\n\
+- \"resolved\" : {resolus}, tâches fermées incluses. Aucun filtre non plus.\n\n\
 Forme exacte de la réponse :\n\
 {{\"open\":[…],\"updated\":[…],\"resolved\":[…]}}\n\
 Chaque tâche est un objet plat :\n\
 {{\"id\":\"…\",\"name\":\"…\",\"status\":\"…\",\"closed\":true ou false,\"url\":\"…\",\
 \"dueDate\":epoch millisecondes ou null,\"priority\":\"…\" ou null,\"listName\":\"…\" ou null,\
-\"updatedAt\":epoch millisecondes}}\n\
-`closed` vaut true si le statut de la tâche est un statut fermé ou terminé.",
+\"taskType\":\"…\" ou null,\"sprint\":\"…\" ou null,\"updatedAt\":epoch millisecondes}}\n\
+`closed` vaut true si le statut de la tâche est un statut fermé ou terminé.\n\
+`taskType` est le nom du type ClickUp de la tâche, `null` pour le type par défaut.\n\
+`sprint` est le nom COMPLET de la liste de sprint où la tâche a été trouvée, \
+période comprise (« API 180 (8/25 - 9/21) ») ; `null` pour \"updated\" et \"resolved\".",
+        date = aujourd_hui.format("%d/%m/%Y"),
         max = MAX_TACHES,
         since = q.updated_since_ms,
         resolus = resolus,
@@ -303,12 +329,15 @@ fn apercu(s: &str) -> String {
 impl ClickupSource for ClickupMcp {
     fn fetch(&self, q: &ClickupQuery) -> Result<ClickupBatch, ClickupError> {
         let args: Vec<&str> = ARGS_MCP.to_vec();
-        let sortie = run_claude_p(&self.binary, &args, &prompt_mcp(q), self.timeout).map_err(|e| match e {
+        let aujourd_hui = Local::now().date_naive();
+        let sortie = run_claude_p(&self.binary, &args, &prompt_mcp(q, aujourd_hui), self.timeout).map_err(|e| match e {
             ClaudeProcessError::Spawn(msg) => ClickupError::Network(format!("claude introuvable : {msg}")),
             ClaudeProcessError::Timeout => ClickupError::Network("claude -p : délai dépassé".to_string()),
             ClaudeProcessError::Failed { code, stderr } => ClickupError::Http { status: code.max(0) as u16, body: stderr },
         })?;
-        parse_batch(&sortie)
+        let mut batch = parse_batch(&sortie)?;
+        batch.open = retenir_us(batch.open, aujourd_hui, true);
+        Ok(batch)
     }
 
     fn name(&self) -> &'static str {
@@ -329,7 +358,10 @@ impl ClickupSource for ClickupClient {
     fn fetch(&self, q: &ClickupQuery) -> Result<ClickupBatch, ClickupError> {
         let (user, team) = self.ids()?;
         let updated = self.tasks_updated_since(team, user, q.updated_since_ms)?;
-        let open = self.open_tasks(team, user)?;
+        // Périmètre sprint impossible ici : `/team/{id}/task` ne rend que la
+        // liste principale de la tâche, jamais la liste de sprint à laquelle
+        // elle est rattachée. Seul le type est filtré.
+        let open = retenir_us(self.open_tasks(team, user)?, Local::now().date_naive(), false);
         // Une erreur de résolution individuelle est ignorée : le ticket peut être
         // transitoirement indisponible, et le reste du lot reste exploitable.
         let resolved = q.resolve_ids.iter().filter_map(|id| self.task(id).ok()).collect();
@@ -339,6 +371,37 @@ impl ClickupSource for ClickupClient {
     fn name(&self) -> &'static str {
         "clickup-api"
     }
+}
+
+/// Libellés du type ClickUp par défaut, tels qu'ils peuvent revenir de la voie
+/// MCP quand le modèle rend le nom affiché plutôt que `null`.
+const TYPES_PAR_DEFAUT: [&str; 2] = ["tâche", "task"];
+
+/// Ne garde que ce qui doit apparaître dans « Reste à faire » : les US du sprint
+/// en cours.
+///
+/// Deux critères, tous deux vérifiés ici plutôt que laissés à la source — la
+/// voie MCP passe par un modèle, qui peut élargir le périmètre demandé :
+/// - le type ClickUp n'est pas le type par défaut « Tâche » (daily, réunions,
+///   grooming, sous-tâches de documentation… n'ont rien à faire dans la liste) ;
+/// - avec `exiger_sprint`, la tâche vient d'une liste de sprint dont la période
+///   contient `aujourd_hui`. L'API HTTP ne sait pas rattacher une tâche à son
+///   sprint (elle ne rend que la liste principale) : elle passe `false` et se
+///   contente du filtre de type.
+///
+/// Pur.
+pub fn retenir_us(taches: Vec<RawTask>, aujourd_hui: NaiveDate, exiger_sprint: bool) -> Vec<RawTask> {
+    taches
+        .into_iter()
+        .filter(|t| match &t.task_type {
+            None => false,
+            Some(nom) => !TYPES_PAR_DEFAUT.contains(&nom.trim().to_lowercase().as_str()),
+        })
+        .filter(|t| {
+            !exiger_sprint
+                || t.sprint.as_deref().is_some_and(|s| est_sprint_actuel(s, aujourd_hui))
+        })
+        .collect()
 }
 
 /// Tâche réduite, parsée depuis le JSON ClickUp. Pur : `RawTask::from_json(&Value) -> Option<RawTask>`.
@@ -353,6 +416,15 @@ pub struct RawTask {
     pub due_date_ms: Option<i64>,
     pub priority: Option<String>,
     pub list_name: Option<String>,
+    /// Nom du type ClickUp (« Story », « Bug », « Anomalie »…). `None` désigne
+    /// le type par défaut, affiché « Tâche » dans l'interface — c'est lui qu'on
+    /// écarte du « Reste à faire ». L'API HTTP ne rend que `custom_item_id`,
+    /// sans le nom : elle renseigne alors `Some("personnalisé")`.
+    pub task_type: Option<String>,
+    /// Nom de la liste de sprint où la tâche a été trouvée, quand la source sait
+    /// le dire (voie MCP). `None` côté API HTTP, qui ne rend que la liste
+    /// principale — souvent un backlog.
+    pub sprint: Option<String>,
 }
 
 impl RawTask {
@@ -366,6 +438,12 @@ impl RawTask {
         let due_date_ms = v["due_date"].as_str().and_then(|s| s.parse::<i64>().ok());
         let priority = v["priority"]["priority"].as_str().map(str::to_string);
         let list_name = v["list"]["name"].as_str().map(str::to_string);
+        // `custom_item_id` absent ou 0 = type par défaut « Tâche ». L'API v2 ne
+        // rend pas le nom des types personnalisés, d'où le libellé générique.
+        let task_type = match v["custom_item_id"].as_i64().unwrap_or(0) {
+            0 => None,
+            _ => Some("personnalisé".to_string()),
+        };
         Some(RawTask {
             id,
             name,
@@ -376,6 +454,10 @@ impl RawTask {
             due_date_ms,
             priority,
             list_name,
+            task_type,
+            // La liste rendue par l'API est la liste principale de la tâche (le
+            // backlog, le plus souvent) : elle ne dit rien du sprint.
+            sprint: None,
         })
     }
 
@@ -392,6 +474,8 @@ impl RawTask {
             due_date_ms: v["dueDate"].as_i64(),
             priority: v["priority"].as_str().map(str::to_string),
             list_name: v["listName"].as_str().map(str::to_string),
+            task_type: v["taskType"].as_str().map(str::to_string),
+            sprint: v["sprint"].as_str().map(str::to_string),
         })
     }
 
@@ -425,7 +509,7 @@ impl RawTask {
 mod tests {
     use super::*;
 
-    const TASK: &str = r#"{"id":"86c1abc","name":"Dashboard activité","status":{"status":"en cours","type":"custom"},
+    const TASK: &str = r#"{"id":"86c1abc","name":"Dashboard activité","status":{"status":"en cours","type":"custom"},"custom_item_id":1003,
  "date_updated":"1789550000000","due_date":"1789900000000","url":"https://app.clickup.com/t/86c1abc",
  "priority":{"priority":"high"},"list":{"name":"Sprint 42"}}"#;
 
@@ -448,13 +532,18 @@ mod tests {
     /// `.superpowers/` est ignoré, la fixture ne peut donc pas y rester seule.
     const FIXTURE_MCP: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/clickup-mcp-3listes.json"));
 
+    /// Date fixe des tests : dernier jour du sprint « API 180 (8/25 - 9/21) ».
+    fn jour_test() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 9, 21).unwrap()
+    }
+
     fn requete() -> ClickupQuery {
         ClickupQuery { updated_since_ms: 1_789_000_000_000, resolve_ids: vec!["86cx00001".into(), "86cx00002".into()] }
     }
 
     #[test]
     fn prompt_mcp_annonce_les_trois_listes_la_borne_et_les_identifiants() {
-        let p = prompt_mcp(&requete());
+        let p = prompt_mcp(&requete(), jour_test());
         assert!(p.contains("\"open\"") && p.contains("\"updated\"") && p.contains("\"resolved\""), "{p}");
         assert!(p.contains("1789000000000"), "la borne de modification doit être dans le prompt : {p}");
         assert!(p.contains("86cx00001") && p.contains("86cx00002"), "{p}");
@@ -462,9 +551,102 @@ mod tests {
         assert!(p.contains(&MAX_TACHES.to_string()), "{p}");
     }
 
+    /// Construit une tâche brute de test, type et sprint paramétrables.
+    fn us(id: &str, task_type: Option<&str>, sprint: Option<&str>) -> RawTask {
+        RawTask {
+            id: id.into(),
+            name: format!("US {id}"),
+            status: "en cours".into(),
+            status_type: "open".into(),
+            url: format!("https://app.clickup.com/t/{id}"),
+            date_updated_ms: 1,
+            due_date_ms: None,
+            priority: None,
+            list_name: None,
+            task_type: task_type.map(str::to_string),
+            sprint: sprint.map(str::to_string),
+        }
+    }
+
+    fn ids(taches: &[RawTask]) -> Vec<&str> {
+        taches.iter().map(|t| t.id.as_str()).collect()
+    }
+
+    #[test]
+    fn retenir_us_ecarte_le_type_par_defaut() {
+        let sprint = Some("API 180 (8/25 - 9/21)");
+        let lot = vec![
+            us("story", Some("Story"), sprint),
+            us("bug", Some("Bug"), sprint),
+            us("anomalie", Some("Anomalie"), sprint),
+            us("null", None, sprint),
+            us("tache", Some("Tâche"), sprint),
+            us("task", Some("task"), sprint),
+            us("tache-espacee", Some("  TÂCHE  "), sprint),
+        ];
+        assert_eq!(ids(&retenir_us(lot, jour_test(), true)), ["story", "bug", "anomalie"]);
+    }
+
+    #[test]
+    fn retenir_us_ecarte_ce_qui_n_est_pas_du_sprint_en_cours() {
+        let lot = vec![
+            us("courant", Some("Story"), Some("API 180 (8/25 - 9/21)")),
+            us("autre-produit", Some("Story"), Some("Mobile 180 (9/7 - 10/5)")),
+            us("suivant", Some("Story"), Some("API 181 (9/22 - 10/19)")),
+            us("precedent", Some("Story"), Some("Mobile 179 (8/11 - 9/7)")),
+            us("backlog", Some("Story"), Some("Backlog API / Backend")),
+            us("sans-sprint", Some("Story"), None),
+        ];
+        assert_eq!(ids(&retenir_us(lot, jour_test(), true)), ["courant", "autre-produit"]);
+    }
+
+    #[test]
+    fn retenir_us_sans_exigence_de_sprint_ne_filtre_que_le_type() {
+        // Voie API HTTP : la liste de sprint est inconnue, on ne peut pas s'en servir.
+        let lot = vec![
+            us("story", Some("personnalisé"), None),
+            us("backlog", Some("Story"), Some("Backlog API / Backend")),
+            us("tache", None, None),
+        ];
+        assert_eq!(ids(&retenir_us(lot, jour_test(), false)), ["story", "backlog"]);
+    }
+
+    #[test]
+    fn raw_task_plate_lit_le_type_et_le_sprint() {
+        let t = RawTask::from_flat_json(&serde_json::json!({
+            "id":"x","name":"n","status":"s","closed":false,"url":"u","updatedAt":5_i64,
+            "taskType":"Story","sprint":"API 180 (8/25 - 9/21)"
+        }))
+        .unwrap();
+        assert_eq!(t.task_type.as_deref(), Some("Story"));
+        assert_eq!(t.sprint.as_deref(), Some("API 180 (8/25 - 9/21)"));
+    }
+
+    #[test]
+    fn raw_task_http_deduit_le_type_de_custom_item_id() {
+        let sans = |v| RawTask::from_json(&v).unwrap();
+        let base = |item: serde_json::Value| {
+            serde_json::json!({"id":"x","name":"n","status":{"status":"s","type":"open"},
+                "date_updated":"5","url":"u","custom_item_id":item})
+        };
+        assert_eq!(sans(base(serde_json::json!(0))).task_type, None, "0 = type « Tâche »");
+        assert_eq!(sans(base(serde_json::json!(null))).task_type, None, "absent = type « Tâche »");
+        assert_eq!(sans(base(serde_json::json!(1003))).task_type.as_deref(), Some("personnalisé"));
+        assert_eq!(sans(base(serde_json::json!(1003))).sprint, None, "l'API ne rend pas le sprint");
+    }
+
+    #[test]
+    fn prompt_mcp_cadre_le_perimetre_sprint_et_le_type() {
+        let p = prompt_mcp(&requete(), jour_test());
+        assert!(p.contains("21/09/2026"), "la date du jour doit être dans le prompt : {p}");
+        assert!(p.contains("taskType") && p.contains("sprint"), "{p}");
+        assert!(p.to_lowercase().contains("sprint en cours"), "{p}");
+        assert!(p.contains("« Tâche »"), "le type à écarter doit être nommé : {p}");
+    }
+
     #[test]
     fn prompt_mcp_sans_identifiant_a_resoudre_demande_une_liste_vide() {
-        let p = prompt_mcp(&ClickupQuery { updated_since_ms: 1, resolve_ids: vec![] });
+        let p = prompt_mcp(&ClickupQuery { updated_since_ms: 1, resolve_ids: vec![] }, jour_test());
         assert!(p.to_lowercase().contains("vide"), "{p}");
     }
 
@@ -551,10 +733,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // Le faux binaire recrache ses arguments dans le champ `name` de la seule
         // tâche rendue : un seul script vérifie à la fois la ligne de commande et
-        // le parsing.
+        // le parsing. La période du sprint couvre l'année entière — `fetch` filtre
+        // sur la date RÉELLE du jour, le test doit passer n'importe quand.
         let bin = faux_claude(
             dir.path(),
-            r#"cat > /dev/null; printf '{"open":[{"id":"1","name":"%s","status":"s","closed":false,"url":"u","dueDate":null,"priority":null,"listName":null,"updatedAt":1}],"updated":[],"resolved":[]}' "$*""#,
+            r#"cat > /dev/null; printf '{"open":[{"id":"1","name":"%s","status":"s","closed":false,"url":"u","dueDate":null,"priority":null,"listName":null,"taskType":"Story","sprint":"TEST 1 (1/1 - 12/31)","updatedAt":1}],"updated":[],"resolved":[]}' "$*""#,
         );
         let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20) };
         let b = fetch_reessaye(&mcp, &requete()).unwrap();

@@ -110,7 +110,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
-    const TASK: &str = r#"{"id":"86c1abc","name":"Dashboard activité","status":{"status":"en cours","type":"custom"},
+    const TASK: &str = r#"{"id":"86c1abc","name":"Dashboard activité","status":{"status":"en cours","type":"custom"},"custom_item_id":1003,
  "date_updated":"1789550000000","due_date":"1789900000000","url":"https://app.clickup.com/t/86c1abc",
  "priority":{"priority":"high"},"list":{"name":"Sprint 42"}}"#;
 
@@ -198,6 +198,8 @@ mod tests {
             due_date_ms: None,
             priority: None,
             list_name: None,
+            task_type: Some("Story".into()),
+            sprint: None,
         }
     }
 

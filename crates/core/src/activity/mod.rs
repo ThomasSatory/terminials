@@ -6,6 +6,7 @@ pub mod digest;
 pub mod providers;
 pub mod settings;
 pub mod shell_integration;
+pub mod sprint;
 pub mod store;
 pub mod summaries;
 pub mod tickets;
