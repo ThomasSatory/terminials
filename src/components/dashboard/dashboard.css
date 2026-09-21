@@ -376,6 +376,35 @@
   line-height: 1.5;
 }
 
+/* ---- Dépliage (bilan, tickets) ---- */
+/* Bouton discret sous la section qu'il prolonge : pas de cadre, juste un
+   chevron et un libellé atténués — il ne doit jamais tirer l'œil avant le
+   contenu qu'il cache. */
+.dash-fold {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--dash-atenue);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.dash-fold:hover {
+  color: var(--dash-laiton);
+}
+
+.dash-fold:focus-visible {
+  outline: 2px solid var(--dash-laiton);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 /* ---- « Reste à faire » : tickets ClickUp puis texte du LLM ---- */
 .dash-tasks {
   margin: 0;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Markdown } from "./Markdown";
+import { FoldedMarkdown } from "./Fold";
 import { activityApi, type ActivitySettings, type Summary } from "../../lib/activityApi";
 import { formatHm } from "../../lib/dashboardDay";
 import type { SummaryUi } from "../../lib/summaryState";
@@ -58,9 +58,9 @@ function TokenExpire({ generate }: { generate: (force: boolean) => void }) {
 
 /**
  * Bilan du jour ou de la semaine (colonne gauche, tâche 17) : un titre serif
- * laiton et la prose du LLM. Composant de présentation pur — l'état vient du
- * hook `useSummary` tenu par l'overlay, qui a besoin du même résumé pour le
- * pied de colonne.
+ * laiton et la prose du LLM, repliée au premier bloc (cf. `FoldedMarkdown`).
+ * Composant de présentation pur — l'état vient du hook `useSummary` tenu par
+ * l'overlay, qui a besoin du même résumé pour le pied de colonne.
  */
 export function SummaryPanel({
   title,
@@ -102,9 +102,11 @@ export function SummaryPanel({
 
       {ui.status === "ok" && (
         <>
-          <div className="dash-prose">
-            <Markdown text={ui.summary.text} onOpenLink={onOpenLink} />
-          </div>
+          <FoldedMarkdown
+            text={ui.summary.text}
+            onOpenLink={onOpenLink}
+            className="dash-prose"
+          />
           {/* Un échec de régénération ne doit jamais faire disparaître le résumé en
               cache (§10) : on l'affiche toujours ci-dessus, avec un bandeau d'erreur
               en plus plutôt qu'à sa place. */}
@@ -148,9 +150,5 @@ export function SummaryText({
   onOpenLink: (href: string) => void;
 }) {
   if (ui.status !== "ok") return null;
-  return (
-    <div className="dash-reste">
-      <Markdown text={ui.summary.text} onOpenLink={onOpenLink} />
-    </div>
-  );
+  return <FoldedMarkdown text={ui.summary.text} onOpenLink={onOpenLink} className="dash-reste" />;
 }

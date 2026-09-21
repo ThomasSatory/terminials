@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { OpenTasks } from "./OpenTasks";
+import { OpenTasks, TACHES_VISIBLES } from "./OpenTasks";
+import { foldLabel } from "./Fold";
+import { SummaryText } from "./SummaryPanel";
 import { champsLlmDetailles } from "./SettingsPanel";
 import { summaryFooter, scheduleSentence } from "./SummaryPanel";
 import { clickupActif, type OpenTask, type Summary } from "../../lib/activityApi";
@@ -53,6 +55,77 @@ describe("OpenTasks", () => {
 
     expect(html).toContain("en cours");
     expect(html).toContain("à faire");
+  });
+});
+
+describe("OpenTasks — dépliage", () => {
+  const lot = (n: number): OpenTask[] =>
+    Array.from({ length: n }, (_, i) => ({
+      id: `t${i}`,
+      name: `Ticket ${i}`,
+      status: "en cours",
+      url: `https://x/${i}`,
+    }));
+
+  it(`au plus ${TACHES_VISIBLES} tickets visibles, les autres derrière le bouton`, () => {
+    const html = renderToStaticMarkup(
+      <OpenTasks tasks={lot(TACHES_VISIBLES + 8)} active={true} onOpen={() => {}} />,
+    );
+    expect((html.match(/<li/g) ?? []).length).toBe(TACHES_VISIBLES);
+    expect(html).toContain("+ 8 autres");
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it("liste courte : aucun bouton de dépliage", () => {
+    const html = renderToStaticMarkup(
+      <OpenTasks tasks={lot(TACHES_VISIBLES)} active={true} onOpen={() => {}} />,
+    );
+    expect((html.match(/<li/g) ?? []).length).toBe(TACHES_VISIBLES);
+    expect(html).not.toContain("dash-fold");
+  });
+});
+
+describe("foldLabel", () => {
+  it("compte les éléments cachés, au singulier comme au pluriel", () => {
+    expect(foldLabel(false, 1)).toBe("+ 1 autre");
+    expect(foldLabel(false, 12)).toBe("+ 12 autres");
+  });
+  it("sans compte (un texte), le libellé reste générique", () => {
+    expect(foldLabel(false, null)).toBe("Déplier");
+  });
+  it("déplié, on propose toujours de replier", () => {
+    expect(foldLabel(true, 12)).toBe("Replier");
+    expect(foldLabel(true, null)).toBe("Replier");
+  });
+});
+
+describe("SummaryText — dépliage", () => {
+  const resume = (text: string): Summary => ({
+    text,
+    day: "2026-09-21",
+    cached: true,
+    generatedAt: 1_700_000_000,
+    model: "sonnet",
+  });
+
+  it("long résumé : seul le premier bloc est rendu, le bouton propose de déplier", () => {
+    const html = renderToStaticMarkup(
+      <SummaryText
+        ui={{ status: "ok", summary: resume("Premier bloc.\n\nSecond bloc.") }}
+        onOpenLink={() => {}}
+      />,
+    );
+    expect(html).toContain("Premier bloc.");
+    expect(html).not.toContain("Second bloc.");
+    expect(html).toContain("Déplier");
+  });
+
+  it("résumé d'un seul bloc : aucun bouton", () => {
+    const html = renderToStaticMarkup(
+      <SummaryText ui={{ status: "ok", summary: resume("Rien de notable.") }} onOpenLink={() => {}} />,
+    );
+    expect(html).toContain("Rien de notable.");
+    expect(html).not.toContain("dash-fold");
   });
 });
 

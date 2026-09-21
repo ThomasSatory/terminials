@@ -1,4 +1,9 @@
+import { useState } from "react";
+import { FoldButton } from "./Fold";
 import type { OpenTask } from "../../lib/activityApi";
+
+/** Tickets visibles tant que la liste n'est pas dépliée. */
+export const TACHES_VISIBLES = 5;
 
 /**
  * Rangs de priorité ClickUp (plus petit = plus urgent) pour le tri secondaire.
@@ -43,6 +48,10 @@ export function formatTaskDue(ts: number): string {
  * par ticket, identifiant en pastille laiton, nom en serif, échéance à droite.
  * Triés par échéance puis priorité. ClickUp inactif (source « off », ou clé API
  * sans jeton), une simple ligne atténuée renvoie aux réglages.
+ *
+ * Seuls les {@link TACHES_VISIBLES} premiers tickets s'affichent ; les suivants
+ * se déplient sur demande. Replié à chaque montage : l'overlay se rouvre sur le
+ * même premier coup d'œil, même après un sprint chargé.
  */
 export function OpenTasks({
   tasks,
@@ -53,35 +62,44 @@ export function OpenTasks({
   active: boolean;
   onOpen: (url: string) => void;
 }) {
+  const [open, setOpen] = useState(false);
+
   if (!active) {
     return <p className="dash-tasks-empty">Activer ClickUp dans les réglages</p>;
   }
 
   const sorted = [...tasks].sort(compareTasks);
+  const visibles = open ? sorted : sorted.slice(0, TACHES_VISIBLES);
+  const caches = sorted.length - visibles.length;
 
   return (
-    <ul className="dash-tasks">
-      {sorted.map((task) => (
-        <li key={task.id} className="dash-task">
-          <a
-            className="dash-task-id"
-            href={task.url}
-            title={task.listName ?? task.status}
-            onClick={(e) => {
-              e.preventDefault();
-              onOpen(task.url);
-            }}
-          >
-            {task.id}
-          </a>
-          <span className="dash-task-name" title={task.status}>
-            {task.name}
-          </span>
-          {task.dueDate != null && (
-            <span className="dash-task-due">{formatTaskDue(task.dueDate)}</span>
-          )}
-        </li>
-      ))}
-    </ul>
+    <>
+      <ul className="dash-tasks">
+        {visibles.map((task) => (
+          <li key={task.id} className="dash-task">
+            <a
+              className="dash-task-id"
+              href={task.url}
+              title={task.listName ?? task.status}
+              onClick={(e) => {
+                e.preventDefault();
+                onOpen(task.url);
+              }}
+            >
+              {task.id}
+            </a>
+            <span className="dash-task-name" title={task.status}>
+              {task.name}
+            </span>
+            {task.dueDate != null && (
+              <span className="dash-task-due">{formatTaskDue(task.dueDate)}</span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {(caches > 0 || open) && (
+        <FoldButton open={open} reste={caches} onToggle={() => setOpen(!open)} />
+      )}
+    </>
   );
 }
