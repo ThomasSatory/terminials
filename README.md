@@ -8,15 +8,16 @@ Le but : rendre le travail des agents *observable*. Sidebar verticale de workspa
 
 - **Terminaux** xterm.js (rendu WebGL avec repli DOM) sur PTY natifs (`portable-pty`). Chaque shell reçoit `TERM=xterm-256color` et `COLORTERM=truecolor`, déclarés par l'émulateur et jamais hérités (lancée depuis un raccourci .desktop, l'app n'a aucun `TERM` — et sans `TERM`, dircolors, git & co passent en monochrome). Les workspaces restent montés en arrière-plan : changer de workspace ne tue pas les shells.
 - **Workspaces** : chaque espace a un **nom** et un **dossier**, tous deux modifiables. Le bouton + de la sidebar (`Ctrl+Shift+N`) ouvre un formulaire inline *nom + dossier* (le `…` appelle le dialog GTK, dossier vide = `~`, `Entrée` valide, `Échap` annule) ; le bouton 📂 (`Ctrl+Shift+O`) reste le chemin rapide « choisir un dossier ». Sur un espace existant, le même formulaire s'ouvre par le bouton **✎** de la pile d'actions (révélée au survol de la ligne, sous le `×`) ou avec `Ctrl+Shift+R` — jamais au clic ni au double-clic sur la ligne, pour ne pas surgir à chaque fois qu'on sélectionne un espace — changer le dossier **relance les shells** du workspace (`TerminalPane` dépend de `cwd`). Le dossier saisi est validé côté Rust (`dir_exists`) avant création. La liste des workspaces (dossier, nom, couleur, nombre de terminaux) est restaurée au démarrage (un dossier disparu est ignoré avec un toast).
-- **Splits** : grille fixe de 1 à 4 terminaux par workspace (`Ctrl+Shift+T`), focus directionnel `Alt+←→↑↓`.
-- **Sidebar riche** : branche git (+ indicateur dirty), ports TCP en écoute du sous-arbre de process, répertoire abrégé (`~/…`), dernière notification, status pills et barre de progression. Un clic sur la ligne git ouvre le diff viewer ; `Ctrl+Shift+B` masque la sidebar. Une **pastille bleue** s'allume sur la ligne quand un agent du workspace a notifié (session Claude terminée via le hook `Stop`, ou en attente d'une entrée) et s'éteint à l'activation du workspace — ou, pour une notification émise par un pane précis (OSC), au focus de ce pane. Les workspaces se **réordonnent au glisser-déposer** (appui n'importe où sur la ligne, un trait indique la position de dépôt) ou avec `Ctrl+Shift+↑/↓` ; l'ordre est persisté.
+- **Onglets** : les terminaux d'un workspace sont des **onglets** (barre en haut de la zone terminal, un seul terminal visible à la fois, nombre libre). `Ctrl+Shift+T` ouvre un onglet, `Ctrl+Shift+W` ferme l'actif (fermer le dernier ferme le workspace), `Alt+←/→` navigue, `Ctrl+Shift+PageUp/PageDown` ou un glisser réordonne, le clic milieu ferme. Le titre est celui envoyé par le shell (OSC 0/2), sinon « Terminal n ». Tous les onglets restent montés (keep-alive) : un process long survit au changement d'onglet.
+- **Groupes** : la sidebar se découpe en **groupes** repliables (nom + couleur, bouton `+▾` ou `Ctrl+Shift+G`, `Ctrl+Shift+E` replie/déplie celui du workspace actif). On glisse un workspace dans un groupe (sur son en-tête = en fin de groupe, ou entre deux membres) ; les en-têtes se glissent entre eux. Dissoudre un groupe (`×`) libère ses workspaces sans rien fermer. Un nouveau workspace naît dans le groupe du workspace actif. `Ctrl+1..9` et `Ctrl+PageUp/Down` suivent l'ordre visible en sautant les groupes repliés. Groupes et appartenances sont persistés.
+- **Sidebar riche** : branche git (+ indicateur dirty), ports TCP en écoute du sous-arbre de process, répertoire abrégé (`~/…`), dernière notification, status pills et barre de progression. Un clic sur la ligne git ouvre le diff viewer ; `Ctrl+Shift+B` masque la sidebar. Une **pastille bleue** s'allume sur la ligne quand un agent du workspace a notifié (session Claude terminée via le hook `Stop`, ou en attente d'une entrée) et s'éteint à l'activation du workspace — ou, pour une notification émise par un onglet précis (OSC), au focus de cet onglet. Un groupe replié dont un membre réclame l'attention porte le même halo bleu. Les workspaces se **réordonnent au glisser-déposer** (appui n'importe où sur la ligne, un trait indique la position de dépôt) ou avec `Ctrl+Shift+↑/↓` ; l'ordre est persisté.
 - **Diff viewer** (`Ctrl+Shift+D`, copie du diff viewer cmux) : colonne « Files » (statut coloré, stats +/− par fichier), diff unifié concaténé avec en-têtes sticky et numéros de ligne, filtre `/`, navigation `j`/`k`/`g g`/`Shift+G`, `Échap` ferme.
-- **Notifications agents** : capture des séquences `OSC 9 / 99 / 777` dans le flux du terminal → **anneau bleu** autour du pane émetteur (signature cmux), rail bleu dans la sidebar, notification desktop D-Bus + demande d'attention de la fenêtre. Aussi déclenchables par la CLI et par un hook Claude Code ; les commandes lancées dans un pane ciblent leur workspace d'origine (`TERMINIALS_WORKSPACE_ID` injecté dans l'environnement du shell).
-- **Images & fichiers dans le prompt de l'agent** : `Ctrl+V` colle une image du presse-papier directement dans Claude Code (qui la lit via `xclip`, cf. Prérequis) ; `Ctrl+Shift+V` avec une image au presse-papier l'écrit dans `$TMPDIR/terminials-images/` et injecte son chemin dans le terminal ; un glisser-déposer de fichiers injecte leurs chemins (quotés) dans le pane survolé. Sans image au presse-papier, `Ctrl+Shift+V` reste le collage texte du terminal.
+- **Notifications agents** : capture des séquences `OSC 9 / 99 / 777` dans le flux du terminal → **point bleu** sur l'onglet émetteur (l'anneau cmux de l'ancienne grille), rail bleu dans la sidebar, notification desktop D-Bus + demande d'attention de la fenêtre. Aussi déclenchables par la CLI et par un hook Claude Code ; les commandes lancées dans un onglet ciblent leur workspace d'origine (`TERMINIALS_WORKSPACE_ID` injecté dans l'environnement du shell).
+- **Images & fichiers dans le prompt de l'agent** : `Ctrl+V` colle une image du presse-papier directement dans Claude Code (qui la lit via `xclip`, cf. Prérequis) ; `Ctrl+Shift+V` avec une image au presse-papier l'écrit dans `$TMPDIR/terminials-images/` et injecte son chemin dans le terminal ; un glisser-déposer de fichiers injecte leurs chemins (quotés) dans le terminal survolé. Sans image au presse-papier, `Ctrl+Shift+V` reste le collage texte du terminal.
 - **CLI + socket Unix** (`$XDG_RUNTIME_DIR/terminials.sock`, JSON-par-ligne) pour scripter l'app.
 - **Dashboard d'activité** (`Ctrl+Shift+H`) : vue globale (pas liée à un workspace) de ce qui a été fait — commits, prompts et sessions Claude Code, commandes shell, changements ClickUp — agrégés par heure et par workspace, avec une timeline détaillée filtrable. Un résumé quotidien (« bilan » + « reste à faire ») et un résumé hebdomadaire sont générés par un LLM Gemma auto-hébergé, automatiquement à 07:00 les jours ouvrés ou à la demande (bouton « Générer maintenant ») ; une pastille bleue sur l'entrée « Dashboard » de la sidebar signale un résumé fraîchement généré. Tous les réglages (fournisseur LLM, jeton, planification, tickets, etc.) se configurent dans le panneau ⚙ de l'overlay et sont persistés dans `~/.config/terminials/settings.json`. L'intégration shell (captation des commandes bash/zsh) ne voit que la **première commande simple** d'une ligne composée (pipes/`&&`/`;` non décomposés) — une limite assumée plutôt qu'un parseur shell complet. Elle ignore aussi les lignes de commande **très longues** : le marqueur OSC transporte la commande en base64 sous une borne de 4 096 octets, soit environ **3 000 caractères** de ligne de commande, au-delà desquels la commande n'apparaît pas dans la timeline. La synthèse hebdomadaire est produite **le lundi** pour la semaine écoulée (et rangée sous la date de ce lundi), afin de couvrir le vendredi précédent. Le jeton Gemma est **périssable (6 h)** : au-delà, la génération échoue avec un bandeau « Jeton LLM expiré » et un champ pour le renouveler sans repasser par ⚙.
 
-Hors périmètre : onglets/surfaces par pane, navigateur intégré, splits libres redimensionnables, command palette.
+Hors périmètre : splits (la grille 1→4 a été remplacée par les onglets), navigateur intégré, command palette.
 
 ## Prérequis (Ubuntu / Debian)
 
@@ -121,7 +122,7 @@ presse-papier WSLg — tout est là. Les réserves :
 - **Fenêtre blanche** : le renderer DMABUF de webkit2gtk ≥ 2.44 ne fonctionne pas sous WSLg ; lancer
   avec `WEBKIT_DISABLE_DMABUF_RENDERER=1` (et au besoin `WEBKIT_DISABLE_COMPOSITING_MODE=1`).
 - **Notifications desktop** : WSLg ne fait pas tourner de démon de notifications ; les appels D-Bus
-  de `notify-rust` échouent silencieusement. L'anneau bleu autour du pane et la pastille de la
+  de `notify-rust` échouent silencieusement. Le point bleu sur l'onglet et la pastille de la
   sidebar continuent de fonctionner — seul le toast système manque (installer `dunst` ou équivalent
   dans la distro pour le récupérer).
 - **Performance git** : ne jamais placer les dépôts sous `/mnt/c` (9P). La sonde dirty (`git status`)
@@ -196,17 +197,20 @@ Couche `Ctrl+Shift` (convention gnome-terminal), matching par touche physique (`
 |---|---|
 | `Ctrl+Shift+N` | Nouvel espace : formulaire nom + dossier dans la sidebar |
 | `Ctrl+Shift+O` | Ouvrir un dossier (nouveau workspace) |
-| `Ctrl+Shift+T` | Nouveau terminal (pane) |
-| `Ctrl+Shift+W` | Fermer le pane actif |
+| `Ctrl+Shift+T` | Nouvel onglet terminal |
+| `Ctrl+Shift+W` | Fermer l'onglet actif (le dernier ferme le workspace) |
 | `Ctrl+Shift+Q` | Fermer le workspace actif |
 | `Ctrl+Shift+R` | Modifier le nom / le dossier du workspace (édition inline) |
 | `Ctrl+Shift+D` | Ouvrir/fermer le diff viewer |
 | `Ctrl+Shift+B` | Afficher/masquer la sidebar |
 | `Ctrl+Shift+H` | Ouvrir/fermer le dashboard d'activité |
-| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Déplacer le workspace actif dans la sidebar (sans wrap) |
-| `Ctrl+PageUp` / `Ctrl+PageDown` | Workspace précédent / suivant |
-| `Ctrl+1` … `Ctrl+9` | Sélection directe de workspace |
-| `Alt+←` `Alt+→` `Alt+↑` `Alt+↓` | Focus directionnel de pane |
+| `Ctrl+Shift+G` | Nouveau groupe (formulaire nom + couleur dans la sidebar) |
+| `Ctrl+Shift+E` | Replier/déplier le groupe du workspace actif |
+| `Ctrl+Shift+PageUp` / `Ctrl+Shift+PageDown` | Déplacer l'onglet actif dans la barre (sans wrap) |
+| `Ctrl+Shift+↑` / `Ctrl+Shift+↓` | Déplacer le workspace actif dans son groupe (sans wrap) |
+| `Ctrl+PageUp` / `Ctrl+PageDown` | Workspace précédent / suivant (ordre visible, groupes repliés sautés) |
+| `Ctrl+1` … `Ctrl+9` | Sélection directe de workspace (ordre visible) |
+| `Alt+←` / `Alt+→` | Onglet précédent / suivant |
 | `Échap` | Ferme le diff viewer (quand il est ouvert) |
 
 Conflits assumés : `Ctrl+PageUp/Down` (navigation de fenêtres tmux) et `Ctrl+2..8` (codes de contrôle rarissimes) sont capturés par l'app.

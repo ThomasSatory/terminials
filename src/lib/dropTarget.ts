@@ -32,8 +32,8 @@ export function toCssPoint(point: Point, devicePixelRatio: number): Point {
 
 /** Sous-ensemble du store nécessaire pour trouver le PTY cible (pure, testable sans Zustand). */
 export interface PtyTargetState {
-  panePtys: Record<string, number>;
-  workspaces: { id: string; activePaneId: string | null }[];
+  tabPtys: Record<string, number>;
+  workspaces: { id: string; activeTabId: string | null }[];
   activeId: string | null;
 }
 
@@ -42,8 +42,8 @@ export interface PtyTargetState {
     dans le mauvais terminal serait pire que ne rien faire. `null` (drop hors cellule)
     vise le pane actif du workspace actif. */
 export function resolveTargetPty(state: PtyTargetState, paneId: string | null): number | undefined {
-  if (paneId !== null) return state.panePtys[paneId];
+  if (paneId !== null) return state.tabPtys[paneId];
   const active = state.workspaces.find((w) => w.id === state.activeId);
-  const activePaneId = active?.activePaneId;
-  return activePaneId ? state.panePtys[activePaneId] : undefined;
+  const activeTabId = active?.activeTabId;
+  return activeTabId ? state.tabPtys[activeTabId] : undefined;
 }

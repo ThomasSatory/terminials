@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useDashboardStore } from "../store/dashboard";
 import { useWorkspaceStore } from "../store/workspace";
-import { focusPane } from "../lib/paneFocus";
+import { focusTab } from "../lib/tabFocus";
 import { useActivityData, useSummary } from "../hooks/useActivityData";
 import { activityApi, clickupActif, type ActivitySettings } from "../lib/activityApi";
 import {
@@ -108,7 +108,7 @@ export function DashboardOverlay() {
     return () => {
       const s = useWorkspaceStore.getState();
       const w = s.workspaces.find((x) => x.id === s.activeId);
-      if (w?.activePaneId) focusPane(w.activePaneId);
+      if (w?.activeTabId) focusTab(w.activeTabId);
     };
   }, []);
 

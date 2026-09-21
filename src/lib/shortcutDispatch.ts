@@ -1,9 +1,17 @@
 import { closePty } from "./pty";
 import { openFolderDialog } from "./openFolder";
-import { focusPane } from "./paneFocus";
-import { paneNavTarget, type ShortcutAction } from "./shortcuts";
-import { useWorkspaceStore, MAX_PANES } from "../store/workspace";
+import { focusTab } from "./tabFocus";
+import type { ShortcutAction } from "./shortcuts";
+import { useWorkspaceStore, navigableOrder, type Workspace } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
+
+/** Ferme les PTYs backend de tous les onglets d'un workspace (avant de le retirer du store). */
+function closeAllPtys(ws: Workspace, tabPtys: Record<string, number>): void {
+  for (const t of ws.tabs) {
+    const ptyId = tabPtys[t.id];
+    if (ptyId !== undefined) closePty(ptyId);
+  }
+}
 
 /**
  * Exécute une action de raccourci sur le store. Point UNIQUE de dispatch :
@@ -25,22 +33,35 @@ export function dispatchShortcut(action: ShortcutAction): void {
       if (!s.sidebarVisible) s.toggleSidebar();
       s.requestNewWorkspace(true);
       return;
-    case "new-pane":
-      if (active && !s.addPane(active.id)) s.showToast(`max ${MAX_PANES} terminaux`);
+    case "new-group":
+      if (!s.sidebarVisible) s.toggleSidebar();
+      s.requestNewGroup(true);
       return;
-    case "close-pane":
-      // Le PTY est fermé par le cleanup du TerminalPane démonté.
-      if (active?.activePaneId) s.closePane(active.id, active.activePaneId);
+    case "toggle-group":
+      if (active?.groupId) s.toggleGroupCollapsed(active.groupId);
+      return;
+    case "new-tab": {
+      if (!active) return;
+      const tabId = s.addTab(active.id);
+      // Le TerminalPane n'existe pas encore : le focus se fera à son montage
+      // (TabbedTerminals focus l'onglet actif quand il change).
+      focusTab(tabId);
+      return;
+    }
+    case "close-tab":
+      if (!active?.activeTabId) return;
+      // Dernier onglet = fermeture du workspace : on ferme explicitement ses PTYs
+      // comme close-workspace, sans dépendre de l'ordre de démontage React.
+      if (active.tabs.length <= 1) closeAllPtys(active, s.tabPtys);
+      // Sinon le PTY est fermé par le cleanup du TerminalPane démonté.
+      s.closeTab(active.id, active.activeTabId);
       return;
     case "close-workspace": {
       if (!active) return;
       // Ferme explicitement les PTYs AVANT de retirer le workspace :
-      // closeWorkspace purge panePtys, on ne dépend pas de l'ordre de
+      // closeWorkspace purge tabPtys, on ne dépend pas de l'ordre de
       // démontage React pour tuer les shells.
-      for (const paneId of active.panes) {
-        const ptyId = s.panePtys[paneId];
-        if (ptyId !== undefined) closePty(ptyId);
-      }
+      closeAllPtys(active, s.tabPtys);
       s.closeWorkspace(active.id);
       return;
     }
@@ -62,40 +83,50 @@ export function dispatchShortcut(action: ShortcutAction): void {
       return;
     case "prev-workspace":
     case "next-workspace": {
-      if (s.workspaces.length === 0) return;
-      const idx = s.workspaces.findIndex((w) => w.id === s.activeId);
+      // Ordre VISIBLE (hors-groupe puis groupes), sans les groupes repliés — sauf si
+      // l'actif y est : on part de lui quand même pour ne pas sauter au hasard.
+      const order = navigableOrder(s.workspaces, s.groups);
+      if (order.length === 0) return;
+      const idx = order.findIndex((w) => w.id === s.activeId);
       const delta = action.type === "next-workspace" ? 1 : -1;
-      const next =
-        idx === -1
-          ? s.workspaces[0]
-          : s.workspaces[(idx + delta + s.workspaces.length) % s.workspaces.length];
+      const next = idx === -1 ? order[0] : order[(idx + delta + order.length) % order.length];
       s.setActive(next.id);
       return;
     }
     case "move-workspace": {
       // Réordonnancement, PAS de la navigation : pas de wrap-around (contrairement
       // à prev/next-workspace) — téléporter un workspace d'un bout à l'autre de la
-      // liste sur une frappe de trop serait désagréable.
+      // liste sur une frappe de trop serait désagréable. Confiné à l'appartenance.
       if (!active) return;
-      const idx = s.workspaces.indexOf(active);
+      const peers = s.workspaces.filter((w) => w.groupId === active.groupId);
+      const idx = peers.indexOf(active);
       const target = idx + (action.dir === "up" ? -1 : 1);
-      if (target < 0 || target >= s.workspaces.length) return;
+      if (target < 0 || target >= peers.length) return;
       s.moveWorkspace(active.id, target);
       return;
     }
     case "select-workspace": {
-      const target = s.workspaces[action.index];
+      const target = navigableOrder(s.workspaces, s.groups)[action.index];
       if (target) s.setActive(target.id);
       return;
     }
-    case "focus-pane": {
-      if (!active || !active.activePaneId) return;
-      const current = active.panes.indexOf(active.activePaneId);
-      const target = paneNavTarget(active.panes.length, current, action.dir);
-      if (target === null) return;
-      const targetPaneId = active.panes[target];
-      s.setActivePane(active.id, targetPaneId);
-      focusPane(targetPaneId);
+    case "prev-tab":
+    case "next-tab": {
+      if (!active || active.tabs.length === 0) return;
+      const idx = active.tabs.findIndex((t) => t.id === active.activeTabId);
+      const delta = action.type === "next-tab" ? 1 : -1;
+      const n = active.tabs.length;
+      const target = active.tabs[idx === -1 ? 0 : (idx + delta + n) % n];
+      s.setActiveTab(active.id, target.id);
+      focusTab(target.id);
+      return;
+    }
+    case "move-tab": {
+      if (!active?.activeTabId) return;
+      const idx = active.tabs.findIndex((t) => t.id === active.activeTabId);
+      const target = idx + (action.dir === "left" ? -1 : 1);
+      if (target < 0 || target >= active.tabs.length) return; // pas de wrap
+      s.moveTab(active.id, active.activeTabId, target);
       return;
     }
   }

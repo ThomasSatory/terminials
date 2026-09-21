@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Sidebar } from "./components/Sidebar";
-import { PaneTree } from "./components/PaneTree";
+import { TabbedTerminals } from "./components/TabbedTerminals";
 import { DiffOverlay } from "./components/DiffOverlay";
 import { DashboardOverlay } from "./components/DashboardOverlay";
 import { useShortcuts } from "./hooks/useShortcuts";
@@ -12,8 +12,9 @@ import { openFolderDialog } from "./lib/openFolder";
 import { injectPaths } from "./lib/injectFiles";
 import { resolvePaneId, toCssPoint } from "./lib/dropTarget";
 import { activityApi } from "./lib/activityApi";
-import { useWorkspaceStore, MAX_PANES, loadSavedWorkspaces } from "./store/workspace";
+import { useWorkspaceStore, loadSavedState } from "./store/workspace";
 import { useDashboardStore } from "./store/dashboard";
+import { nextDelayMs, DIRTY_BUDGET, PORTS_BUDGET } from "./lib/pollSchedule";
 import "./App.css";
 
 const EMPTY_BTN: CSSProperties = {
@@ -28,7 +29,13 @@ const EMPTY_BTN: CSSProperties = {
 
 export default function App() {
   useShortcuts();
-  const { workspaces, activeId, addPane, showToast, toast, clearToast } = useWorkspaceStore();
+  // Sélecteurs ciblés, jamais `useWorkspaceStore()` nu : s'abonner au store entier
+  // faisait re-render tout l'arbre (Sidebar + tous les TabbedTerminals) à CHAQUE tour de sonde.
+  const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const activeId = useWorkspaceStore((s) => s.activeId);
+  const toast = useWorkspaceStore((s) => s.toast);
+  // Actions : références stables créées une fois par Zustand.
+  const clearToast = useWorkspaceStore((s) => s.clearToast);
   // Ctrl+Shift+B : consommation au rendu du booléen basculé par toggleSidebar (K.5).
   const sidebarVisible = useWorkspaceStore((s) => s.sidebarVisible);
   const dashboardOpen = useDashboardStore((s) => s.open);
@@ -37,29 +44,30 @@ export default function App() {
   // vide « Open folder » pendant les invoke dir_exists.
   const [booting, setBooting] = useState(true);
 
-  // Restauration des workspaces persistés au premier montage : chaque cwd est
-  // validé côté Rust ; dossier disparu → skippé + toast (jamais restauré :
+  // Restauration des groupes et workspaces persistés au premier montage : chaque cwd
+  // est validé côté Rust ; dossier disparu → skippé + toast (jamais restauré :
   // unread/status/progress/ports repartent à zéro, cf. contrat SavedWorkspace).
+  // Les groupes sont tous restaurés (même vides) : les groupIndex restent valides.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const saved = loadSavedWorkspaces();
-      if (saved.length > 0) {
+      const saved = loadSavedState();
+      if (saved.workspaces.length > 0 || saved.groups.length > 0) {
         const checks = await Promise.all(
-          saved.map((entry) =>
+          saved.workspaces.map((entry) =>
             invoke<boolean>("dir_exists", { path: entry.cwd }).catch(() => false),
           ),
         );
         if (cancelled) return;
-        const valid = saved.filter((_, i) => checks[i]);
-        const missing = saved.filter((_, i) => !checks[i]);
+        const valid = saved.workspaces.filter((_, i) => checks[i]);
+        const missing = saved.workspaces.filter((_, i) => !checks[i]);
         const s = useWorkspaceStore.getState();
         if (missing.length > 0) {
           s.showToast(
             `dossier introuvable, workspace ignoré : ${missing.map((m) => m.cwd).join(", ")}`,
           );
         }
-        if (valid.length > 0) s.restoreWorkspaces(valid);
+        s.restoreState({ groups: saved.groups, workspaces: valid });
       }
       if (!cancelled) setBooting(false);
     })();
@@ -70,7 +78,7 @@ export default function App() {
 
   // Glisser-déposer de fichiers : Tauri consomme le drop OS (dragDropEnabled par
   // défaut) et émet tauri://drag-drop — l'event `drop` du DOM ne remonte donc jamais.
-  // Les chemins sont écrits, quotés, dans le PTY du pane survolé (Claude Code lit le
+  // Les chemins sont écrits, quotés, dans le PTY de l'onglet survolé (Claude Code lit le
   // fichier). Tous types de fichiers : Claude Code lit aussi bien un .ts qu'un .png.
   useEffect(() => {
     const unlisten = getCurrentWebview().onDragDropEvent((event) => {
@@ -112,9 +120,10 @@ export default function App() {
     return () => clearTimeout(h);
   }, [toast, clearToast]);
 
-  // Poller git (~2s) : rafraîchit la branche affichée dans la sidebar.
-  // Workspaces interrogés en parallèle (Promise.all) ; garde in-flight : sur un
-  // repo lent (NFS), le tick suivant ne se superpose pas au précédent.
+  // Sonde branche (~2s) : GRATUITE (`symbolic-ref` lit .git/HEAD, 0,00 s mesuré sur
+  // un repo de 20 000 fichiers). Elle peut donc rester à cadence fixe et en parallèle.
+  // Volontairement séparée du dirty : les fusionner faisait payer un `git status`
+  // complet juste pour rafraîchir un nom de branche.
   useEffect(() => {
     let running = false;
     const tick = async () => {
@@ -125,10 +134,9 @@ export default function App() {
         await Promise.all(
           s.workspaces.map(async (w) => {
             try {
-              const info = await invoke<{ branch: string | null; dirty: boolean }>("git_info", {
-                cwd: w.cwd,
-              });
-              if (info.branch) s.setGit(w.id, info.branch, info.dirty);
+              const branch = await invoke<string | null>("git_branch", { cwd: w.cwd });
+              // HEAD détachée / hors repo → null : on garde la dernière branche connue.
+              if (branch) s.setBranch(w.id, branch);
             } catch {
               /* commande indisponible (backend pas prêt) ou cwd hors repo */
             }
@@ -143,36 +151,89 @@ export default function App() {
     return () => clearInterval(h);
   }, []);
 
-  // Poller ports (~2s) : union des ports ouverts par tous les panes de chaque
-  // workspace. Workspaces ET panes en parallèle ; même garde in-flight.
+  // Sonde dirty : CHÈRE et irréductible (lstat de chaque fichier suivi — 6,14 s sur
+  // ~/dev/monorepo, et ~19 s-CPU de plus dans le hook fanotify d'un antivirus).
+  // Boucle auto-ordonnancée : chaque workspace porte sa propre échéance, déduite du coût
+  // de SA dernière sonde (pollSchedule). Un repo géant dégrade sa seule fraîcheur, sans
+  // saturer le CPU ni retarder les autres.
+  // Séquentiel, JAMAIS en parallèle : lancer un `git status` par workspace d'un coup
+  // saturait le disque et le scan on-access de l'antivirus.
   useEffect(() => {
-    let running = false;
-    const tick = async () => {
-      if (running) return;
-      running = true;
-      try {
-        const s = useWorkspaceStore.getState();
-        await Promise.all(
-          s.workspaces.map(async (w) => {
-            const ptyIds = w.panes
-              .map((paneId) => s.panePtys[paneId])
-              .filter((id): id is number => id !== undefined);
-            const results = await Promise.all(
-              ptyIds.map((ptyId) =>
-                invoke<number[]>("workspace_ports", { ptyId }).catch(() => [] as number[]),
-              ),
-            );
-            const ports = new Set<number>(results.flat());
-            s.setPorts(w.id, [...ports].sort((a, b) => a - b));
-          }),
-        );
-      } finally {
-        running = false;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const dueAt = new Map<string, number>(); // wsId -> date de la prochaine sonde
+
+    const round = async () => {
+      const { workspaces } = useWorkspaceStore.getState();
+      for (const w of workspaces) {
+        if (stopped) return;
+        if ((dueAt.get(w.id) ?? 0) > Date.now()) continue;
+        const started = performance.now();
+        try {
+          const dirty = await invoke<boolean>("git_dirty", { cwd: w.cwd });
+          // La sonde dure des secondes : le dossier du workspace a pu changer
+          // entre-temps (setCwd, édition inline du dossier). Écrire le résultat
+          // sans revérifier afficherait le dirty de l'ANCIEN dossier.
+          const still = useWorkspaceStore.getState().workspaces.find((x) => x.id === w.id);
+          if (still?.cwd === w.cwd) useWorkspaceStore.getState().setDirty(w.id, dirty);
+        } catch {
+          /* commande indisponible (backend pas prêt) ou cwd hors repo */
+        }
+        // L'échéance est posée même en cas d'échec : sinon un cwd cassé serait resondé en boucle.
+        dueAt.set(w.id, Date.now() + nextDelayMs(performance.now() - started, DIRTY_BUDGET));
       }
+      const live = new Set(workspaces.map((w) => w.id));
+      for (const id of [...dueAt.keys()]) if (!live.has(id)) dueAt.delete(id);
+      // Réveil de contrôle à 1 s : c'est ce qui fait sonder un workspace tout juste
+      // ouvert sans attendre l'échéance (jusqu'à 2 min) d'un voisin lent. Le tour
+      // ne coûte qu'un parcours de Map quand aucune échéance n'est atteinte.
+      if (!stopped) timer = setTimeout(round, 1000);
     };
-    const h = setInterval(tick, 2000);
-    tick();
-    return () => clearInterval(h);
+    void round();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  // Sonde ports : union des ports ouverts par les onglets de chaque workspace. Même
+  // ordonnancement adaptatif que le dirty — le parcours de /proc du sous-arbre reste
+  // bien moins cher, mais pas gratuit sur un onglet qui fait tourner un node.
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const dueAt = new Map<string, number>();
+
+    const round = async () => {
+      const s = useWorkspaceStore.getState();
+      for (const w of s.workspaces) {
+        if (stopped) return;
+        if ((dueAt.get(w.id) ?? 0) > Date.now()) continue;
+        const started = performance.now();
+        const ptyIds = w.tabs
+          .map((t) => s.tabPtys[t.id])
+          .filter((id): id is number => id !== undefined);
+        const results = await Promise.all(
+          ptyIds.map((ptyId) =>
+            invoke<number[]>("workspace_ports", { ptyId }).catch(() => [] as number[]),
+          ),
+        );
+        const ports = new Set<number>(results.flat());
+        useWorkspaceStore.getState().setPorts(
+          w.id,
+          [...ports].sort((a, b) => a - b),
+        );
+        dueAt.set(w.id, Date.now() + nextDelayMs(performance.now() - started, PORTS_BUDGET));
+      }
+      const live = new Set(s.workspaces.map((w) => w.id));
+      for (const id of [...dueAt.keys()]) if (!live.has(id)) dueAt.delete(id);
+      if (!stopped) timer = setTimeout(round, 1000);
+    };
+    void round();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, []);
 
   const active = workspaces.find((w) => w.id === activeId);
@@ -224,36 +285,16 @@ export default function App() {
                   {active.name}
                   {active.branch && <span style={{ color: "#6f6f6f" }}> — {active.branch}</span>}
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  {/* Compteur de panes : pastille pleine = pane actif (remplace « 2/4 »). */}
-                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    {active.panes.map((paneId) => (
-                      <span
-                        key={paneId}
-                        style={{
-                          width: 7,
-                          height: 7,
-                          borderRadius: "50%",
-                          background: paneId === active.activePaneId ? active.color : "#3a3a3a",
-                        }}
-                      />
-                    ))}
-                  </span>
-                  <button
-                    className="icon-btn"
-                    onClick={() => {
-                      if (!addPane(active.id)) showToast(`max ${MAX_PANES} terminaux`);
-                    }}
-                    title="Nouveau terminal (Ctrl+Shift+T)"
-                  >
-                    +
-                  </button>
+                {/* Le compteur d'onglets et le + vivent désormais dans la barre d'onglets. */}
+                <span style={{ color: "#6f6f6f", fontSize: 12 }}>
+                  {active.tabs.length > 1 ? `${active.tabs.length} onglets` : ""}
                 </span>
               </div>
             )}
-            {/* Keep-alive : TOUS les workspaces restent montés en permanence, empilés.
-                Les inactifs sont masqués en visibility:hidden — JAMAIS display:none
-                (un conteneur 0×0 ferait fit() → resize_pty(0) → reflow shell cassé). */}
+            {/* Keep-alive : TOUS les workspaces (barre d'onglets + terminaux) restent montés
+                en permanence, empilés. Les inactifs sont masqués en visibility:hidden —
+                JAMAIS display:none (un conteneur 0×0 ferait fit() → resize_pty(0) → reflow
+                shell cassé). */}
             <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
               {workspaces.map((w) => (
                 <div
@@ -264,11 +305,12 @@ export default function App() {
                     visibility: w.id === activeId ? "visible" : "hidden",
                   }}
                 >
-                  <PaneTree ws={w} visible={w.id === activeId} />
+                  <TabbedTerminals ws={w} visible={w.id === activeId} />
                 </div>
               ))}
-              {/* Diff viewer : overlay au-dessus de la grille seule — sidebar et top bar restent visibles.
-                  La grille reste montée dessous (keep-alive) : risque PTY nul (spec §4). */}
+              {/* Diff viewer : overlay au-dessus de la zone terminal (barre d'onglets incluse) —
+                  sidebar et top bar restent visibles. Les terminaux restent montés dessous
+                  (keep-alive) : risque PTY nul (spec §4). */}
               {active?.diffOpen && <DiffOverlay ws={active} />}
             </div>
           </>

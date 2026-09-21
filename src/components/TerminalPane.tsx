@@ -7,19 +7,23 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { spawnPty, closePty, type Pty } from "../lib/pty";
 import { useWorkspaceStore } from "../store/workspace";
 import { matchShortcut } from "../lib/shortcuts";
-import { registerPaneFocus, unregisterPaneFocus } from "../lib/paneFocus";
+import { registerTabFocus, unregisterTabFocus } from "../lib/tabFocus";
 import { injectPaths, savePastedImage } from "../lib/injectFiles";
 
 const SHELL = "/bin/bash";
 
+/**
+ * Un terminal xterm + son PTY, monté une fois pour toute la vie de l'onglet.
+ * NE JAMAIS le démonter tant que l'onglet existe : le cleanup ferme le PTY.
+ */
 export function TerminalPane({
   wsId,
-  paneId,
+  tabId,
   cwd,
   visible,
 }: {
   wsId: string;
-  paneId: string;
+  tabId: string;
   cwd: string;
   visible: boolean;
 }) {
@@ -42,8 +46,14 @@ export function TerminalPane({
     // (kill-word readline préservé). Ctrl+Shift+C/V ne matchent jamais.
     term.attachCustomKeyEventHandler((e) => matchShortcut(e) === null);
 
-    // Focus programmatique (Alt+flèches via focusPane) : ce pane expose son focus.
-    registerPaneFocus(paneId, () => term.focus());
+    // Focus programmatique (Alt+←/→, clic d'onglet via focusTab) : cet onglet expose son focus.
+    registerTabFocus(tabId, () => term.focus());
+
+    // Titre d'onglet : OSC 0/2 envoyés par le shell/programme (bash PROMPT_COMMAND, vim,
+    // Claude Code…). Front pur, rien côté Rust. Le store court-circuite les répétitions.
+    const titleSub = term.onTitleChange((title) =>
+      useWorkspaceStore.getState().setTabTitle(wsId, tabId, title.trim()),
+    );
 
     // Collage d'une image (Ctrl+Shift+V) : xterm ne sait coller que du texte. On écoute
     // en CAPTURE sur le host, donc avant les listeners xterm — mais on ne dévie que si
@@ -58,7 +68,7 @@ export function TerminalPane({
       e.stopImmediatePropagation();
       savePastedImage(image)
         .then((path) => {
-          if (!injectPaths(paneId, [path])) {
+          if (!injectPaths(tabId, [path])) {
             useWorkspaceStore.getState().showToast("terminal indisponible pour l'image collée");
           }
         })
@@ -111,7 +121,7 @@ export function TerminalPane({
         return;
       }
       pty = p;
-      useWorkspaceStore.getState().setPanePty(paneId, p.id);
+      useWorkspaceStore.getState().setTabPty(tabId, p.id);
       term.onData((d) => p.write(d));
       // Le shell est mort : on l'indique au lieu de laisser un terminal figé.
       listen<{ id: number }>("pty-exit", (e) => {
@@ -121,11 +131,11 @@ export function TerminalPane({
         else unlistenExit = un;
       });
     }).catch((err) => {
-      // Le pane a pu être démonté avant la résolution de la promesse : ne pas
+      // L'onglet a pu être démonté avant la résolution de la promesse : ne pas
       // écrire dans un terminal déjà disposé (même garde que le .then voisin).
       if (disposed) return;
       // Échec du spawn (shell introuvable, cwd disparu…) : visible dans le
-      // terminal plutôt qu'un pane muet.
+      // terminal plutôt qu'un onglet muet.
       term.write(`\r\n\x1b[31m[terminials] échec du lancement du shell : ${String(err)}\x1b[0m\r\n`);
     });
 
@@ -138,18 +148,20 @@ export function TerminalPane({
       ro.disconnect();
       host.removeEventListener("paste", onPaste, true);
       unlistenExit?.();
+      titleSub.dispose();
       if (pty) {
         closePty(pty.id);
-        useWorkspaceStore.getState().removePanePty(paneId);
+        useWorkspaceStore.getState().removeTabPty(tabId);
       }
-      unregisterPaneFocus(paneId);
+      unregisterTabFocus(tabId);
       term.dispose();
     };
-  }, [wsId, paneId, cwd]);
+  }, [wsId, tabId, cwd]);
 
-  // Révélation du workspace (visibility hidden → visible) : les dimensions ont pu
-  // changer pendant la période masquée → refit explicite (le garde-fou dans refit
-  // rend l'appel inoffensif si le conteneur n'est pas encore dimensionné).
+  // Révélation de l'onglet (visibility hidden → visible, par changement d'onglet ou de
+  // workspace) : les dimensions ont pu changer pendant la période masquée → refit
+  // explicite (le garde-fou dans refit rend l'appel inoffensif si le conteneur n'est
+  // pas encore dimensionné).
   useEffect(() => {
     if (visible) refitRef.current();
   }, [visible]);

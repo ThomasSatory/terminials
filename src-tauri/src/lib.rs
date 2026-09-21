@@ -115,6 +115,19 @@ fn git_info(cwd: String) -> terminials_core::git::GitInfo {
     terminials_core::git::git_info(&cwd)
 }
 
+/// Sonde branche seule : gratuite (lit .git/HEAD). Sondée à intervalle fixe.
+#[tauri::command]
+fn git_branch(cwd: String) -> Option<String> {
+    terminials_core::git::branch(&cwd)
+}
+
+/// Sonde dirty seule : chère (lstat de chaque fichier suivi). Le front l'espace
+/// selon son coût mesuré — ne jamais la câbler sur un intervalle fixe.
+#[tauri::command]
+fn git_dirty(cwd: String) -> bool {
+    terminials_core::git::is_dirty(&cwd)
+}
+
 #[tauri::command]
 fn git_changed_files(cwd: String) -> Vec<terminials_core::git::ChangedFile> {
     terminials_core::git::changed_files(&cwd)
@@ -153,6 +166,8 @@ pub fn run() {
             resize_pty,
             close_pty,
             git_info,
+            git_branch,
+            git_dirty,
             git_changed_files,
             git_file_diff,
             dir_exists,

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useWorkspaceStore, type Workspace } from "../store/workspace";
-import { focusPane } from "../lib/paneFocus";
+import { focusTab } from "../lib/tabFocus";
 import { parseUnifiedDiff, type ChangedFile, type DiffLine } from "../lib/diff";
 
 /** Lettre + couleur de statut par fichier (fidèle cmux). */
@@ -124,13 +124,13 @@ function DiffOverlayInner({ ws }: { ws: Workspace }) {
   }, [loadFiles]);
 
   // Focus : l'overlay prend le focus au montage (blur implicite du textarea xterm) ;
-  // au démontage, le focus revient au textarea du pane actif du workspace (spec §4).
+  // au démontage, le focus revient au textarea de l’onglet actif du workspace (spec §4).
   useEffect(() => {
     containerRef.current?.focus();
     return () => {
       const s = useWorkspaceStore.getState();
       const w = s.workspaces.find((x) => x.id === wsId);
-      if (w?.activePaneId) focusPane(w.activePaneId);
+      if (w?.activeTabId) focusTab(w.activeTabId);
     };
   }, [wsId]);
 

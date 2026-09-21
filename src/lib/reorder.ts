@@ -44,3 +44,49 @@ export function moveItem<T>(arr: T[], from: number, to: number): T[] {
   next.splice(to, 0, item);
   return next;
 }
+
+// --- Dépôt dans une sidebar à groupes -------------------------------------------
+
+/** Ligne de la sidebar telle que le drag la voit : un workspace (`groupId` = son
+    appartenance, null hors-groupe) ou un en-tête de groupe (`groupId` = l'id du groupe).
+    Ordre = ordre du DOM (hors-groupe, puis chaque groupe : en-tête puis membres dépliés). */
+export interface SidebarRow extends RowRect {
+  kind: "ws" | "group";
+  groupId: string | null;
+}
+
+export type DropTarget =
+  /** Insérer le workspace à `index` parmi les membres de `groupId` ; `boundary` = frontière
+      de lignes (au sens de dropBoundary) où dessiner le trait. */
+  | { kind: "workspace"; groupId: string | null; index: number; boundary: number }
+  /** Déposé SUR un en-tête : en fin de ce groupe (déplié ou replié). */
+  | { kind: "into-group"; groupId: string }
+  /** Déplacer un groupe à `index` parmi les groupes ; `boundary` idem pour le trait. */
+  | { kind: "group"; index: number; boundary: number };
+
+/**
+ * Cible de dépôt d'un `dragging` (workspace ou groupe) pour un pointeur à l'ordonnée `y`.
+ *
+ * Workspace : un pointeur DANS le rect d'un en-tête vise ce groupe (insertion en fin) ;
+ * sinon la frontière de lignes visée (milieux, cf. dropBoundary) : l'appartenance est celle
+ * de la ligne juste au-dessus (un en-tête au-dessus = tête de son groupe ; rien au-dessus =
+ * hors-groupe), l'index = nombre de membres de cette appartenance déjà au-dessus.
+ *
+ * Groupe : seules les frontières entre en-têtes comptent (un groupe ne rentre jamais dans
+ * un autre ni parmi les hors-groupe) ; le trait se pose avant l'en-tête visé, ou en fin.
+ */
+export function resolveDrop(rows: SidebarRow[], y: number, dragging: "ws" | "group"): DropTarget {
+  if (dragging === "group") {
+    const headers = rows.map((r, i) => ({ r, i })).filter(({ r }) => r.kind === "group");
+    const index = dropBoundary(headers.map(({ r }) => r), y);
+    const boundary = index < headers.length ? headers[index].i : rows.length;
+    return { kind: "group", index, boundary };
+  }
+  const over = rows.find((r) => r.kind === "group" && y >= r.top && y < r.top + r.height);
+  if (over && over.groupId !== null) return { kind: "into-group", groupId: over.groupId };
+  const boundary = dropBoundary(rows, y);
+  const above = rows[boundary - 1];
+  const groupId = above ? above.groupId : null;
+  const index = above?.kind === "group" ? 0 : rows.slice(0, boundary).filter((r) => r.kind === "ws" && r.groupId === groupId).length;
+  return { kind: "workspace", groupId, index, boundary };
+}
