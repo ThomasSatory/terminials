@@ -3,7 +3,7 @@ import { FoldButton } from "./Fold";
 import type { OpenTask } from "../../lib/activityApi";
 
 /** Tickets visibles tant que la liste n'est pas dépliée. */
-export const TACHES_VISIBLES = 5;
+export const TACHES_VISIBLES = 3;
 
 /**
  * Rangs de priorité ClickUp (plus petit = plus urgent) pour le tri secondaire.
@@ -44,7 +44,7 @@ export function formatTaskDue(ts: number): string {
 }
 
 /**
- * Tickets ClickUp ouverts, en tête de « Reste à faire » (tâche 17) : une ligne
+ * Tickets ClickUp ouverts du sprint (« Reste à faire ») : une ligne
  * par ticket, identifiant en pastille laiton, nom en serif, échéance à droite.
  * Triés par échéance puis priorité. ClickUp inactif (source « off », ou clé API
  * sans jeton), une simple ligne atténuée renvoie aux réglages.

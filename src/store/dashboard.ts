@@ -13,6 +13,8 @@ export interface DashboardState {
   /** Un résumé LLM est prêt et n'a pas encore été vu (overlay fermé). */
   unreadSummary: boolean;
   settingsOpen: boolean;
+  /** Volet « détails » (chronologie ou jour par jour) ouvert, touche `d`. */
+  detailsOpen: boolean;
   /** Compteur bumpé pour invalider les hooks de données (dépendance d'effet). */
   refreshTick: number;
   /** Compteur bumpé par « Générer maintenant » : force la régénération des résumés visibles. */
@@ -27,6 +29,7 @@ export interface DashboardState {
   setFilterText(t: string): void;
   markSummaryReady(): void;
   setSettingsOpen(b: boolean): void;
+  setDetailsOpen(b: boolean): void;
   bumpRefresh(): void;
   bumpGenerate(): void;
 }
@@ -42,6 +45,7 @@ export const initialDashboardState: Pick<
   | "filterText"
   | "unreadSummary"
   | "settingsOpen"
+  | "detailsOpen"
   | "refreshTick"
   | "generateTick"
 > = {
@@ -52,6 +56,7 @@ export const initialDashboardState: Pick<
   filterText: "",
   unreadSummary: false,
   settingsOpen: false,
+  detailsOpen: false,
   refreshTick: 0,
   generateTick: 0,
 };
@@ -85,7 +90,9 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   setFilterText: (t) => set({ filterText: t }),
   markSummaryReady: () =>
     set((s) => (s.open ? {} : { unreadSummary: true })),
-  setSettingsOpen: (b) => set({ settingsOpen: b }),
+  // Un seul volet à la fois : ouvrir l'un ferme l'autre.
+  setSettingsOpen: (b) => set(b ? { settingsOpen: true, detailsOpen: false } : { settingsOpen: false }),
+  setDetailsOpen: (b) => set(b ? { detailsOpen: true, settingsOpen: false } : { detailsOpen: false }),
   bumpRefresh: () => set((s) => ({ refreshTick: s.refreshTick + 1 })),
   bumpGenerate: () => set((s) => ({ generateTick: s.generateTick + 1 })),
 }));

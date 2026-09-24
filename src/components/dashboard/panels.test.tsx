@@ -2,9 +2,8 @@ import { describe, it, expect } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { OpenTasks, TACHES_VISIBLES } from "./OpenTasks";
 import { foldLabel } from "./Fold";
-import { SummaryText } from "./SummaryPanel";
 import { champsLlmDetailles } from "./SettingsPanel";
-import { summaryFooter, scheduleSentence } from "./SummaryPanel";
+import { SummaryPanel, summaryFooter, scheduleSentence } from "./SummaryPanel";
 import { clickupActif, type OpenTask, type Summary } from "../../lib/activityApi";
 
 describe("clickupActif", () => {
@@ -99,36 +98,6 @@ describe("foldLabel", () => {
   });
 });
 
-describe("SummaryText — dépliage", () => {
-  const resume = (text: string): Summary => ({
-    text,
-    day: "2026-09-21",
-    cached: true,
-    generatedAt: 1_700_000_000,
-    model: "sonnet",
-  });
-
-  it("long résumé : seul le premier bloc est rendu, le bouton propose de déplier", () => {
-    const html = renderToStaticMarkup(
-      <SummaryText
-        ui={{ status: "ok", summary: resume("Premier bloc.\n\nSecond bloc.") }}
-        onOpenLink={() => {}}
-      />,
-    );
-    expect(html).toContain("Premier bloc.");
-    expect(html).not.toContain("Second bloc.");
-    expect(html).toContain("Déplier");
-  });
-
-  it("résumé d'un seul bloc : aucun bouton", () => {
-    const html = renderToStaticMarkup(
-      <SummaryText ui={{ status: "ok", summary: resume("Rien de notable.") }} onOpenLink={() => {}} />,
-    );
-    expect(html).toContain("Rien de notable.");
-    expect(html).not.toContain("dash-fold");
-  });
-});
-
 describe("scheduleSentence", () => {
   it("heure ronde, jours ouvrés", () => {
     expect(scheduleSentence({ hour: 7, minute: 0, weekdaysOnly: true })).toBe(
@@ -154,5 +123,33 @@ describe("summaryFooter", () => {
     expect(summaryFooter(summary)).toBe(
       "Synthèse générée à 07:02 par openai:google/gemma-4-31B-it",
     );
+  });
+});
+
+describe("SummaryPanel — état ok", () => {
+  const summary: Summary = {
+    day: "2026-09-17",
+    text: "Titre\n\n- a : x",
+    model: "gemma",
+    generatedAt: Math.floor(new Date(2026, 8, 17, 7, 2, 0).getTime() / 1000),
+    cached: true,
+  };
+  const props = { title: "Bilan", generate: () => {}, onOpenLink: () => {} };
+
+  it("rend le reste du bilan non rattaché à un projet", () => {
+    const html = renderToStaticMarkup(
+      <SummaryPanel {...props} ui={{ status: "ok", summary }} body="- Sur autre, note libre." />,
+    );
+    expect(html).toContain("note libre");
+    expect(html).not.toContain("Synthèse générée");
+  });
+
+  it("tout apparié aux lignes de la frise : seule la mention de génération reste", () => {
+    const html = renderToStaticMarkup(
+      <SummaryPanel {...props} ui={{ status: "ok", summary }} body="" />,
+    );
+    expect(html).toContain("dash-prose-note");
+    expect(html).toContain("Synthèse générée à 07:02 par gemma");
+    expect(html).not.toContain("Titre");
   });
 });

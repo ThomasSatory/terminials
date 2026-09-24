@@ -132,7 +132,6 @@
 .dash-icon-btn:focus-visible,
 .dash-text-btn:focus-visible,
 .dash-pill:focus-visible,
-.dash-chip:focus-visible,
 .dash-dayrow:focus-visible,
 .dash-field:focus-visible {
   outline: 2px solid var(--dash-laiton);
@@ -171,23 +170,45 @@
   color: var(--dash-atenue);
 }
 
-/* ---- En-tête (titre, phrase de chiffres, chips workspaces) ---- */
+/* ---- En-tête (date, titre de journée du LLM, phrase de chiffres) ---- */
 .dash-header {
   flex-shrink: 0;
-  padding: 22px 40px 0 40px;
+  padding: 18px 40px 0 40px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
+}
+
+.dash-date {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dash-atenue);
 }
 
 .dash-title {
   margin: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
   font-family: var(--dash-serif);
-  font-size: 42px;
+  font-size: 40px;
   font-weight: 400;
   letter-spacing: -0.01em;
   line-height: 1.05;
   color: var(--dash-texte-fort);
+}
+
+/* Bouton ↻ collé au titre : visible au survol de l'en-tête, discret sinon. */
+.dash-regen {
+  align-self: center;
+  opacity: 0.35;
+}
+
+.dash-header:hover .dash-regen,
+.dash-regen:focus-visible {
+  opacity: 1;
 }
 
 .dash-sentence {
@@ -199,78 +220,47 @@
   line-height: 1.4;
 }
 
-.dash-chips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-top: 10px;
-  flex-wrap: wrap;
-}
-
-.dash-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--dash-texte-doux);
-  font: inherit;
-  font-size: 13px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.dash-chip:hover {
-  border-color: var(--dash-bordure-champ);
-}
-
-.dash-chip[aria-pressed="true"] {
-  border-color: var(--dash-laiton);
-  color: var(--dash-texte-fort);
-}
-
-/* Carré de teinte du workspace : la couleur arrive en style inline (dynamique). */
-.dash-chip-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.dash-chip-count {
-  color: var(--dash-atenue);
-}
-
 .dash-chips-hint {
   color: var(--dash-tres-atenue);
   font-size: 12px;
   margin-left: 8px;
 }
 
-/* ---- Corps en deux colonnes ---- */
+/* ---- Corps : frise pleine largeur (récit par projet), puis deux colonnes courtes ---- */
 .dash-body {
+  position: relative;
   flex-grow: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
-  gap: 64px;
-  padding: 30px 40px 0 40px;
-}
-
-.dash-left {
   display: flex;
   flex-direction: column;
-  gap: 26px;
-  min-width: 0;
+  gap: 30px;
+  padding: 26px 40px 22px 40px;
   overflow: hidden;
 }
 
-.dash-right {
-  position: relative;
+.dash-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 64px;
+  min-height: 0;
+}
+
+/* Volet de droite (détails ou réglages), par-dessus le corps. */
+.dash-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 440px;
+  z-index: 5;
+  box-sizing: border-box;
+  padding: 26px 40px 22px 32px;
+  background: var(--dash-fond);
+  border-left: 1px solid var(--dash-filet);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: auto;
 }
 
 .dash-section {
@@ -289,13 +279,6 @@
   font-weight: 500;
   color: var(--dash-laiton);
   letter-spacing: 0.01em;
-}
-
-/* Pied de la colonne gauche : collé en bas (« margin-top: auto »). */
-.dash-footnote {
-  margin: auto 0 22px 0;
-  color: var(--dash-tres-atenue);
-  font-size: 12px;
 }
 
 /* ---- Bilan (prose du LLM) ---- */
@@ -336,6 +319,13 @@
 .dash-prose code {
   font-size: 15px;
   color: var(--dash-texte-doux);
+}
+
+/* Tout le bilan est monté dans la frise : le panneau ne garde que la mention de génération. */
+.dash-prose-note {
+  font-size: 14px;
+  font-style: italic;
+  color: var(--dash-italique);
 }
 
 /* ---- État « aucune synthèse » ---- */
@@ -405,7 +395,7 @@
   border-radius: 3px;
 }
 
-/* ---- « Reste à faire » : tickets ClickUp puis texte du LLM ---- */
+/* ---- « Reste à faire » : tickets ClickUp du sprint ---- */
 .dash-tasks {
   margin: 0;
   padding: 0;
@@ -454,49 +444,7 @@
   font-size: 13px;
 }
 
-/* Le texte « reste à faire » du LLM reprend la grille des tickets : un repère
-   « note » très atténué à gauche, aligné sur la colonne des identifiants. */
-.dash-reste {
-  font-family: var(--dash-serif);
-  max-width: 62ch;
-}
-
-.dash-reste p {
-  margin: 0 0 9px 74px;
-  font-size: 17px;
-  color: var(--dash-texte-doux);
-  line-height: 1.4;
-}
-
-.dash-reste ul,
-.dash-reste ol {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-
-.dash-reste li {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  font-size: 17px;
-  color: var(--dash-texte-doux);
-  line-height: 1.4;
-}
-
-.dash-reste li::before {
-  content: "note";
-  width: 62px;
-  flex-shrink: 0;
-  font-family: var(--dash-sans);
-  font-size: 12px;
-  color: var(--dash-tres-atenue);
-}
-
-/* ---- Chronologie (colonne droite, mode jour) ---- */
+/* ---- Chronologie (volet détails, mode jour) ---- */
 .dash-tl-head {
   display: flex;
   align-items: baseline;
@@ -605,7 +553,7 @@
   color: var(--dash-atenue);
 }
 
-/* ---- Jour par jour (colonne droite, mode semaine) ---- */
+/* ---- Jour par jour (volet détails, mode semaine) ---- */
 .dash-dayrows {
   display: flex;
   flex-direction: column;
@@ -683,6 +631,128 @@
   color: var(--dash-tres-atenue);
 }
 
+/* ---- Frise d'activité (une ligne par projet, sa phrase de bilan dessous) ---- */
+.dash-frise {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.dash-frise-row {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 80px;
+  grid-template-areas:
+    "name strip count"
+    ". phrase phrase";
+  align-items: center;
+  column-gap: 14px;
+  row-gap: 4px;
+}
+
+.dash-frise-name {
+  grid-area: name;
+  height: 22px;
+  line-height: 22px;
+  font-family: var(--dash-serif);
+  font-size: 15px;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-frise-strip {
+  grid-area: strip;
+  position: relative;
+  height: 22px;
+  border-bottom: 1px solid var(--dash-filet);
+}
+
+/* Le récit du projet, en serif comme le bilan, sous sa bande d'activité. */
+.dash-frise-phrase {
+  grid-area: phrase;
+  font-family: var(--dash-serif);
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--dash-texte);
+  max-width: 72ch;
+  margin-bottom: 8px;
+}
+
+.dash-frise-phrase p {
+  margin: 0;
+}
+
+.dash-frise-cell {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  border-radius: 2px;
+}
+
+/* Commit : anneau à la teinte du projet sur le fond de page, centré sur l'instant. */
+.dash-frise-dot {
+  position: absolute;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  border: 2px solid;
+  background: var(--dash-fond);
+  z-index: 1;
+}
+
+a.dash-frise-dot:hover {
+  background: var(--dash-texte-fort);
+}
+
+.dash-frise-count {
+  grid-area: count;
+  color: var(--dash-atenue);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.dash-frise-axis .dash-frise-name,
+.dash-frise-axis .dash-frise-strip {
+  height: 16px;
+}
+
+.dash-frise-axis .dash-frise-strip {
+  border-bottom: 0;
+}
+
+.dash-frise-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--dash-tres-atenue);
+  white-space: nowrap;
+}
+
+.dash-frise-tick:first-child {
+  transform: none;
+}
+
+.dash-frise-empty {
+  margin: 0;
+  font-family: var(--dash-serif);
+  font-style: italic;
+  color: var(--dash-italique);
+  font-size: 15px;
+}
+
+/* Point d'alerte sur ⚙ quand une collecte a échoué : l'erreur est dans l'infobulle. */
+.dash-icon-btn-alerte {
+  color: var(--dash-erreur);
+}
+
 /* ---- Chargement et erreurs ---- */
 .dash-skeleton {
   height: 12px;
@@ -726,15 +796,7 @@
   margin: 0;
 }
 
-/* ---- Réglages (même colonne droite, en superposition) ---- */
-.dash-settings-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 5;
-  background: var(--dash-fond);
-  overflow: auto;
-}
-
+/* ---- Réglages (dans le volet de droite) ---- */
 .dash-settings {
   display: flex;
   flex-direction: column;

@@ -1,47 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { WorkspaceChips } from "./WorkspaceChips";
 import { Timeline } from "./Timeline";
+import { Frise } from "./Frise";
+import { buildFrise } from "../../lib/frise";
 import { WeekDays } from "./WeekDays";
-import type { ActivityEvent, WorkspaceCount } from "../../lib/activityApi";
+import type { ActivityEvent } from "../../lib/activityApi";
 import { assignWorkspaceColors } from "../../lib/workspacePalette";
 import type { WeekDayRow } from "../../lib/weekDays";
-
-describe("WorkspaceChips", () => {
-  const rows: WorkspaceCount[] = [
-    { dir: "/home/x/dev/a", name: "a", events: 10, commits: 4 },
-    { dir: "/home/x/dev/b", name: "b", events: 3, commits: 1 },
-  ];
-
-  it("un chip par workspace, avec sa teinte et son compteur", () => {
-    const html = renderToStaticMarkup(
-      createElement(WorkspaceChips, { rows, selected: null, onSelect: () => {} }),
-    );
-    expect((html.match(/dash-chip"/g) ?? []).length).toBe(2);
-    expect(html).toContain(">a<");
-    expect(html).toContain(">b<");
-    // Le plus actif prend le laiton, le suivant la teinte 2 de la palette.
-    expect(html).toContain("background:#c9a36a");
-    expect(html).toContain("background:#9bb08a");
-    expect(html).toContain("cliquer pour filtrer");
-  });
-
-  it("marque le chip sélectionné avec aria-pressed", () => {
-    const html = renderToStaticMarkup(
-      createElement(WorkspaceChips, { rows, selected: "/home/x/dev/a", onSelect: () => {} }),
-    );
-    expect(html).toContain('aria-pressed="true"');
-    expect(html).toContain('aria-pressed="false"');
-  });
-
-  it("sans workspace, aucune rangée n'est rendue", () => {
-    const html = renderToStaticMarkup(
-      createElement(WorkspaceChips, { rows: [], selected: null, onSelect: () => {} }),
-    );
-    expect(html).toBe("");
-  });
-});
 
 describe("Timeline", () => {
   const colors = assignWorkspaceColors([
@@ -159,5 +125,65 @@ describe("WeekDays", () => {
     );
     expect(html).toContain('aria-pressed="true"');
     expect(html).toContain("à venir");
+  });
+});
+
+describe("Frise", () => {
+  const A = "/home/x/dev/a";
+  const at = (h: number, m = 0) => Math.floor(new Date(2026, 8, 16, h, m).getTime() / 1000);
+  const ev = (ts: number, kind: ActivityEvent["kind"], title = "x"): ActivityEvent => ({
+    id: ts,
+    ts,
+    kind,
+    workspaceDir: A,
+    branch: null,
+    title,
+    ticketIds: [],
+    tickets: kind === "commit" ? [{ id: "CU-1", url: "https://app.clickup.com/t/CU-1" }] : [],
+  });
+  const ws = [{ dir: A, name: "a", events: 3, commits: 1 }];
+  const colors = assignWorkspaceColors(ws);
+
+  it("une ligne par projet, une case par quart d'heure actif, un point cliquable par commit", () => {
+    const frise = buildFrise(
+      "day",
+      "2026-09-16",
+      [ev(at(9, 5), "shell_cmd"), ev(at(9, 10), "shell_cmd"), ev(at(11, 30), "commit", "fix: x")],
+      ws,
+      colors,
+    );
+    const html = renderToStaticMarkup(
+      createElement(Frise, { frise, mode: "day", onOpenTicket: () => {} }),
+    );
+    expect((html.match(/dash-frise-row/g) ?? []).length).toBe(2); // projet + axe
+    expect((html.match(/dash-frise-cell/g) ?? []).length).toBe(2);
+    expect(html).toContain('href="https://app.clickup.com/t/CU-1"');
+    expect(html).toContain("11h30 · fix: x");
+    expect(html).toContain("1 commit");
+    expect(html).toContain(">7h<");
+  });
+
+  it("porte sous chaque ligne la phrase du bilan du projet, liens cliquables", () => {
+    const frise = buildFrise("day", "2026-09-16", [ev(at(9, 5), "shell_cmd")], ws, colors);
+    const phrases = new Map([["a", "Longue session pour [CU-2](https://app.clickup.com/t/CU-2)."]]);
+    const html = renderToStaticMarkup(
+      createElement(Frise, { frise, mode: "day", phrases, onOpenLink: () => {} }),
+    );
+    expect(html).toContain("dash-frise-phrase");
+    expect(html).toContain("Longue session pour ");
+    expect(html).toContain('href="https://app.clickup.com/t/CU-2"');
+  });
+
+  it("sans phrase pour le projet : pas de ligne de phrase", () => {
+    const frise = buildFrise("day", "2026-09-16", [ev(at(9, 5), "shell_cmd")], ws, colors);
+    const html = renderToStaticMarkup(createElement(Frise, { frise, mode: "day", phrases: new Map() }));
+    expect(html).not.toContain("dash-frise-phrase");
+  });
+
+  it("sans événement : phrase d'absence", () => {
+    const html = renderToStaticMarkup(
+      createElement(Frise, { frise: buildFrise("day", "2026-09-16", [], [], new Map()), mode: "day" }),
+    );
+    expect(html).toContain("Aucune activité ce jour");
   });
 });

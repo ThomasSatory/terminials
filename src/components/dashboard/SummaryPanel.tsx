@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FoldedMarkdown } from "./Fold";
+import { Markdown } from "./Markdown";
 import { activityApi, type ActivitySettings, type Summary } from "../../lib/activityApi";
 import { formatHm } from "../../lib/dashboardDay";
 import type { SummaryUi } from "../../lib/summaryState";
@@ -57,20 +57,25 @@ function TokenExpire({ generate }: { generate: (force: boolean) => void }) {
 }
 
 /**
- * Bilan du jour ou de la semaine (colonne gauche, tâche 17) : un titre serif
- * laiton et la prose du LLM, repliée au premier bloc (cf. `FoldedMarkdown`).
- * Composant de présentation pur — l'état vient du hook `useSummary` tenu par
- * l'overlay, qui a besoin du même résumé pour le pied de colonne.
+ * Bilan du jour ou de la semaine (prompt v3, cf. `summaries.rs`). Le titre de
+ * journée est monté dans l'en-tête par l'overlay, et les puces par projet sous
+ * les lignes de la frise (`attacherPuces`) ; `body` est ce qui reste — puces
+ * sans projet, paragraphes — ou vide si tout a trouvé sa ligne, auquel cas le
+ * panneau ne montre que la mention de génération. Les états (chargement,
+ * absence, erreurs, jeton) restent ici. Composant de présentation pur.
  */
 export function SummaryPanel({
   title,
   ui,
+  body,
   generate,
   onOpenLink,
   schedule,
 }: {
   title: string;
   ui: SummaryUi;
+  /** Reste du bilan une fois titre et puces par projet retirés ; ignoré hors état « ok ». */
+  body: string;
   generate: (force: boolean) => void;
   onOpenLink: (href: string) => void;
   schedule?: Schedule;
@@ -102,11 +107,13 @@ export function SummaryPanel({
 
       {ui.status === "ok" && (
         <>
-          <FoldedMarkdown
-            text={ui.summary.text}
-            onOpenLink={onOpenLink}
-            className="dash-prose"
-          />
+          {body !== "" ? (
+            <div className="dash-prose">
+              <Markdown text={body} onOpenLink={onOpenLink} />
+            </div>
+          ) : (
+            <p className="dash-prose dash-prose-note">{summaryFooter(ui.summary)}</p>
+          )}
           {/* Un échec de régénération ne doit jamais faire disparaître le résumé en
               cache (§10) : on l'affiche toujours ci-dessus, avec un bandeau d'erreur
               en plus plutôt qu'à sa place. */}
@@ -134,21 +141,4 @@ export function SummaryPanel({
       )}
     </div>
   );
-}
-
-/**
- * Texte « reste à faire » du LLM, rendu **sous** les tickets ClickUp et sur la
- * même grille (repère « note » à gauche, cf. `dashboard.css`). Tant qu'aucune
- * synthèse n'existe, rien ne s'affiche : les tickets suffisent, et le bouton de
- * génération vit dans le bilan juste au-dessus.
- */
-export function SummaryText({
-  ui,
-  onOpenLink,
-}: {
-  ui: SummaryUi;
-  onOpenLink: (href: string) => void;
-}) {
-  if (ui.status !== "ok") return null;
-  return <FoldedMarkdown text={ui.summary.text} onOpenLink={onOpenLink} className="dash-reste" />;
 }

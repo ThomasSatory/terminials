@@ -95,12 +95,23 @@ pub fn range_for(day: NaiveDate, kind: SummaryKind, tz: &impl TimeZone) -> (i64,
     }
 }
 
-/// Message système (invariant par type de synthèse), en français, verbatim spec §6.
+/// Version des prompts système : entre dans la clé de cache (`cache_hash`) pour
+/// qu'un changement de format (v2 : titre + trois puces ; v3 : titre + une
+/// puce par projet, apparie à la frise par le nom du projet, le 2026-09-22)
+/// invalide les synthèses générées avec l'ancien prompt, sans migration SQL.
+pub const PROMPT_VERSION: &str = "v3";
+
+/// Clé de cache d'une synthèse : hash du digest suffixé par la version du prompt.
+pub fn cache_hash(digest_hash: &str) -> String {
+    format!("{digest_hash}#{PROMPT_VERSION}")
+}
+
+/// Message système (invariant par type de synthèse), en français.
 pub fn system_prompt(kind: SummaryKind) -> &'static str {
     match kind {
-        SummaryKind::Bilan => "Tu es l'assistant de Thomas, développeur. À partir du journal d'activité fourni (commits git, prompts envoyés à Claude Code, commandes shell, changements ClickUp), rédige le bilan de la période en 5 à 10 puces markdown groupées par sujet. Cite chaque ticket ClickUp mentionné sous la forme `[id](url)` avec l'URL fournie dans la section « Tickets cités ». N'invente rien qui ne soit pas dans le journal. Pas de préambule ni de conclusion. Réponds en français.",
+        SummaryKind::Bilan => "Tu es l'assistant de Thomas, développeur. À partir du journal d'activité fourni (commits git, prompts envoyés à Claude Code, commandes shell, changements ClickUp), rédige un bilan court de la journée qui raconte ce qui a été fait. Format strict : la première ligne est un titre de la journée, huit mots au plus, sans markdown ni ponctuation finale ; puis une ligne vide ; puis une puce par projet ayant eu de l'activité (`- `), dans l'ordre des sections `##` du journal, cinq puces au plus. Chaque puce commence par le nom du projet exactement tel qu'il est écrit au début de l'en-tête `##` de sa section, suivi de « : », puis une ou deux phrases (quarante mots au plus) qui disent ce qui a été fait, ce qui a été réglé et ce qui a bloqué, sans énumérer les commandes. Cite chaque ticket ClickUp mentionné sous la forme `[id](url)` avec l'URL fournie dans la section « Tickets cités ». N'invente rien qui ne soit pas dans le journal. Rien d'autre : ni préambule, ni conclusion, ni titre de section. Réponds en français.",
         SummaryKind::ResteAFaire => "Tu es l'assistant de Thomas, développeur. On te donne son journal d'activité, ses tâches ClickUp ouvertes et ses branches git non fusionnées. Rédige la liste de ce qui reste à faire, priorisée, en trois sections markdown : `## Tickets ClickUp` (échéance la plus proche d'abord, lien `[id](url)`), `## Branches à finir`, `## Pistes vues dans les prompts` (uniquement si le journal en contient). N'invente rien. Réponds en français, sans préambule.",
-        SummaryKind::Semaine => "Tu es l'assistant de Thomas, développeur. À partir des journaux d'activité des jours ouvrés de la semaine, rédige une synthèse hebdomadaire en markdown : `## Thèmes de la semaine`, `## Tickets clos`, `## Tickets en cours`, `## Points de friction` (commandes répétées en échec, sessions très longues, allers-retours). Liens tickets `[id](url)`. N'invente rien. Réponds en français, sans préambule.",
+        SummaryKind::Semaine => "Tu es l'assistant de Thomas, développeur. À partir des journaux d'activité des jours ouvrés de la semaine, rédige un bilan court de la semaine qui raconte ce qui a été fait. Format strict : la première ligne est un titre de la semaine, huit mots au plus, sans markdown ni ponctuation finale ; puis une ligne vide ; puis une puce par projet ayant eu de l'activité dans la semaine (`- `), du plus actif au moins actif, cinq puces au plus. Chaque puce commence par le nom du projet exactement tel qu'il est écrit au début de l'en-tête `##` de ses sections, suivi de « : », puis une ou deux phrases (quarante mots au plus) : ce qui a avancé au fil des jours, les tickets clos, le point de friction s'il y en a un. Liens tickets `[id](url)`. N'invente rien. Rien d'autre : ni préambule, ni conclusion, ni titre de section. Réponds en français.",
     }
 }
 
@@ -301,7 +312,7 @@ pub fn prepare(
 
     if !force {
         if let Some(stored) = store.get_summary(&cache_day, kind.as_str()).map_err(db_err)? {
-            if stored.digest_hash == digest.hash {
+            if stored.digest_hash == cache_hash(&digest.hash) {
                 return Ok(Preparation::Cached(Summary {
                     day: cache_day,
                     text: stored.text,
@@ -348,7 +359,7 @@ pub fn prepare(
 
     Ok(Preparation::ToGenerate(ToGenerate {
         request,
-        digest_hash: digest.hash,
+        digest_hash: cache_hash(&digest.hash),
         event_count: digest.event_count,
         cache_day,
         kind,
@@ -503,6 +514,55 @@ mod tests {
         assert_eq!(*fake.calls.lock().unwrap(), 2);
         generate(&store, &fake, &s, "2026-09-16", SummaryKind::Bilan, true, 1_789_600_003, &chrono::Utc).unwrap();
         assert_eq!(*fake.calls.lock().unwrap(), 3);
+    }
+
+    #[test]
+    fn synthese_de_l_ancien_prompt_est_regeneree() {
+        // Une ligne `summaries` écrite avant PROMPT_VERSION porte le hash nu du
+        // digest : elle ne doit plus passer pour un cache valide.
+        let store = Store::open_in_memory().unwrap();
+        store
+            .insert_events(&[NewEvent {
+                ts: 1_789_550_000,
+                kind: EventKind::Commit,
+                workspace_dir: Some("/a".into()),
+                branch: None,
+                title: "c".into(),
+                body: None,
+                ticket_ids: vec![],
+                source_ref: "1".into(),
+            }])
+            .unwrap();
+        let (f, t) = day_range("2026-09-16", &chrono::Utc).unwrap();
+        let digest = range_digest(&store, f, t, fixed_offset_at(f, &chrono::Utc)).unwrap();
+        store
+            .put_summary(&crate::activity::store::StoredSummary {
+                day: "2026-09-16".into(),
+                kind: "bilan".into(),
+                model: "ancien".into(),
+                digest_hash: digest.hash.clone(),
+                text: "## Bilan long".into(),
+                generated_at: 1,
+            })
+            .unwrap();
+        let fake = Fake { calls: Default::default(), reply: "Titre\n\n- c".into() };
+        let r = generate(&store, &fake, &LlmSettings::default(), "2026-09-16", SummaryKind::Bilan, false, 1_789_600_000, &chrono::Utc).unwrap();
+        assert!(!r.cached, "ancien prompt → régénéré");
+        assert_eq!(r.text, "Titre\n\n- c");
+        assert_eq!(*fake.calls.lock().unwrap(), 1);
+    }
+
+    #[test]
+    fn prompts_v3_demandent_une_puce_par_projet() {
+        // Format « récit par projet » (2026-09-22) : la frise apparie chaque puce
+        // à sa ligne par le nom du projet, tel qu'écrit dans l'en-tête `##` du digest.
+        assert_eq!(PROMPT_VERSION, "v3");
+        for kind in [SummaryKind::Bilan, SummaryKind::Semaine] {
+            let p = system_prompt(kind);
+            assert!(p.contains("une puce par projet"), "{}", kind.as_str());
+            assert!(p.contains("cinq puces"), "{}", kind.as_str());
+            assert!(!p.contains("trois puces"), "{}", kind.as_str());
+        }
     }
 
     #[test]

@@ -383,7 +383,9 @@ pub fn run_summaries(app: &AppHandle, st: &ActivityState, day: chrono::NaiveDate
     let provider = llm::from_settings(&llm_settings);
     let day_str = day.format("%Y-%m-%d").to_string();
 
-    let mut kinds = vec![SummaryKind::Bilan, SummaryKind::ResteAFaire];
+    // Le « reste à faire » n'est plus généré d'office : l'écran ne montre que
+    // les tickets du sprint. Le type reste disponible à la demande via l'IPC.
+    let mut kinds = vec![SummaryKind::Bilan];
     if day.weekday() == Weekday::Fri {
         kinds.push(SummaryKind::Semaine);
     }
