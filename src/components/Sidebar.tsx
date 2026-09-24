@@ -102,6 +102,7 @@ export function Sidebar() {
   const dashboardOpen = useDashboardStore((s) => s.open);
   const unreadSummary = useDashboardStore((s) => s.unreadSummary);
   const toggleDashboard = useDashboardStore((s) => s.toggle);
+  const closeDashboard = useDashboardStore((s) => s.close);
 
   const closeForms = () => {
     setCreating(false);
@@ -407,6 +408,8 @@ export function Sidebar() {
             suppressClick.current = false;
             return;
           }
+          // Cliquer un workspace, c'est vouloir son terminal : le dashboard s'efface.
+          closeDashboard();
           setActive(w.id);
         }}
         onMouseEnter={() => setHoverId(w.id)}
@@ -595,6 +598,7 @@ export function Sidebar() {
             onClick={(e) => {
               // Le clic active le workspace ET ouvre son diff (sans déclencher le onClick de la ligne).
               e.stopPropagation();
+              closeDashboard();
               setActive(w.id);
               toggleDiff(w.id);
             }}
