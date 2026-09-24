@@ -462,6 +462,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         workspaces: s.workspaces.map((w) => {
           if (w.id !== wsId) return w;
           if (tabId !== undefined && w.tabs.some((t) => t.id === tabId)) {
+            // Onglet déjà sous les yeux (workspace actif, onglet actif) : rien à signaler.
+            if (s.activeId === wsId && w.activeTabId === tabId) return { ...w, lastNotification: n };
             // point bleu sur l'onglet émetteur, pas de fallback workspace
             const unreadTabs = w.unreadTabs.includes(tabId) ? w.unreadTabs : [...w.unreadTabs, tabId];
             return { ...w, unreadTabs, lastNotification: n };
@@ -473,8 +475,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     setActive: (wsId) =>
       set((s) => ({
         activeId: wsId,
-        // activer le workspace lit le fallback, PAS les points par onglet
-        workspaces: s.workspaces.map((w) => (w.id === wsId ? { ...w, unread: false } : w)),
+        // Activer le workspace lit le fallback ET l'onglet affiché ; les autres
+        // onglets gardent leur point tant qu'on ne les a pas ouverts.
+        workspaces: s.workspaces.map((w) =>
+          w.id === wsId
+            ? { ...w, unread: false, unreadTabs: w.unreadTabs.filter((t) => t !== w.activeTabId) }
+            : w,
+        ),
       })),
     // Les deux sondes git sont séparées : la branche est gratuite et rafraîchie à
     // cadence fixe, le dirty coûte des secondes et se raréfie tout seul. Les fusionner

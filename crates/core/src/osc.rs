@@ -140,6 +140,12 @@ fn interpret(payload: &str) -> Option<OscNotification> {
     // OSC 9 (iTerm2) : "9;<message>". Le message peut contenir des ';' (ex. "Erreur; voir
     // logs") : c'est un texte libre, pas un format à sous-champs — tout le reste est le corps.
     if let Some(rest) = payload.strip_prefix("9;") {
+        // Les sous-commandes ConEmu (« 9;<n>;… », dont la barre de progression 9;4
+        // que Claude Code émet EN TRAVAILLANT) ne sont pas des notifications : les
+        // prendre pour telles allumait la pastille pendant que l'agent tournait.
+        if is_conemu_subcommand(rest) {
+            return None;
+        }
         return Some(OscNotification { title: "terminials".into(), body: rest.to_string() });
     }
     // OSC 777 (RXVT) : "777;notify;<title>;<body>"
@@ -159,6 +165,12 @@ fn interpret(payload: &str) -> Option<OscNotification> {
         }
     }
     None
+}
+
+/// Vrai pour un corps OSC 9 de la forme ConEmu `<chiffres>` ou `<chiffres>;…`.
+fn is_conemu_subcommand(body: &str) -> bool {
+    let digits = body.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0 && matches!(body.as_bytes().get(digits), None | Some(b';'))
 }
 
 /// Interprète un payload OSC complet (sans le préfixe `ESC ]` ni le terminateur) : marqueur
@@ -200,6 +212,16 @@ mod tests {
         let input = b"\x1b]9;Task complete\x07";
         let n = parse_notifications(input);
         assert_eq!(n, vec![OscNotification { title: "terminials".into(), body: "Task complete".into() }]);
+    }
+
+    #[test]
+    fn ignores_conemu_progress_and_subcommands() {
+        // Barre de progression émise par Claude Code pendant son travail.
+        assert!(parse_notifications(b"\x1b]9;4;3;\x07\x1b]9;4;1;42\x07\x1b]9;4;0;\x07").is_empty());
+        assert!(parse_notifications(b"\x1b]9;9;/home\x07").is_empty());
+        // Un message qui commence par un chiffre reste une notification.
+        let n = parse_notifications(b"\x1b]9;3 tests KO\x07");
+        assert_eq!(n.len(), 1);
     }
 
     #[test]

@@ -205,6 +205,7 @@ describe("workspace store", () => {
   it("setActiveTab éteint le point de l'onglet focusé, et seulement lui", () => {
     const id = store().addWorkspace("/tmp");
     store().addTab(id);
+    store().addWorkspace("/autre"); // hors écran : ses onglets peuvent s'allumer
     const [t0, t1] = tabIds(id);
     store().setNotification(id, { title: "a", body: "" }, t0);
     store().setNotification(id, { title: "b", body: "" }, t1);
@@ -213,13 +214,24 @@ describe("workspace store", () => {
     expect(ws(id).activeTabId).toBe(t0);
   });
 
-  it("setActive ne touche pas aux points par onglet", () => {
+  it("setActive éteint le point de l'onglet affiché, pas celui des autres", () => {
     const a = store().addWorkspace("/a");
-    store().addWorkspace("/b");
-    const t0 = tabIds(a)[0];
+    store().addTab(a);
+    const [t0, t1] = tabIds(a);
+    store().setActiveTab(a, t0);
+    store().addWorkspace("/b"); // actif = /b
     store().setNotification(a, { title: "n", body: "" }, t0);
+    store().setNotification(a, { title: "n", body: "" }, t1);
     store().setActive(a);
-    expect(ws(a).unreadTabs).toEqual([t0]);
+    expect(ws(a).unreadTabs).toEqual([t1]);
+  });
+
+  it("setNotification sur l'onglet visible n'allume rien", () => {
+    const id = store().addWorkspace("/tmp");
+    const t0 = tabIds(id)[0];
+    store().setNotification(id, { title: "n", body: "" }, t0);
+    expect(hasAttention(ws(id))).toBe(false);
+    expect(ws(id).lastNotification).toEqual({ title: "n", body: "" });
   });
 
   it("closeTab purge le point de l'onglet fermé", () => {
@@ -233,6 +245,7 @@ describe("workspace store", () => {
 
   it("hasAttention dérive fallback OU points par onglet", () => {
     const id = store().addWorkspace("/tmp");
+    store().addWorkspace("/autre"); // hors écran : ses onglets peuvent s'allumer
     expect(hasAttention(ws(id))).toBe(false);
     store().setNotification(id, { title: "n", body: "" }, tabIds(id)[0]);
     expect(hasAttention(ws(id))).toBe(true);
@@ -547,6 +560,7 @@ describe("groupes", () => {
     const g = store().addGroup("g");
     const a = store().addWorkspace("/a");
     store().assignToGroup(a, g);
+    store().addWorkspace("/autre"); // hors écran : ses onglets peuvent s'allumer
     expect(groupHasAttention(store().workspaces, g)).toBe(false);
     store().setNotification(a, { title: "n", body: "" }, tabIds(a)[0]);
     expect(groupHasAttention(store().workspaces, g)).toBe(true);
