@@ -38,7 +38,7 @@ function localStorageStub(): Storage {
 describe("workspace store", () => {
   beforeEach(() => store().reset());
 
-  it("crée un workspace avec 1 onglet, nom = basename, couleur de la palette, hors-groupe", () => {
+  it("crée un workspace avec 1 onglet, nom = basename, hors-groupe", () => {
     const id = store().addWorkspace("/home/x/dev/terminals");
     const w = ws(id);
     expect(w.cwd).toBe("/home/x/dev/terminals");
@@ -46,14 +46,12 @@ describe("workspace store", () => {
     expect(w.tabs).toHaveLength(1);
     expect(w.activeTabId).toBe(w.tabs[0].id);
     expect(w.groupId).toBeNull();
-    expect(PALETTE).toContain(w.color);
   });
 
-  it("assigne les couleurs en round-robin", () => {
-    const a = ws(store().addWorkspace("/a"));
-    const b = ws(store().addWorkspace("/b"));
-    expect(a.color).toBe(PALETTE[0]);
-    expect(b.color).toBe(PALETTE[1]);
+  it("un workspace ne porte plus de couleur d'identité (c'est le groupe qui la porte)", () => {
+    const w = ws(store().addWorkspace("/a"));
+    expect(w).not.toHaveProperty("color");
+    expect((store() as unknown as Record<string, unknown>).setColor).toBeUndefined();
   });
 
   it("addTab n'a pas de limite et rend le nouvel onglet actif", () => {
@@ -159,11 +157,6 @@ describe("workspace store", () => {
     expect(ws(b).cwd).toBe("/b");
   });
 
-  it("change la couleur d'un workspace", () => {
-    const id = store().addWorkspace("/tmp");
-    store().setColor(id, "#123456");
-    expect(ws(id).color).toBe("#123456");
-  });
 
   it("setNotification sans tabId pose le fallback unread + lastNotification", () => {
     const id = store().addWorkspace("/tmp");
@@ -271,6 +264,24 @@ describe("workspace store", () => {
     expect(ws(b).diffOpen).toBe(false);
     store().toggleDiff(a);
     expect(ws(a).diffOpen).toBe(false);
+  });
+
+  it("changer de workspace referme le diff : on retombe toujours sur le terminal", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    store().setActive(a);
+    store().toggleDiff(a);
+    store().setActive(b);
+    store().setActive(a);
+    expect(ws(a).diffOpen).toBe(false);
+  });
+
+  it("réactiver le workspace DÉJÀ actif laisse son diff ouvert (sinon le clic sur la méta ne le fermerait plus)", () => {
+    const a = store().addWorkspace("/a");
+    store().setActive(a);
+    store().toggleDiff(a);
+    store().setActive(a);
+    expect(ws(a).diffOpen).toBe(true);
   });
 
   it("toggleSidebar bascule sidebarVisible (défaut true)", () => {
@@ -567,11 +578,81 @@ describe("groupes", () => {
   });
 });
 
-describe("persistance v3", () => {
+describe("création dans un groupe et duplication", () => {
+  beforeEach(() => store().reset());
+
+  it("addWorkspace avec un groupId explicite fait naître le workspace dans ce groupe", () => {
+    const g = store().addGroup("g");
+    const id = store().addWorkspace("/a", undefined, g);
+    expect(ws(id).groupId).toBe(g);
+  });
+
+  it("un groupId inconnu retombe hors-groupe plutôt que de créer un orphelin", () => {
+    const id = store().addWorkspace("/a", undefined, "grp:inexistant");
+    expect(ws(id).groupId).toBeNull();
+  });
+
+  it("sans groupId explicite, le workspace naît toujours dans le groupe de l'actif", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a", undefined, g);
+    store().setActive(a);
+    expect(ws(store().addWorkspace("/b")).groupId).toBe(g);
+  });
+
+  it("duplicateWorkspace copie dossier et groupe, avec un onglet neuf et un nom incrémenté", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/dev/app", "app", g);
+    store().addTab(a);
+    const copy = store().duplicateWorkspace(a)!;
+    const c = ws(copy);
+    expect(c.cwd).toBe("/dev/app");
+    expect(c.groupId).toBe(g);
+    expect(c.name).toBe("app 2");
+    expect(c.tabs).toHaveLength(1);
+    expect(c.activeTabId).toBe(c.tabs[0].id);
+    expect(store().activeId).toBe(copy);
+  });
+
+  it("la copie se place juste sous son original, pas en fin de groupe", () => {
+    const g = store().addGroup("g");
+    const a = store().addWorkspace("/a", "a", g);
+    store().addWorkspace("/b", "b", g);
+    store().duplicateWorkspace(a);
+    expect(sidebarOrder(store().workspaces, store().groups).map((w) => w.name)).toEqual(["a", "a 2", "b"]);
+  });
+
+  it("dupliquer une copie repart de la racine du nom", () => {
+    const a = store().addWorkspace("/a", "app");
+    const c = store().duplicateWorkspace(a)!;
+    expect(ws(store().duplicateWorkspace(c)!).name).toBe("app 3");
+  });
+
+  it("la copie ne reprend ni notification, ni branche, ni ports de l'original", () => {
+    const a = store().addWorkspace("/a", "app");
+    store().setNotification(a, { title: "n", body: "" });
+    store().setBranch(a, "main");
+    store().setPorts(a, [5173]);
+    const c = ws(store().duplicateWorkspace(a)!);
+    expect(c.unread).toBe(false);
+    expect(c.unreadTabs).toEqual([]);
+    expect(c.lastNotification).toBeUndefined();
+    expect(c.branch).toBeUndefined();
+    expect(c.ports).toEqual([]);
+  });
+
+  it("dupliquer un workspace inconnu ne change rien", () => {
+    store().addWorkspace("/a");
+    expect(store().duplicateWorkspace("ws:404")).toBeNull();
+    expect(store().workspaces).toHaveLength(1);
+  });
+});
+
+describe("persistance v4", () => {
+  const V4_KEY = "terminials:workspaces:v4";
   const V3_KEY = "terminials:workspaces:v3";
   const V2_KEY = "terminials:workspaces:v2";
   const saved = (): SavedState =>
-    JSON.parse(localStorage.getItem(V3_KEY) ?? '{"groups":[],"workspaces":[]}') as SavedState;
+    JSON.parse(localStorage.getItem(V4_KEY) ?? '{"groups":[],"workspaces":[]}') as SavedState;
 
   beforeEach(() => {
     (globalThis as { localStorage?: Storage }).localStorage = localStorageStub();
@@ -588,8 +669,8 @@ describe("persistance v3", () => {
     expect(saved()).toEqual({
       groups: [],
       workspaces: [
-        { cwd: "/a", name: "a", color: PALETTE[0], tabCount: 1, groupIndex: null },
-        { cwd: "/b", name: "b", color: PALETTE[1], tabCount: 1, groupIndex: null },
+        { cwd: "/a", name: "a", tabCount: 1, groupIndex: null },
+        { cwd: "/b", name: "b", tabCount: 1, groupIndex: null },
       ],
     });
   });
@@ -618,11 +699,10 @@ describe("persistance v3", () => {
     expect(saved().workspaces[0].groupIndex).toBe(0);
   });
 
-  it("renameWorkspace, setColor, setCwd, moveWorkspace, closeWorkspace réécrivent la sauvegarde", () => {
+  it("renameWorkspace, setCwd, moveWorkspace, closeWorkspace réécrivent la sauvegarde", () => {
     const a = store().addWorkspace("/a");
     store().renameWorkspace(a, "agent");
-    store().setColor(a, "#123456");
-    expect(saved().workspaces[0]).toMatchObject({ cwd: "/a", name: "agent", color: "#123456" });
+    expect(saved().workspaces[0]).toMatchObject({ cwd: "/a", name: "agent" });
     store().setCwd(a, "/z");
     expect(saved().workspaces[0].cwd).toBe("/z");
     store().addWorkspace("/b");
@@ -632,15 +712,19 @@ describe("persistance v3", () => {
     expect(saved().workspaces.map((e) => e.cwd)).toEqual(["/b"]);
   });
 
-  it("les anciennes clés v1/v2 ne sont plus écrites", () => {
+  it("les anciennes clés v1/v2/v3 ne sont plus écrites", () => {
     store().addWorkspace("/a");
     expect(localStorage.getItem("terminials:workspaces")).toBeNull();
     expect(localStorage.getItem(V2_KEY)).toBeNull();
+    expect(localStorage.getItem(V3_KEY)).toBeNull();
   });
 
-  it("une fois v3 écrite, un v2 résiduel modifié n'est plus relu", () => {
-    store().addWorkspace("/a"); // écrit v3
-    localStorage.setItem(V2_KEY, JSON.stringify([{ cwd: "/old", name: "o", color: "#1", paneCount: 1 }]));
+  it("une fois v4 écrite, un v3 résiduel modifié n'est plus relu", () => {
+    store().addWorkspace("/a"); // écrit v4
+    localStorage.setItem(
+      V3_KEY,
+      JSON.stringify({ groups: [], workspaces: [{ cwd: "/old", name: "o", color: "#1", tabCount: 1, groupIndex: null }] }),
+    );
     expect(loadSavedState().workspaces.map((e) => e.cwd)).toEqual(["/a"]);
   });
 
@@ -648,17 +732,17 @@ describe("persistance v3", () => {
     store().addWorkspace("/a");
     expect(loadSavedState()).toEqual({
       groups: [],
-      workspaces: [{ cwd: "/a", name: "a", color: PALETTE[0], tabCount: 1, groupIndex: null }],
+      workspaces: [{ cwd: "/a", name: "a", tabCount: 1, groupIndex: null }],
     });
-    localStorage.setItem(V3_KEY, "{pas du json");
+    localStorage.setItem(V4_KEY, "{pas du json");
     expect(loadSavedState()).toEqual({ groups: [], workspaces: [] });
     localStorage.setItem(
-      V3_KEY,
+      V4_KEY,
       JSON.stringify({
         groups: [{ name: "g", color: "#1" }, { nope: 1 }],
         workspaces: [
-          { cwd: "/ok", name: "ok", color: "#111111", tabCount: 2, groupIndex: 0 },
-          { cwd: "/hors", name: "h", color: "#111111", tabCount: 1, groupIndex: 9 }, // index invalide → null
+          { cwd: "/ok", name: "ok", tabCount: 2, groupIndex: 0 },
+          { cwd: "/hors", name: "h", tabCount: 1, groupIndex: 9 }, // index invalide → null
           { n: 1 },
         ],
       }),
@@ -666,27 +750,42 @@ describe("persistance v3", () => {
     expect(loadSavedState()).toEqual({
       groups: [{ name: "g", color: "#1", collapsed: false }],
       workspaces: [
-        { cwd: "/ok", name: "ok", color: "#111111", tabCount: 2, groupIndex: 0 },
-        { cwd: "/hors", name: "h", color: "#111111", tabCount: 1, groupIndex: null },
+        { cwd: "/ok", name: "ok", tabCount: 2, groupIndex: 0 },
+        { cwd: "/hors", name: "h", tabCount: 1, groupIndex: null },
       ],
     });
   });
 
-  it("migration v2 → v3 : paneCount devient tabCount, tout hors-groupe, clé v2 conservée (retour arrière possible)", () => {
+  it("migration v3 → v4 : groupes et appartenance conservés, couleur des workspaces oubliée, clé v3 laissée en place", () => {
+    localStorage.setItem(
+      V3_KEY,
+      JSON.stringify({
+        groups: [{ name: "g", color: "#0000ff", collapsed: true }],
+        workspaces: [{ cwd: "/a", name: "a", color: "#123456", tabCount: 2, groupIndex: 0 }],
+      }),
+    );
+    expect(loadSavedState()).toEqual({
+      groups: [{ name: "g", color: "#0000ff", collapsed: true }],
+      workspaces: [{ cwd: "/a", name: "a", tabCount: 2, groupIndex: 0 }],
+    });
+    expect(localStorage.getItem(V3_KEY)).not.toBeNull(); // retour arrière possible
+  });
+
+  it("migration v2 → v4 : paneCount devient tabCount, tout hors-groupe, clé v2 conservée (retour arrière possible)", () => {
     localStorage.setItem(
       V2_KEY,
       JSON.stringify([{ cwd: "/a", name: "a", color: "#111111", paneCount: 3 }, { n: 1 }]),
     );
     expect(loadSavedState()).toEqual({
       groups: [],
-      workspaces: [{ cwd: "/a", name: "a", color: "#111111", tabCount: 3, groupIndex: null }],
+      workspaces: [{ cwd: "/a", name: "a", tabCount: 3, groupIndex: null }],
     });
     expect(localStorage.getItem(V2_KEY)).not.toBeNull();
   });
 
-  it("un v3 présent (même vide) prime sur un v2 résiduel", () => {
+  it("un v4 présent (même vide) prime sur les clés antérieures", () => {
     localStorage.setItem(V2_KEY, JSON.stringify([{ cwd: "/old", name: "o", color: "#1", paneCount: 1 }]));
-    localStorage.setItem(V3_KEY, JSON.stringify({ groups: [], workspaces: [] }));
+    localStorage.setItem(V4_KEY, JSON.stringify({ groups: [], workspaces: [] }));
     expect(loadSavedState()).toEqual({ groups: [], workspaces: [] });
   });
 
@@ -694,9 +793,9 @@ describe("persistance v3", () => {
     store().restoreState({
       groups: [{ name: "g", color: "#0000ff", collapsed: true }],
       workspaces: [
-        { cwd: "/a", name: "agent", color: "#123456", tabCount: 2, groupIndex: 0 },
-        { cwd: "/b", name: "b", color: "#654321", tabCount: 9, groupIndex: null },
-        { cwd: "/c", name: "c", color: "#111111", tabCount: 0, groupIndex: null },
+        { cwd: "/a", name: "agent", tabCount: 2, groupIndex: 0 },
+        { cwd: "/b", name: "b", tabCount: 9, groupIndex: null },
+        { cwd: "/c", name: "c", tabCount: 0, groupIndex: null },
       ],
     });
     const [a, b, c] = store().workspaces;
@@ -706,7 +805,6 @@ describe("persistance v3", () => {
     expect(a).toMatchObject({
       cwd: "/a",
       name: "agent",
-      color: "#123456",
       groupId: g.id,
       unread: false,
       unreadTabs: [],
@@ -730,8 +828,8 @@ describe("persistance v3", () => {
     store().restoreState({
       groups: [],
       workspaces: [
-        { cwd: "/a", name: "a", color: "#111111", tabCount: 1, groupIndex: null },
-        { cwd: "/b", name: "b", color: "#222222", tabCount: 1, groupIndex: null },
+        { cwd: "/a", name: "a", tabCount: 1, groupIndex: null },
+        { cwd: "/b", name: "b", tabCount: 1, groupIndex: null },
       ],
     });
     const workspaces = store().workspaces;
@@ -747,18 +845,6 @@ describe("persistance v3", () => {
     expect(store().workspaces).toEqual([]);
     expect(store().groups).toEqual([]);
     expect(store().activeId).toBeNull();
-  });
-
-  it("le round-robin de couleurs continue après les workspaces restaurés", () => {
-    store().restoreState({
-      groups: [],
-      workspaces: [
-        { cwd: "/a", name: "a", color: "#111111", tabCount: 1, groupIndex: null },
-        { cwd: "/b", name: "b", color: "#222222", tabCount: 1, groupIndex: null },
-      ],
-    });
-    const d = store().addWorkspace("/d");
-    expect(ws(d).color).toBe(PALETTE[2]);
   });
 
   it("getLastFolder/setLastFolder font l'aller-retour, absent → undefined", () => {

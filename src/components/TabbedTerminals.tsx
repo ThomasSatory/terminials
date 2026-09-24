@@ -40,6 +40,9 @@ export function TabbedTerminals({ ws, visible }: { ws: Workspace; visible: boole
   const closeTab = useWorkspaceStore((s) => s.closeTab);
   const addTab = useWorkspaceStore((s) => s.addTab);
   const moveTab = useWorkspaceStore((s) => s.moveTab);
+  // Couleur d'accent de l'onglet actif : celle du GROUPE du workspace (il n'a
+  // plus de couleur propre), neutre hors-groupe.
+  const accent = useWorkspaceStore((s) => s.groups.find((g) => g.id === ws.groupId)?.color ?? "#5a5a5a");
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   // Focus du terminal quand l'onglet actif change (clic, Alt+←/→, nouvel onglet) :
@@ -164,7 +167,7 @@ export function TabbedTerminals({ ws, visible }: { ws: Workspace; visible: boole
                 touchAction: "none",
                 color: isActive ? "#e6e6e6" : "#8a8a8a",
                 background: isActive ? "#1e1e1e" : "transparent",
-                borderBottom: `2px solid ${isActive ? ws.color : "transparent"}`,
+                borderBottom: `2px solid ${isActive ? accent : "transparent"}`,
                 borderRight: "1px solid #242424",
                 opacity: dragId === tab.id ? 0.5 : 1,
                 // Trait d'insertion du drag : bordure gauche 2 px, sans décaler les voisins.

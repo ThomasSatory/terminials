@@ -267,3 +267,10 @@ body {
 .dash-entry:hover {
   background: #2c2c2c;
 }
+
+/* Entrées du menu contextuel de la Sidebar (clic droit sur un workspace ou un
+   en-tête de groupe) : le survol est la seule affordance, les lignes n'ont plus
+   de boutons. */
+.ctx-item:hover {
+  background: #2c2c2c;
+}

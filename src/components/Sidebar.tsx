@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { homeDir } from "@tauri-apps/api/path";
 import {
   useWorkspaceStore,
@@ -15,6 +15,7 @@ import { closePty } from "../lib/pty";
 import { finalIndex, resolveDrop, type DropTarget, type SidebarRow } from "../lib/reorder";
 import { WorkspaceForm } from "./WorkspaceForm";
 import { GroupForm } from "./GroupForm";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
 
 /** Métadonnées git/ports condensées en une ligne discrète : `branch • · :ports`.
    Le `•` (dirty) et les ports sont optionnels ; hors repo, renvoie "". */
@@ -32,23 +33,14 @@ const DRAG_THRESHOLD = 4;
 /** Indentation des workspaces membres d'un groupe (filet vertical à gauche). */
 const GROUP_INDENT = 12;
 
-/** Boutons de la pile d'actions (× et ✎), révélée au survol de la ligne. */
-const ACTION_BTN: CSSProperties = {
-  width: 16,
-  height: 16,
-  padding: 0,
-  lineHeight: "14px",
-  fontSize: 12,
-  border: "none",
-  borderRadius: 3,
-  background: "transparent",
-  color: "#8a8a8a",
-  cursor: "pointer",
-};
+/** Pastille d'identité : elle porte la couleur du GROUPE (un workspace n'a plus
+    de couleur propre), ou ce gris hors-groupe. */
+const NO_GROUP_DOT = "#5a5a5a";
 
-/** Réserve la gouttière de la pile d'actions : l'ellipsis du nom ne doit jamais
-    passer sous les boutons, y compris quand ils sont masqués. */
-const ACTIONS_GUTTER = 20;
+/** Diamètre de la pastille, et décalage des lignes secondaires (chemin, méta)
+    pour qu'elles s'alignent sur le nom. */
+const DOT = 14;
+const TEXT_INDENT = DOT + 7;
 
 /** Ligne rendue dans la sidebar, dans l'ordre du DOM (= ordre de `resolveDrop`). */
 type Item = { kind: "ws"; w: Workspace } | { kind: "group"; g: Group };
@@ -78,8 +70,8 @@ export function Sidebar() {
     tabPtys,
     renameWorkspace,
     setCwd,
-    setColor,
     addWorkspace,
+    duplicateWorkspace,
     assignToGroup,
     addGroup,
     renameGroup,
@@ -96,8 +88,11 @@ export function Sidebar() {
   // ne sont pas validés : ni le + ni le + groupe ne créent silencieusement).
   const [creating, setCreating] = useState(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
-  const [paletteFor, setPaletteFor] = useState<string | null>(null);
-  const [hoverId, setHoverId] = useState<string | null>(null);
+  // Groupe dont l'en-tête a demandé « Nouveau workspace » : le formulaire de
+  // création s'ouvre juste sous lui et le workspace naîtra dedans.
+  const [creatingInGroup, setCreatingInGroup] = useState<string | null>(null);
+  // Menu contextuel ouvert (clic droit) : position écran + entrées.
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
 
   const dashboardOpen = useDashboardStore((s) => s.open);
   const unreadSummary = useDashboardStore((s) => s.unreadSummary);
@@ -107,7 +102,7 @@ export function Sidebar() {
   const closeForms = () => {
     setCreating(false);
     setCreatingGroup(false);
-    setPaletteFor(null);
+    setCreatingInGroup(null);
     setEditingId(null);
     setEditingGroupId(null);
   };
@@ -264,6 +259,51 @@ export function Sidebar() {
     closeWorkspace(w.id);
   };
 
+  /** Ouvre le menu au point cliqué. Les formulaires en cours se referment :
+      deux affordances ouvertes en même temps sur la même ligne n'ont pas de sens. */
+  const openMenu = (e: React.MouseEvent, items: MenuItem[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    closeForms();
+    setMenu({ x: e.clientX, y: e.clientY, items });
+  };
+
+  const workspaceMenu = (w: Workspace): MenuItem[] => [
+    {
+      label: "Renommer…",
+      shortcut: "Ctrl+Maj+R",
+      run: () => {
+        setActive(w.id);
+        openEdit(w.id);
+      },
+    },
+    { label: "Dupliquer", run: () => duplicateWorkspace(w.id) },
+    { separator: true },
+    { label: "Fermer", shortcut: "Ctrl+Maj+Q", run: () => closeWs(w) },
+  ];
+
+  const groupMenu = (g: Group): MenuItem[] => [
+    {
+      label: "Nouveau workspace",
+      run: () => {
+        closeForms();
+        // Un groupe replié cacherait le formulaire qu'on vient d'ouvrir.
+        if (g.collapsed) toggleGroupCollapsed(g.id);
+        setCreatingInGroup(g.id);
+      },
+    },
+    {
+      label: "Renommer / recolorer…",
+      run: () => {
+        closeForms();
+        setEditingGroupId(g.id);
+      },
+    },
+    { separator: true },
+    // Dissoudre ne ferme aucun terminal : les workspaces redeviennent hors-groupe.
+    { label: "Dissoudre le groupe", run: () => removeGroup(g.id) },
+  ];
+
   const renderGroup = (g: Group) => {
     const count = workspaces.filter((w) => w.groupId === g.id).length;
     const attention = groupHasAttention(workspaces, g.id);
@@ -280,8 +320,7 @@ export function Sidebar() {
           }
           if (!editing) toggleGroupCollapsed(g.id);
         }}
-        onMouseEnter={() => setHoverId(g.id)}
-        onMouseLeave={() => setHoverId((cur) => (cur === g.id ? null : cur))}
+        onContextMenu={(e) => openMenu(e, groupMenu(g))}
         onMouseDown={(e) => {
           if (e.button !== 0 || editing) return;
           e.preventDefault();
@@ -334,63 +373,18 @@ export function Sidebar() {
             onCancel={() => setEditingGroupId(null)}
           />
         ) : (
-          <>
-            <span
-              style={{
-                flex: 1,
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                paddingRight: ACTIONS_GUTTER,
-              }}
-            >
-              {g.name}
-              <span style={{ color: "#6f6f6f", fontWeight: 400, marginLeft: 6 }}>{count}</span>
-            </span>
-            <div
-              style={{
-                position: "absolute",
-                top: 3,
-                right: 6,
-                display: "flex",
-                gap: 2,
-                visibility: hoverId === g.id ? "visible" : "hidden",
-              }}
-            >
-              <button
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeForms();
-                  setEditingGroupId(g.id);
-                }}
-                title="Renommer / recolorer le groupe"
-                style={ACTION_BTN}
-              >
-                ✎
-              </button>
-              <button
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  e.preventDefault();
-                }}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removeGroup(g.id); // dégroupe seulement : aucun terminal fermé
-                }}
-                title="Dissoudre le groupe (les workspaces restent ouverts)"
-                style={ACTION_BTN}
-              >
-                ×
-              </button>
-            </div>
-          </>
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {g.name}
+            <span style={{ color: "#6f6f6f", fontWeight: 400, marginLeft: 6 }}>{count}</span>
+          </span>
         )}
       </div>
     );
@@ -412,8 +406,7 @@ export function Sidebar() {
           closeDashboard();
           setActive(w.id);
         }}
-        onMouseEnter={() => setHoverId(w.id)}
-        onMouseLeave={() => setHoverId((cur) => (cur === w.id ? null : cur))}
+        onContextMenu={(e) => openMenu(e, workspaceMenu(w))}
         // `userSelect: none` ne bloque que le DÉMARRAGE d'une sélection sur la
         // ligne : WebKitGTK l'étend quand même depuis un ancêtre sélectionnable
         // pendant le glissement, et le texte du workspace finit surligné.
@@ -439,7 +432,9 @@ export function Sidebar() {
           touchAction: "none",
           opacity: dragId === w.id ? 0.5 : 1,
           background: w.id === activeId ? "#242424" : "transparent",
-          borderLeft: `3px solid ${hasAttention(w) ? ATTENTION_COLOR : group ? `${group.color}66` : "transparent"}`,
+          // Filet en couleur PLEINE du groupe (et non plus à 40 %) : c'est le
+          // seul rappel d'appartenance sur la ligne, il doit se voir.
+          borderLeft: `4px solid ${hasAttention(w) ? ATTENTION_COLOR : group ? group.color : "transparent"}`,
         }}
       >
         <div
@@ -447,22 +442,19 @@ export function Sidebar() {
             display: "flex",
             alignItems: editing ? "flex-start" : "center",
             gap: 7,
-            paddingRight: ACTIONS_GUTTER,
           }}
         >
+          {/* Pastille d'identité : couleur du groupe, grise hors-groupe. Un
+              workspace n'a plus de couleur propre, il n'y a donc plus rien à
+              changer au clic. */}
           <span
-            onClick={(e) => {
-              e.stopPropagation();
-              setPaletteFor(paletteFor === w.id ? null : w.id);
-            }}
-            title="Changer la couleur"
+            title={group ? group.name : undefined}
             style={{
-              width: 10,
-              height: 10,
+              width: DOT,
+              height: DOT,
               borderRadius: "50%",
-              background: w.color,
+              background: group ? group.color : NO_GROUP_DOT,
               flexShrink: 0,
-              cursor: "pointer",
               boxShadow: hasAttention(w) ? `0 0 0 3px ${ATTENTION_COLOR}40` : "none",
             }}
           />
@@ -518,94 +510,24 @@ export function Sidebar() {
           )}
         </div>
 
-        {/* Pile d'actions en position absolue : empiler × et ✎ dans le flux
-            ferait grandir la ligne au survol. Masquée pendant l'édition (le
-            formulaire s'annule au blur et porte déjà ses propres boutons). */}
-        {!editing && (
-          <div
-            style={{
-              position: "absolute",
-              top: 5,
-              right: 6,
-              display: "flex",
-              flexDirection: "column",
-              gap: 2,
-              visibility: hoverId === w.id ? "visible" : "hidden",
-            }}
-          >
-            <button
-              onMouseDown={(e) => {
-                // Ne pas voler le mousedown (pas d'activation de la ligne, pas de drag).
-                e.stopPropagation();
-                e.preventDefault();
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                closeWs(w);
-              }}
-              title="Fermer le workspace (Ctrl+Shift+Q)"
-              style={ACTION_BTN}
-            >
-              ×
-            </button>
-            <button
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                e.preventDefault();
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.stopPropagation();
-                setActive(w.id);
-                openEdit(w.id);
-              }}
-              title="Modifier nom et dossier (Ctrl+Shift+R)"
-              style={ACTION_BTN}
-            >
-              ✎
-            </button>
-          </div>
-        )}
-
-        {paletteFor === w.id && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "6px 0 2px 17px" }}
-          >
-            {PALETTE.map((c) => (
-              <span
-                key={c}
-                onClick={() => {
-                  setColor(w.id, c);
-                  setPaletteFor(null);
-                }}
-                style={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: 3,
-                  background: c,
-                  cursor: "pointer",
-                  outline: c === w.color ? "2px solid #fff" : "none",
-                }}
-              />
-            ))}
-          </div>
-        )}
-
         {metaLine(w.branch, w.dirty, w.ports) && (
-          <div
-            onClick={(e) => {
-              // Le clic active le workspace ET ouvre son diff (sans déclencher le onClick de la ligne).
-              e.stopPropagation();
-              closeDashboard();
-              setActive(w.id);
-              toggleDiff(w.id);
-            }}
-            title="Voir les fichiers modifiés (Ctrl+Shift+D)"
-            style={{ fontSize: 11, color: "#6f6f6f", marginLeft: 17, marginTop: 3, cursor: "pointer" }}
-          >
-            {metaLine(w.branch, w.dirty, w.ports)}
+          <div style={{ fontSize: 11, color: "#6f6f6f", marginLeft: TEXT_INDENT, marginTop: 3 }}>
+            {/* Seul le TEXTE ouvre le diff. Porté par la ligne — un bloc pleine largeur —
+                le moindre clic à droite de la branche ouvrait le diff alors qu'on
+                voulait juste activer le workspace et voir son terminal. */}
+            <span
+              onClick={(e) => {
+                // Le clic active le workspace ET ouvre son diff (sans déclencher le onClick de la ligne).
+                e.stopPropagation();
+                closeDashboard();
+                setActive(w.id);
+                toggleDiff(w.id);
+              }}
+              title="Voir les fichiers modifiés (Ctrl+Shift+D)"
+              style={{ cursor: "pointer" }}
+            >
+              {metaLine(w.branch, w.dirty, w.ports)}
+            </span>
           </div>
         )}
         {/* Chemin purement informatif : c'est le ✎ qui ouvre l'édition,
@@ -614,7 +536,7 @@ export function Sidebar() {
           style={{
             fontSize: 11,
             color: "#6f6f6f",
-            marginLeft: 17,
+            marginLeft: TEXT_INDENT,
             marginTop: 2,
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -628,7 +550,7 @@ export function Sidebar() {
             style={{
               fontSize: 11,
               color: "#8a8a8a",
-              marginLeft: 17,
+              marginLeft: TEXT_INDENT,
               marginTop: 2,
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -639,12 +561,12 @@ export function Sidebar() {
           </div>
         )}
         {w.status && (
-          <div style={{ fontSize: 11, color: w.status.color ?? "#8a8a8a", marginLeft: 17, marginTop: 2 }}>
+          <div style={{ fontSize: 11, color: w.status.color ?? "#8a8a8a", marginLeft: TEXT_INDENT, marginTop: 2 }}>
             {w.status.label}
           </div>
         )}
         {w.progress && (
-          <div style={{ height: 3, background: "#2a2a2a", borderRadius: 2, marginLeft: 17, marginTop: 5 }}>
+          <div style={{ height: 3, background: "#2a2a2a", borderRadius: 2, marginLeft: TEXT_INDENT, marginTop: 5 }}>
             <div style={{ height: 3, width: `${w.progress.value * 100}%`, background: STATUS_DEFAULT_COLOR }} />
           </div>
         )}
@@ -697,6 +619,29 @@ export function Sidebar() {
         <Fragment key={item.kind === "ws" ? item.w.id : item.g.id}>
           {dropLine(i)}
           {item.kind === "ws" ? renderWorkspace(item.w) : renderGroup(item.g)}
+          {/* Création demandée depuis l'en-tête : le formulaire s'ouvre en tête
+              du groupe, indenté comme ses membres, et le workspace y naît. */}
+          {item.kind === "group" && creatingInGroup === item.g.id && (
+            <div
+              style={{
+                display: "flex",
+                padding: "7px 10px",
+                margin: `1px 6px 1px ${6 + GROUP_INDENT}px`,
+              }}
+            >
+              <WorkspaceForm
+                initialName=""
+                initialFolder=""
+                home={home}
+                focusField="name"
+                onCommit={(r) => {
+                  addWorkspace(r.cwd, r.name, item.g.id);
+                  setCreatingInGroup(null);
+                }}
+                onCancel={() => setCreatingInGroup(null)}
+              />
+            </div>
+          )}
         </Fragment>
       ))}
       {/* Frontière après la dernière ligne (dépôt en fin de liste). */}
@@ -761,6 +706,8 @@ export function Sidebar() {
           +▾
         </button>
       </div>
+
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
     </div>
   );
 }
