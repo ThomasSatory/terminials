@@ -20,7 +20,7 @@ use terminials_core::activity::shell_integration::{default_shims_dir, install_sh
 use terminials_core::activity::store::{Store, StoreResult};
 use terminials_core::activity::summaries::{self, SummaryKind};
 use terminials_core::activity::{
-    repo_root, ActivityEvent, ActivityStats, CollectReport, NewEvent, OpenTask, Summary,
+    repo_root, ActivityEvent, ActivityStats, CollectReport, NewEvent, OpenTask, Summary, TicketRef,
 };
 
 /// Nombre maximum d'erreurs de collecte conservées pour le bandeau du dashboard.
@@ -704,6 +704,54 @@ pub async fn activity_summary_cached(
 pub async fn activity_open_tasks(st: State<'_, Arc<ActivityState>>) -> Result<Vec<OpenTask>, String> {
     let st = st.inner().clone();
     hors_thread_principal(move || avec_store(&st, |store| store.open_tasks())).await
+}
+
+/// Temps déjà saisi dans ClickUp depuis le dashboard ce jour-là, par US.
+#[tauri::command]
+pub async fn activity_saisies(
+    st: State<'_, Arc<ActivityState>>,
+    day: String,
+) -> Result<std::collections::BTreeMap<String, u32>, String> {
+    let st = st.inner().clone();
+    hors_thread_principal(move || avec_store(&st, |store| store.saisies_du_jour(&day))).await
+}
+
+/// Saisit des temps dans ClickUp (`claude -p` + MCP, cf. `activity::saisie`)
+/// puis note les entrées réussies, pour que le dashboard ne les repropose pas.
+/// Le store n'est pas verrouillé pendant l'appel, qui prend des dizaines de secondes.
+#[tauri::command]
+pub async fn activity_saisir_temps(
+    st: State<'_, Arc<ActivityState>>,
+    day: String,
+    entrees: Vec<terminials_core::activity::saisie::EntreeTemps>,
+) -> Result<Vec<terminials_core::activity::saisie::ResultatSaisie>, String> {
+    if lecture(&st.settings).clickup.source == SourceReglee::Off {
+        return Err("ClickUp est désactivé dans les réglages".to_string());
+    }
+    let st = st.inner().clone();
+    hors_thread_principal(move || {
+        let resultats = terminials_core::activity::saisie::saisir("claude", &entrees)?;
+        let now = chrono::Utc::now().timestamp();
+        avec_store(&st, |store| {
+            for (e, r) in entrees.iter().zip(&resultats) {
+                if r.ok {
+                    store.ajouter_saisie(&day, &e.task_id, e.minutes, now)?;
+                }
+            }
+            Ok(())
+        })?;
+        Ok(resultats)
+    })
+    .await
+}
+
+/// US de réunion du temps à saisir : celle des réglages, sinon l'US « Réunion »
+/// du sprint en cours. `null` si inconnue.
+#[tauri::command]
+pub async fn activity_reunion_us(st: State<'_, Arc<ActivityState>>) -> Result<Option<TicketRef>, String> {
+    let st = st.inner().clone();
+    let forcee = lecture(&st.settings).saisie.us_reunion.clone();
+    hors_thread_principal(move || avec_store(&st, |store| store.reunion_us(&forcee))).await
 }
 
 #[tauri::command]

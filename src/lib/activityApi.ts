@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { EntreeTemps } from "./tempsSaisie";
 
 /**
  * Contrat IPC du dashboard d'activité (§7 du design). Toutes les commandes
@@ -31,6 +32,8 @@ export interface ActivityEvent {
   body?: string | null;
   ticketIds: string[];
   tickets: TicketRef[];
+  /** US déduite de la branche ou du worktree (`ABC-123-…`), résolue côté Rust. */
+  usTicket?: TicketRef | null;
 }
 
 /** Compteurs par type d'événement — les clés restent en snake_case (alignées sur EventKind). */
@@ -137,6 +140,24 @@ export interface ActivitySettings {
     authorEmail: string | null;
   };
   ticketPatterns: string[];
+  saisie: SaisieSettings;
+}
+
+/** Issue d'une entrée de temps (miroir de `ResultatSaisie` côté Rust). */
+export interface ResultatSaisie {
+  taskId: string;
+  ok: boolean;
+  erreur?: string | null;
+}
+
+/** Saisie des temps (miroir de `SaisieSettings` côté Rust). */
+export interface SaisieSettings {
+  /** Minutes à saisir du lundi au jeudi. */
+  journeeMinutes: number;
+  /** Minutes à saisir le vendredi. */
+  vendrediMinutes: number;
+  /** US qui reçoit le temps sans US ; vide = l'US « Réunion » du sprint. */
+  usReunion: string;
 }
 
 export const activityApi = {
@@ -166,6 +187,16 @@ export const activityApi = {
   openTasks: (): Promise<OpenTask[]> => invoke("activity_open_tasks"),
 
   status: (): Promise<ActivityStatus> => invoke("activity_status"),
+
+  /** Temps déjà saisi dans ClickUp depuis le dashboard ce jour-là, par id d'US. */
+  saisies: (day: string): Promise<Record<string, number>> => invoke("activity_saisies", { day }),
+
+  /** Saisit des temps dans ClickUp (`claude -p` + MCP) : plusieurs dizaines de secondes. */
+  saisirTemps: (day: string, entrees: EntreeTemps[]): Promise<ResultatSaisie[]> =>
+    invoke("activity_saisir_temps", { day, entrees }),
+
+  /** US « Réunion » du sprint en cours, `null` tant qu'aucune collecte ne l'a trouvée. */
+  reunionUs: (): Promise<TicketRef | null> => invoke("activity_reunion_us"),
 
   getSettings: (): Promise<ActivitySettings> => invoke("activity_get_settings"),
 

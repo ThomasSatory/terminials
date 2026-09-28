@@ -37,6 +37,12 @@ function textToList(text: string, sep: RegExp): string[] {
  * jeton, en-têtes, température, max tokens). `claude -p` n'en a aucun : il tourne
  * toujours sur Sonnet et s'authentifie tout seul.
  */
+/** « 7.5 » (heures, champ numérique) → 450 minutes, au quart d'heure ; vide ou invalide → 0. */
+export function heuresEnMinutes(texte: string): number {
+  const h = Number(texte.replace(",", "."));
+  return Number.isFinite(h) && h > 0 ? Math.round((h * 60) / 15) * 15 : 0;
+}
+
 export function champsLlmDetailles(provider: ActivitySettings["llm"]["provider"]): boolean {
   return provider !== "claude_cli";
 }
@@ -322,6 +328,47 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
           className="dash-field"
           value={ticketPatternsText}
           onChange={(e) => setTicketPatternsText(e.target.value)}
+        />
+      </label>
+
+      <label>
+        Heures à saisir du lundi au jeudi
+        <input
+          className="dash-field"
+          type="number"
+          min={0}
+          max={24}
+          step={0.25}
+          value={settings.saisie.journeeMinutes / 60}
+          onChange={(e) =>
+            update({ saisie: { ...settings.saisie, journeeMinutes: heuresEnMinutes(e.target.value) } })
+          }
+        />
+      </label>
+
+      <label>
+        Heures à saisir le vendredi
+        <input
+          className="dash-field"
+          type="number"
+          min={0}
+          max={24}
+          step={0.25}
+          value={settings.saisie.vendrediMinutes / 60}
+          onChange={(e) =>
+            update({ saisie: { ...settings.saisie, vendrediMinutes: heuresEnMinutes(e.target.value) } })
+          }
+        />
+      </label>
+
+      <label>
+        US de réunion (vide : l'US « Réunion » du sprint en cours)
+        <input
+          className="dash-field"
+          type="text"
+          placeholder="ABC-123"
+          value={settings.saisie.usReunion}
+          onChange={(e) => update({ saisie: { ...settings.saisie, usReunion: e.target.value.trim() } })}
         />
       </label>
 

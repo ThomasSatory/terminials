@@ -6,7 +6,7 @@ use std::path::Path;
 use chrono::{FixedOffset, Timelike};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
-use crate::activity::tickets::ticket_url;
+use crate::activity::tickets::{ticket_url, us_id};
 use crate::activity::{
     ActivityEvent, ActivityStats, DayCounts, EventKind, HourCounts, KindCounts, NewEvent,
     OpenTask, TicketInfo, TicketRef, Totals, WorkspaceCount,
@@ -38,6 +38,13 @@ CREATE TABLE summaries(day TEXT NOT NULL, kind TEXT NOT NULL, model TEXT NOT NUL
           text TEXT NOT NULL, generated_at INTEGER NOT NULL, PRIMARY KEY(day, kind));
 CREATE TABLE collector_state(name TEXT PRIMARY KEY, cursor TEXT NOT NULL);
 PRAGMA user_version = 1;
+";
+
+/// v2 : temps saisis dans ClickUp depuis le dashboard, cumulés par jour et par US.
+const SCHEMA_V2: &str = "
+CREATE TABLE saisies(day TEXT NOT NULL, task_id TEXT NOT NULL, minutes INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL, PRIMARY KEY(day, task_id));
+PRAGMA user_version = 2;
 ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,7 +87,28 @@ impl Store {
         if v < 1 {
             self.conn.execute_batch(SCHEMA_V1)?;
         }
+        if v < 2 {
+            self.conn.execute_batch(SCHEMA_V2)?;
+        }
         Ok(())
+    }
+
+    /// Ajoute `minutes` au temps déjà saisi pour (`day`, `task_id`).
+    pub fn ajouter_saisie(&self, day: &str, task_id: &str, minutes: u32, now: i64) -> StoreResult<()> {
+        self.conn.execute(
+            "INSERT INTO saisies (day, task_id, minutes, updated_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(day, task_id) DO UPDATE SET minutes = minutes + excluded.minutes,
+                                                    updated_at = excluded.updated_at",
+            params![day, task_id, minutes, now],
+        )?;
+        Ok(())
+    }
+
+    /// Temps déjà saisi ce jour-là, par US.
+    pub fn saisies_du_jour(&self, day: &str) -> StoreResult<BTreeMap<String, u32>> {
+        let mut stmt = self.conn.prepare("SELECT task_id, minutes FROM saisies WHERE day = ?1")?;
+        let rows = stmt.query_map(params![day], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?)))?;
+        rows.collect()
     }
 
     pub fn insert_events(&self, events: &[NewEvent]) -> StoreResult<usize> {
@@ -104,6 +132,30 @@ impl Store {
                     e.source_ref,
                 ])?;
                 count += n;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// `source_ref` de toutes les sessions Claude Code enregistrées : le chemin
+    /// de leur transcript.
+    pub fn claude_session_refs(&self) -> StoreResult<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT source_ref FROM events WHERE kind = ?1")?;
+        let rows = stmt.query_map(params![EventKind::ClaudeSession.as_str()], |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    /// Supprime les événements `kind` dont le `source_ref` est dans la liste.
+    pub fn delete_events(&self, kind: EventKind, source_refs: &[String]) -> StoreResult<usize> {
+        let mut count = 0usize;
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare("DELETE FROM events WHERE kind = ?1 AND source_ref = ?2")?;
+            for r in source_refs {
+                count += stmt.execute(params![kind.as_str(), r])?;
             }
         }
         tx.commit()?;
@@ -202,8 +254,18 @@ impl Store {
         let known_map: BTreeMap<String, TicketInfo> =
             known.into_iter().map(|t| (t.id.clone(), t)).collect();
 
+        let mut us_ids: Vec<String> = rows
+            .iter()
+            .filter_map(|(_, _, _, dir, branch, ..)| us_id(branch.as_deref(), dir.as_deref()))
+            .collect();
+        us_ids.sort();
+        us_ids.dedup();
+        let us_map = self.resolve_us(&us_ids)?;
+
         let mut events = Vec::with_capacity(rows.len());
         for (id, ts, kind, workspace_dir, branch, title, body, ticket_ids_raw) in rows {
+            let us_ticket = us_id(branch.as_deref(), workspace_dir.as_deref())
+                .and_then(|u| us_map.get(&u).cloned());
             let ticket_ids = split_ticket_ids(&ticket_ids_raw);
             let tickets = ticket_ids
                 .iter()
@@ -236,9 +298,53 @@ impl Store {
                 body,
                 ticket_ids,
                 tickets,
+                us_ticket,
             });
         }
         Ok(events)
+    }
+
+    /// Résout des identifiants d'US (`us_id`) en tickets : d'abord les tickets
+    /// connus, puis les tâches ouvertes du sprint, puis l'alias par le nom —
+    /// une US « ABC-6352 » s'intitule « XYZ-10690 | … » quand elle reprend un
+    /// ticket d'un autre espace, et c'est elle qu'il faut saisir. Un
+    /// identifiant introuvable garde son URL construite, sans nom ni état.
+    fn resolve_us(&self, ids: &[String]) -> StoreResult<BTreeMap<String, TicketRef>> {
+        const DIRECT_TICKETS: &str = "SELECT id, name, status, url FROM tickets WHERE id = ?1";
+        const DIRECT_OUVERTES: &str = "SELECT id, name, status, url FROM open_tasks WHERE id = ?1";
+        const ALIAS: &str = "SELECT id, name, status, url FROM tickets WHERE name LIKE ?1 || ' |%'
+                             ORDER BY instr(id, '-') = 0, fetched_at DESC LIMIT 1";
+        let mut out = BTreeMap::new();
+        for id in ids {
+            let mut trouve = None;
+            for sql in [DIRECT_TICKETS, DIRECT_OUVERTES, ALIAS] {
+                trouve = self
+                    .conn
+                    .query_row(sql, params![id], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, Option<String>>(1)?,
+                            r.get::<_, Option<String>>(2)?,
+                            r.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        ))
+                    })
+                    .optional()?;
+                if trouve.is_some() {
+                    break;
+                }
+            }
+            let r = match trouve {
+                Some((tid, name, status, url)) => TicketRef {
+                    url: if url.is_empty() { ticket_url(&tid) } else { url },
+                    id: tid,
+                    name,
+                    status,
+                },
+                None => TicketRef { id: id.clone(), name: None, status: None, url: ticket_url(id) },
+            };
+            out.insert(id.clone(), r);
+        }
+        Ok(out)
     }
 
     pub fn stats(
@@ -475,7 +581,20 @@ impl Store {
         older_than: i64,
         limit: usize,
     ) -> StoreResult<Vec<String>> {
-        let ids = self.ticket_ids_in_range(from, to)?;
+        let mut ids = self.ticket_ids_in_range(from, to)?;
+        // Les US déduites des branches ne sont pas dans `ticket_ids` : sans ça,
+        // une US jamais citée garderait « nom inconnu » dans le temps à saisir.
+        // Celles qui ne se résolvent que par alias (« XYZ-10690 | … ») sont
+        // écartées : la source les rangerait sous un autre id, et on les
+        // redemanderait à chaque collecte.
+        let branches = self.branch_us_ids_in_range(from, to)?;
+        let resolues = self.resolve_us(&branches)?;
+        for id in branches {
+            let par_alias = resolues.get(&id).is_some_and(|t| t.id != id);
+            if !par_alias && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
         let mut stale = Vec::new();
         for id in ids {
             let fetched_at: Option<i64> = self
@@ -542,6 +661,36 @@ impl Store {
             })
         })?;
         rows.collect()
+    }
+
+    /// US de réunion de la saisie des temps : `forcee` (réglage) si non vide,
+    /// sinon l'US « Réunion » du sprint en cours retenue par la dernière collecte
+    /// ClickUp qui l'a trouvée (cf. `collectors::clickup::CURSEUR_REUNION`).
+    pub fn reunion_us(&self, forcee: &str) -> StoreResult<Option<TicketRef>> {
+        let id = match forcee.trim() {
+            "" => match self.get_cursor(crate::activity::collectors::clickup::CURSEUR_REUNION)? {
+                Some(id) => id,
+                None => return Ok(None),
+            },
+            f => f.to_string(),
+        };
+        Ok(self.resolve_us(std::slice::from_ref(&id))?.remove(&id))
+    }
+
+    /// Identifiants d'US portés par les branches (ou worktrees) des événements de la plage.
+    fn branch_us_ids_in_range(&self, from: i64, to: i64) -> StoreResult<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT branch, workspace_dir FROM events WHERE ts >= ?1 AND ts < ?2",
+        )?;
+        let rows = stmt.query_map(params![from, to], |r| {
+            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+        })?;
+        let mut ids = BTreeSet::new();
+        for row in rows {
+            let (branch, dir) = row?;
+            ids.extend(us_id(branch.as_deref(), dir.as_deref()));
+        }
+        Ok(ids.into_iter().collect())
     }
 
     pub fn ticket_ids_in_range(&self, from: i64, to: i64) -> StoreResult<Vec<String>> {
@@ -615,6 +764,73 @@ mod tests {
         assert_eq!(got[0].tickets[1].url, "https://app.clickup.com/t/zzz9999");
         assert!(got[0].tickets[1].name.is_none());
     }
+    #[test]
+    fn query_resout_l_us_de_la_branche_directement_ou_par_alias() {
+        let s = Store::open_in_memory().unwrap();
+        let info = |id: &str, name: &str| TicketInfo {
+            id: id.into(),
+            name: name.into(),
+            status: "code review".into(),
+            status_type: "custom".into(),
+            url: format!("https://app.clickup.com/t/{id}"),
+            due_date: None,
+            list_name: None,
+        };
+        s.upsert_tickets(&[info("ABC-1234", "Faire X"), info("ABC-6352", "XYZ-10690 | Notifs")], 1).unwrap();
+        let mut a = ev(10, EventKind::ClaudePrompt, "/p/app", "p", "1");
+        a.branch = Some("ABC-1234-faire-x-from-2.0.back".into());
+        let mut b = ev(11, EventKind::ClaudePrompt, "/p/app", "p", "2");
+        b.branch = Some("XYZ-10690-notifs".into());
+        let mut c = ev(12, EventKind::ClaudePrompt, "/p/app", "p", "3");
+        c.branch = Some("ABC-9999-inconnue".into());
+        s.insert_events(&[a, b, c, ev(13, EventKind::Commit, "/p/app", "c", "4")]).unwrap();
+        let q = s.query(0, 100, None).unwrap();
+        let us: Vec<_> = q.iter().map(|e| e.us_ticket.as_ref().map(|t| (t.id.as_str(), t.name.as_deref()))).collect();
+        assert_eq!(
+            us,
+            vec![
+                Some(("ABC-1234", Some("Faire X"))),
+                Some(("ABC-6352", Some("XYZ-10690 | Notifs"))),
+                Some(("ABC-9999", None)),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn stale_ticket_ids_inclut_les_us_de_branche_sauf_par_alias() {
+        let s = Store::open_in_memory().unwrap();
+        s.upsert_tickets(
+            &[TicketInfo {
+                id: "ABC-6352".into(),
+                name: "XYZ-10690 | Notifs".into(),
+                status: "test".into(),
+                status_type: "custom".into(),
+                url: String::new(),
+                due_date: None,
+                list_name: None,
+            }],
+            1_000,
+        )
+        .unwrap();
+        let mut a = ev(10, EventKind::ClaudePrompt, "/p/app", "p", "1");
+        a.branch = Some("ABC-1234-inconnue".into());
+        let mut b = ev(11, EventKind::ClaudePrompt, "/p/app", "p", "2");
+        b.branch = Some("XYZ-10690-notifs".into());
+        s.insert_events(&[a, b]).unwrap();
+        assert_eq!(s.stale_ticket_ids(0, 100, 500, 30).unwrap(), vec!["ABC-1234".to_string()]);
+    }
+
+    #[test]
+    fn saisies_cumulees_par_jour_et_par_us() {
+        let s = Store::open_in_memory().unwrap();
+        s.ajouter_saisie("2026-09-28", "ABC-1", 30, 1).unwrap();
+        s.ajouter_saisie("2026-09-28", "ABC-1", 15, 2).unwrap();
+        s.ajouter_saisie("2026-09-29", "ABC-1", 60, 3).unwrap();
+        assert_eq!(s.saisies_du_jour("2026-09-28").unwrap().get("ABC-1"), Some(&45));
+        assert!(s.saisies_du_jour("2026-09-27").unwrap().is_empty());
+    }
+
     #[test]
     fn stats_par_heure_workspace_et_minutes_actives() {
         let s = Store::open_in_memory().unwrap();

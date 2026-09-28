@@ -4,6 +4,8 @@ import { OpenTasks, TACHES_VISIBLES } from "./OpenTasks";
 import { foldLabel } from "./Fold";
 import { champsLlmDetailles } from "./SettingsPanel";
 import { SummaryPanel, summaryFooter, scheduleSentence } from "./SummaryPanel";
+import { TempsSaisie } from "./TempsSaisie";
+import type { TempsSaisie as TempsData } from "../../lib/tempsSaisie";
 import { clickupActif, type OpenTask, type Summary } from "../../lib/activityApi";
 
 describe("clickupActif", () => {
@@ -52,8 +54,19 @@ describe("OpenTasks", () => {
     expect(idxWithDue).toBeGreaterThanOrEqual(0);
     expect(idxWithoutDue).toBeGreaterThan(idxWithDue);
 
-    expect(html).toContain("en cours");
-    expect(html).toContain("à faire");
+    expect(html).toContain('<span class="dash-statut" data-ton="encours">en cours</span>');
+    expect(html).toContain('<span class="dash-statut" data-ton="neutre">à faire</span>');
+  });
+
+  it("identifiant affiché en entier", () => {
+    const html = renderToStaticMarkup(
+      <OpenTasks
+        tasks={[{ id: "ABC-76983", name: "US", status: "test", url: "https://x/3" }]}
+        active={true}
+        onOpen={() => {}}
+      />,
+    );
+    expect(html).toContain('<a class="dash-task-id" href="https://x/3">ABC-76983</a>');
   });
 });
 
@@ -151,5 +164,48 @@ describe("SummaryPanel — état ok", () => {
     expect(html).toContain("dash-prose-note");
     expect(html).toContain("Synthèse générée à 07:02 par gemma");
     expect(html).not.toContain("Titre");
+  });
+});
+
+describe("TempsSaisie — boutons de saisie", () => {
+  const temps: TempsData = {
+    us: [
+      {
+        cle: "ABC-1",
+        ticket: { id: "ABC-1", name: "Faire A", status: "test", url: "https://x/a" },
+        projets: ["app"],
+        minutes: 50,
+        saisie: 45,
+        debut: 1_789_000_200,
+      },
+    ],
+    reunion: { ticket: { id: "ABC-9", name: "Réunions", status: null, url: "https://x/r" }, horsUs: [], saisie: 405, debut: 1_789_000_200 },
+    total: 450,
+    jours: 1,
+  };
+  const saisie = (saisies: Record<string, number>, enCours: string[] = []) => ({
+    saisies,
+    enCours: new Set(enCours),
+    erreurs: {},
+    saisir: () => {},
+  });
+
+  it("vue Semaine : aucun bouton", () => {
+    const html = renderToStaticMarkup(<TempsSaisie temps={temps} onOpen={() => {}} saisie={null} />);
+    expect(html).not.toContain("dash-saisir");
+  });
+
+  it("Saisir, puis le reste après une saisie partielle, ✓ quand tout est saisi", () => {
+    const html = renderToStaticMarkup(
+      <TempsSaisie temps={temps} onOpen={() => {}} saisie={saisie({ "ABC-1": 45, "ABC-9": 390 })} />,
+    );
+    expect(html).toContain("✓");
+    expect(html).toContain("+15 min");
+    expect(html).toContain("Tout saisir");
+    const enCours = renderToStaticMarkup(
+      <TempsSaisie temps={temps} onOpen={() => {}} saisie={saisie({}, ["ABC-1"])} />,
+    );
+    expect(enCours).toContain("saisie…");
+    expect(enCours).toContain(">Saisir</button>");
   });
 });

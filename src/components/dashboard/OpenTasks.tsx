@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FoldButton } from "./Fold";
+import { StatutClickup } from "./StatutClickup";
 import type { OpenTask } from "../../lib/activityApi";
 
 /** Tickets visibles tant que la liste n'est pas dépliée. */
@@ -45,7 +46,8 @@ export function formatTaskDue(ts: number): string {
 
 /**
  * Tickets ClickUp ouverts du sprint (« Reste à faire ») : une ligne
- * par ticket, identifiant en pastille laiton, nom en serif, échéance à droite.
+ * par ticket : identifiant complet en pastille accent, nom en serif, état
+ * ClickUp en pastille teintée, échéance à droite.
  * Triés par échéance puis priorité. ClickUp inactif (source « off », ou clé API
  * sans jeton), une simple ligne atténuée renvoie aux réglages.
  *
@@ -80,7 +82,6 @@ export function OpenTasks({
             <a
               className="dash-task-id"
               href={task.url}
-              title={task.listName ?? task.status}
               onClick={(e) => {
                 e.preventDefault();
                 onOpen(task.url);
@@ -88,9 +89,8 @@ export function OpenTasks({
             >
               {task.id}
             </a>
-            <span className="dash-task-name" title={task.status}>
-              {task.name}
-            </span>
+            <span className="dash-task-name">{task.name}</span>
+            <StatutClickup status={task.status} />
             {task.dueDate != null && (
               <span className="dash-task-due">{formatTaskDue(task.dueDate)}</span>
             )}

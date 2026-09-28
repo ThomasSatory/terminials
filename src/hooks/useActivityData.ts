@@ -7,6 +7,7 @@ import {
   type ActivityStatus,
   type OpenTask,
   type SummaryKind,
+  type TicketRef,
 } from "../lib/activityApi";
 import { dayRange, weekRange } from "../lib/dashboardDay";
 import { reduceSummary, type SummaryUi } from "../lib/summaryState";
@@ -22,6 +23,8 @@ export function useActivityData(): {
   events: ActivityEvent[];
   stats: ActivityStats | null;
   openTasks: OpenTask[];
+  /** US « Réunion » du sprint en cours, trouvée par la collecte ClickUp. */
+  reunionUs: TicketRef | null;
   status: ActivityStatus | null;
   error: string | null;
   reload(): void;
@@ -34,6 +37,7 @@ export function useActivityData(): {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [stats, setStats] = useState<ActivityStats | null>(null);
   const [openTasks, setOpenTasks] = useState<OpenTask[]>([]);
+  const [reunionUs, setReunionUs] = useState<TicketRef | null>(null);
   const [status, setStatus] = useState<ActivityStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
@@ -52,13 +56,15 @@ export function useActivityData(): {
       activityApi.stats(range.from, range.to),
       activityApi.openTasks(),
       activityApi.status(),
+      activityApi.reunionUs(),
     ])
-      .then(([ev, st, tasks, stat]) => {
+      .then(([ev, st, tasks, stat, reunion]) => {
         if (id !== requestId.current) return;
         setEvents(ev);
         setStats(st);
         setOpenTasks(tasks);
         setStatus(stat);
+        setReunionUs(reunion);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -70,7 +76,7 @@ export function useActivityData(): {
 
   const reload = useCallback(() => setReloadTick((t) => t + 1), []);
 
-  return { loading, events, stats, openTasks, status, error, reload };
+  return { loading, events, stats, openTasks, reunionUs, status, error, reload };
 }
 
 /**

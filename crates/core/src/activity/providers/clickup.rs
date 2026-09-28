@@ -57,6 +57,10 @@ pub struct ClickupBatch {
     pub updated: Vec<RawTask>,
     pub open: Vec<RawTask>,
     pub resolved: Vec<RawTask>,
+    /// US « Réunion » du sprint en cours : reçoit le temps de la saisie que
+    /// rien ne rattache à une US. Une par sprint ; `None` si la source ne sait
+    /// pas la trouver (API HTTP) ou n'en a pas trouvé.
+    pub reunion: Option<RawTask>,
 }
 
 /// Un aller-retour complet vers ClickUp, quelle qu'en soit la voie (API HTTP ou
@@ -276,12 +280,17 @@ Garde les « Story », « Bug », « Anomalie », « Technical story », etc.\n\
 tâches fermées incluses, au plus {max}. Aucun filtre de sprint ni de type ici : \
 cette liste alimente la chronologie.\n\
 - \"resolved\" : {resolus}, tâches fermées incluses. Aucun filtre non plus.\n\n\
+Et un objet seul :\n\
+- \"reunion\" : dans les listes de sprint retenues à l'étape 1, la tâche dont le type \
+ClickUp est « Réunion » (à défaut, celle qui s'intitule « Réunions »), QUEL QUE SOIT \
+son assigné — elle n'est souvent assignée à personne. `null` si aucune.\n\n\
 Forme exacte de la réponse :\n\
-{{\"open\":[…],\"updated\":[…],\"resolved\":[…]}}\n\
+{{\"open\":[…],\"updated\":[…],\"resolved\":[…],\"reunion\":{{…}} ou null}}\n\
 Chaque tâche est un objet plat :\n\
 {{\"id\":\"…\",\"name\":\"…\",\"status\":\"…\",\"closed\":true ou false,\"url\":\"…\",\
 \"dueDate\":epoch millisecondes ou null,\"priority\":\"…\" ou null,\"listName\":\"…\" ou null,\
 \"taskType\":\"…\" ou null,\"sprint\":\"…\" ou null,\"updatedAt\":epoch millisecondes}}\n\
+`id` est l'identifiant personnalisé de la tâche (« ABC-123 ») quand elle en a un.\n\
 `closed` vaut true si le statut de la tâche est un statut fermé ou terminé.\n\
 `taskType` est le nom du type ClickUp de la tâche, `null` pour le type par défaut.\n\
 `sprint` est le nom COMPLET de la liste de sprint où la tâche a été trouvée, \
@@ -317,7 +326,12 @@ pub fn parse_batch(sortie: &str) -> Result<ClickupBatch, ClickupError> {
             .map(|a| a.iter().filter_map(RawTask::from_flat_json).collect())
             .unwrap_or_default()
     };
-    Ok(ClickupBatch { updated: liste("updated"), open: liste("open"), resolved: liste("resolved") })
+    Ok(ClickupBatch {
+        updated: liste("updated"),
+        open: liste("open"),
+        resolved: liste("resolved"),
+        reunion: RawTask::from_flat_json(&v["reunion"]),
+    })
 }
 
 /// Début d'une sortie, pour les messages d'erreur. Aucun jeton ne transite par
@@ -337,6 +351,10 @@ impl ClickupSource for ClickupMcp {
         })?;
         let mut batch = parse_batch(&sortie)?;
         batch.open = retenir_us(batch.open, aujourd_hui, true);
+        // Même garde-fou que pour les US : une réunion d'un autre sprint est écartée.
+        batch.reunion = batch
+            .reunion
+            .filter(|t| t.sprint.as_deref().is_some_and(|s| est_sprint_actuel(s, aujourd_hui)));
         Ok(batch)
     }
 
@@ -365,7 +383,7 @@ impl ClickupSource for ClickupClient {
         // Une erreur de résolution individuelle est ignorée : le ticket peut être
         // transitoirement indisponible, et le reste du lot reste exploitable.
         let resolved = q.resolve_ids.iter().filter_map(|id| self.task(id).ok()).collect();
-        Ok(ClickupBatch { updated, open, resolved })
+        Ok(ClickupBatch { updated, open, resolved, reunion: None })
     }
 
     fn name(&self) -> &'static str {
@@ -677,9 +695,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_batch_lit_la_reunion_du_sprint() {
+        let b = parse_batch(
+            r#"{"open":[],"reunion":{"id":"ABC-9","name":"Réunions","status":"en cours","closed":false,
+            "url":"https://app.clickup.com/t/x","updatedAt":1,"taskType":"Réunion","sprint":"API 1 (9/22 - 10/19)"}}"#,
+        )
+        .unwrap();
+        let r = b.reunion.unwrap();
+        assert_eq!((r.id.as_str(), r.sprint.as_deref()), ("ABC-9", Some("API 1 (9/22 - 10/19)")));
+        assert!(parse_batch(r#"{"reunion":null}"#).unwrap().reunion.is_none());
+    }
+
+    #[test]
     fn parse_batch_listes_absentes_et_sortie_illisible() {
         let b = parse_batch(r#"{"open":[]}"#).unwrap();
         assert!(b.open.is_empty() && b.updated.is_empty() && b.resolved.is_empty());
+        assert!(b.reunion.is_none());
         assert!(matches!(parse_batch("je n'ai pas pu joindre ClickUp"), Err(ClickupError::Malformed(_))));
         assert!(matches!(parse_batch("{ceci n'est pas du json}"), Err(ClickupError::Malformed(_))));
     }

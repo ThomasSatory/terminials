@@ -7,6 +7,8 @@ use crate::activity::{EventKind, NewEvent};
 const TRENTE_JOURS_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 const UN_JOUR: i64 = 86_400;
 const MAX_TICKETS_PERIMES: usize = 30;
+/// Curseur qui garde l'id de l'US « Réunion » du sprint en cours.
+pub const CURSEUR_REUNION: &str = "clickup_reunion";
 
 fn map_err(e: ClickupError) -> String {
     match e {
@@ -57,7 +59,16 @@ pub fn apply(store: &Store, batch: &ClickupBatch, since_ms: i64, now: i64) -> Re
         .replace_open_tasks(&open_tasks, now)
         .map_err(|e| e.to_string())?;
 
-    let tickets: Vec<_> = batch.resolved.iter().map(RawTask::to_ticket_info).collect();
+    let mut tickets: Vec<_> = batch.resolved.iter().map(RawTask::to_ticket_info).collect();
+    // La réunion du sprint n'est pas remplacée quand la source n'en rend pas :
+    // une réponse MCP incomplète ne doit pas renvoyer le temps à saisir sur
+    // « US de réunion introuvable » jusqu'à la collecte suivante.
+    if let Some(r) = &batch.reunion {
+        tickets.push(r.to_ticket_info());
+        store
+            .set_cursor(CURSEUR_REUNION, &r.id)
+            .map_err(|e| e.to_string())?;
+    }
     if !tickets.is_empty() {
         store.upsert_tickets(&tickets, now).map_err(|e| e.to_string())?;
     }
@@ -239,6 +250,7 @@ mod tests {
             updated: vec![tache("a1", 1_789_550_000_000), tache("a2", 1_789_560_000_000)],
             open: vec![tache("o1", 1_789_540_000_000)],
             resolved: vec![tache("r1", 1_789_530_000_000)],
+            reunion: None,
         };
         let n = apply(&store, &batch, 1_789_500_000_000, 1_789_560_001).unwrap();
         assert_eq!(n, 2);
@@ -255,6 +267,15 @@ mod tests {
         assert_eq!(n, 0);
         assert_eq!(store.get_cursor("clickup").unwrap().as_deref(), Some("1789550000000"));
         assert!(store.open_tasks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn apply_retient_la_reunion_et_la_garde_si_la_source_n_en_rend_pas() {
+        let store = Store::open_in_memory().unwrap();
+        let batch = ClickupBatch { reunion: Some(tache("r9", 1)), ..Default::default() };
+        apply(&store, &batch, 0, 1).unwrap();
+        apply(&store, &ClickupBatch::default(), 0, 2).unwrap();
+        assert_eq!(store.reunion_us("").unwrap().map(|t| t.name), Some(Some("tâche r9".to_string())));
     }
 
     #[test]
@@ -292,6 +313,7 @@ mod tests {
                 updated: vec![tache("a1", 1_789_550_000_000)],
                 open: vec![tache("o1", 1_789_540_000_000)],
                 resolved: vec![],
+                reunion: None,
             },
         };
         let n = collect(&store, Some(&source), 1_789_500_000, 1_789_600_000, 1_789_560_000).unwrap();

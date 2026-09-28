@@ -76,6 +76,21 @@ pub fn extract_ticket_ids(texts: &[&str], custom_patterns: &[String]) -> Vec<Str
     out
 }
 
+/// Identifiant d'US porté par une branche (`ABC-78434-ne-plus-signaler…`,
+/// `feature/XYZ-10690-notifs`) ou, à défaut, par le nom du dossier du workspace
+/// (worktree `xyz-11601-review`). Toujours en majuscules : c'est la forme des
+/// identifiants personnalisés ClickUp. Les branches de version (`2.0.180.0.back`,
+/// `cascade/…`) ne portent pas de ticket.
+pub fn us_id(branch: Option<&str>, workspace_dir: Option<&str>) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r"(?i)(?:^|/)([a-z]{2,6}-\d{3,})(?:[^0-9]|$)").unwrap());
+    let dossier = workspace_dir.and_then(|d| d.trim_end_matches('/').rsplit('/').next());
+    [branch, dossier]
+        .into_iter()
+        .flatten()
+        .find_map(|texte| re.captures(texte).map(|c| c[1].to_ascii_uppercase()))
+}
+
 /// Construit l'URL ClickUp d'un identifiant de ticket.
 pub fn ticket_url(id: &str) -> String {
     format!("https://app.clickup.com/t/{id}")
@@ -110,6 +125,16 @@ mod tests {
     #[test]
     fn motif_custom_invalide_ignore() {
         assert_eq!(extract_ticket_ids(&["CU-abc1234"], &["(".to_string()]), vec!["abc1234"]);
+    }
+    #[test]
+    fn us_depuis_la_branche_ou_le_worktree() {
+        let us = "ABC-78434-corriger-le-verificateur-from-2.0.180.0.back";
+        assert_eq!(us_id(Some(us), Some("/p/app")).as_deref(), Some("ABC-78434"));
+        assert_eq!(us_id(Some("feature/XYZ-10690-notifs"), None).as_deref(), Some("XYZ-10690"));
+        assert_eq!(us_id(None, Some("/p/.claude/worktrees/xyz-11601-review")).as_deref(), Some("XYZ-11601"));
+        assert_eq!(us_id(Some("master"), Some("/p/outils-back")), None);
+        assert_eq!(us_id(Some("2.0.180.0.back"), Some("/p/app")), None);
+        assert_eq!(us_id(Some("cascade/2.0.178.0.back-to-2.0.179.0.back"), None), None);
     }
     #[test]
     fn url_construite() {

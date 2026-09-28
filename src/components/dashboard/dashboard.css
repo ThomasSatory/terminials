@@ -1,5 +1,6 @@
 /* ============================================================================
-   Feuille de style du dashboard d'activité — direction « Journal » (tâche 17).
+   Feuille de style du dashboard d'activité — direction « Journal » (tâche 17),
+   recolorée aux gris neutres de l'application.
 
    Importée une seule fois par `DashboardOverlay.tsx`. Toutes les règles sont
    préfixées `dash-` et tous les jetons sont scopés sur `.dash-overlay` : rien
@@ -17,21 +18,25 @@
 @import "@fontsource-variable/source-sans-3";
 
 .dash-overlay {
-  /* Jetons de la direction « Journal » (fond chaud, encre ivoire, accent laiton). */
-  --dash-fond: #1b1a17;
-  --dash-texte: #e8e2d6;
-  --dash-texte-fort: #f3eee4;
-  --dash-texte-doux: #cfc8ba;
-  --dash-italique: #a39b8c;
-  --dash-atenue: #8f887b;
-  --dash-tres-atenue: #6f6960;
-  --dash-filet: #2e2c27;
-  --dash-survol: #26241f;
-  --dash-ligne-active: #211f1b;
-  --dash-bordure-champ: #3a372f;
-  --dash-laiton: #c9a36a;
-  --dash-laiton-survol: #e2c07f;
-  --dash-erreur: #c48b8b;
+  /* Jetons alignés sur le reste de l'application (gris neutres de la sidebar,
+     des terminaux et du diff viewer) : le dashboard ne doit pas changer
+     d'ambiance à l'ouverture. Seules les polices restent celles du « Journal ». */
+  --dash-fond: #1e1e1e;
+  --dash-texte: #d6d6d6;
+  --dash-texte-fort: #eeeeee;
+  --dash-texte-doux: #bdbdbd;
+  --dash-italique: #9a9a9a;
+  --dash-atenue: #8a8a8a;
+  --dash-tres-atenue: #6f6f6f;
+  --dash-filet: #2a2a2a;
+  --dash-survol: #2c2c2c;
+  --dash-ligne-active: #242424;
+  --dash-bordure-champ: #444444;
+  /* Accent : bleu franc (liens, onglet actif, focus), plus clair que le bleu
+     attention #3b82f6 pour ne pas se confondre avec « un agent attend ». */
+  --dash-accent: #5b9bf8;
+  --dash-accent-survol: #8bb8fb;
+  --dash-erreur: #e74c3c;
   --dash-serif: "Newsreader Variable", Newsreader, Georgia, serif;
   --dash-sans: "Source Sans 3 Variable", "Source Sans 3", system-ui, sans-serif;
 
@@ -50,12 +55,12 @@
 }
 
 .dash-overlay a {
-  color: var(--dash-laiton);
+  color: var(--dash-accent);
   text-decoration: none;
 }
 
 .dash-overlay a:hover {
-  color: var(--dash-laiton-survol);
+  color: var(--dash-accent-survol);
   text-decoration: underline;
 }
 
@@ -99,10 +104,10 @@
   background: var(--dash-survol);
 }
 
-/* Onglet actif : un filet laiton sous le libellé, jamais un fond plein. */
+/* Onglet actif : un filet accent sous le libellé, jamais un fond plein. */
 .dash-text-btn[aria-pressed="true"] {
   color: var(--dash-texte);
-  border-bottom: 1px solid var(--dash-laiton);
+  border-bottom: 1px solid var(--dash-accent);
   border-radius: 0;
   padding-bottom: 3px;
 }
@@ -119,12 +124,12 @@
 }
 
 .dash-pill:hover {
-  border-color: var(--dash-laiton);
+  border-color: var(--dash-accent);
 }
 
 /* Pastille d'appel à l'action (génération manuelle de la synthèse). */
 .dash-pill-accent {
-  border-color: var(--dash-laiton);
+  border-color: var(--dash-accent);
   color: var(--dash-texte-fort);
   padding: 7px 16px;
 }
@@ -134,7 +139,7 @@
 .dash-pill:focus-visible,
 .dash-dayrow:focus-visible,
 .dash-field:focus-visible {
-  outline: 2px solid var(--dash-laiton);
+  outline: 2px solid var(--dash-accent);
   outline-offset: 2px;
 }
 
@@ -211,15 +216,6 @@
   opacity: 1;
 }
 
-.dash-sentence {
-  margin: 0;
-  font-family: var(--dash-serif);
-  font-size: 17px;
-  font-style: italic;
-  color: var(--dash-italique);
-  line-height: 1.4;
-}
-
 .dash-chips-hint {
   color: var(--dash-tres-atenue);
   font-size: 12px;
@@ -277,7 +273,7 @@
   font-family: var(--dash-serif);
   font-size: 15px;
   font-weight: 500;
-  color: var(--dash-laiton);
+  color: var(--dash-texte-fort);
   letter-spacing: 0.01em;
 }
 
@@ -386,11 +382,11 @@
 }
 
 .dash-fold:hover {
-  color: var(--dash-laiton);
+  color: var(--dash-texte);
 }
 
 .dash-fold:focus-visible {
-  outline: 2px solid var(--dash-laiton);
+  outline: 2px solid var(--dash-accent);
   outline-offset: 2px;
   border-radius: 3px;
 }
@@ -415,16 +411,14 @@
 
 .dash-task-id {
   font-size: 12px;
-  color: var(--dash-laiton);
+  color: var(--dash-accent);
   border: 1px solid var(--dash-bordure-champ);
   border-radius: 4px;
   padding: 0 6px;
   flex-shrink: 0;
-  width: 48px;
   text-align: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .dash-task-name {
@@ -432,10 +426,180 @@
   font-size: 17px;
 }
 
+/* État ClickUp : pastille teintée par famille (cf. lib/clickupStatut). */
+.dash-statut {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 7px;
+  border-radius: 8px;
+  white-space: nowrap;
+  color: var(--dash-texte-doux);
+  background: #2e2e2e;
+}
+.dash-statut[data-ton="bloque"] { color: #f19a8f; background: rgba(231, 76, 60, 0.16); }
+.dash-statut[data-ton="revue"] { color: #c3a6f5; background: rgba(155, 109, 234, 0.18); }
+.dash-statut[data-ton="test"] { color: #eec77a; background: rgba(230, 170, 50, 0.16); }
+.dash-statut[data-ton="encours"] { color: #8bb8fb; background: rgba(91, 155, 248, 0.16); }
+.dash-statut[data-ton="fini"] { color: #8fd19e; background: rgba(76, 175, 106, 0.16); }
+
 .dash-task-due {
   margin-left: auto;
   color: var(--dash-atenue);
   flex-shrink: 0;
+}
+
+/* Colonne de droite : temps à saisir puis tickets, défilant ensemble. */
+.dash-section-droite {
+  overflow-y: auto;
+}
+
+.dash-h2-suite {
+  margin-top: 14px;
+}
+
+/* ---- Temps à saisir ---- */
+.dash-temps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.dash-temps-ligne {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.dash-temps-nom {
+  font-family: var(--dash-serif);
+  font-size: 15px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-temps-projet {
+  font-size: 12px;
+  color: var(--dash-atenue);
+  flex-shrink: 0;
+}
+
+.dash-temps-hors .dash-temps-nom {
+  font-family: var(--dash-sans);
+  font-size: 12px;
+  font-style: italic;
+  color: var(--dash-tres-atenue);
+}
+
+.dash-temps-duree {
+  position: relative;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  color: var(--dash-texte-fort);
+  cursor: default;
+}
+
+.dash-temps-hors .dash-temps-duree {
+  color: var(--dash-atenue);
+}
+
+/* Ligne de l'US de réunion : le reste de la journée, un cran en retrait. */
+.dash-temps-reunion .dash-temps-nom {
+  color: var(--dash-texte-doux);
+}
+
+.dash-task-id-absent {
+  color: var(--dash-tres-atenue);
+}
+
+.dash-temps-total {
+  margin: 2px 0 0;
+  padding-top: 6px;
+  border-top: 1px solid var(--dash-filet);
+  display: flex;
+  color: var(--dash-atenue);
+  font-size: 12px;
+}
+
+.dash-temps-total span {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--dash-texte-fort);
+  font-size: 13px;
+}
+
+/* Bouton « Saisir » d'une ligne (et « Tout saisir ») : discret, largeur fixe
+   pour que les durées restent alignées quel que soit l'état. */
+.dash-saisir {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 64px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  color: var(--dash-accent);
+  background: none;
+  border: 1px solid var(--dash-bordure-champ);
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+button.dash-saisir:hover {
+  border-color: var(--dash-accent);
+  color: var(--dash-accent-survol);
+}
+
+.dash-saisir-encours {
+  color: var(--dash-atenue);
+  border-style: dashed;
+  cursor: progress;
+}
+
+.dash-saisir-ok {
+  color: #8fd19e;
+  border-color: transparent;
+  cursor: default;
+}
+
+.dash-saisir-erreur {
+  color: var(--dash-erreur);
+  border-color: rgba(231, 76, 60, 0.5);
+}
+
+.dash-saisir-place {
+  visibility: hidden;
+}
+
+.dash-temps-total .dash-saisir {
+  margin-left: 10px;
+}
+
+/* Petite infobulle CSS (`data-tip`) : le détail mesuré sous une durée arrondie. */
+[data-tip]:hover::after {
+  content: attr(data-tip);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 20;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--dash-texte);
+  background: #2a2a2a;
+  border: 1px solid var(--dash-bordure-champ);
+  pointer-events: none;
 }
 
 .dash-tasks-empty {
@@ -465,7 +629,7 @@
 
 .dash-filter:focus {
   outline: none;
-  border-bottom-color: var(--dash-laiton);
+  border-bottom-color: var(--dash-accent);
 }
 
 .dash-rule {
@@ -583,7 +747,7 @@
 }
 
 .dash-dayrow[aria-pressed="true"] {
-  border-left-color: var(--dash-laiton);
+  border-left-color: var(--dash-accent);
   background: var(--dash-ligne-active);
 }
 
@@ -631,100 +795,82 @@
   color: var(--dash-tres-atenue);
 }
 
-/* ---- Frise d'activité (une ligne par projet, sa phrase de bilan dessous) ---- */
+/* ---- Frise d'activité : rythme empilé (une bande, projets empilés), légende dessous ---- */
 .dash-frise {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 22px;
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
 
-.dash-frise-row {
-  display: grid;
-  grid-template-columns: 150px minmax(0, 1fr) 80px;
-  grid-template-areas:
-    "name strip count"
-    ". phrase phrase";
-  align-items: center;
-  column-gap: 14px;
-  row-gap: 4px;
+.dash-frise-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-.dash-frise-name {
-  grid-area: name;
-  height: 22px;
-  line-height: 22px;
-  font-family: var(--dash-serif);
-  font-size: 15px;
-  text-align: right;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dash-frise-strip {
-  grid-area: strip;
+/* Rangée des commits, au-dessus de la bande. */
+.dash-frise-commits {
   position: relative;
-  height: 22px;
-  border-bottom: 1px solid var(--dash-filet);
-}
-
-/* Le récit du projet, en serif comme le bilan, sous sa bande d'activité. */
-.dash-frise-phrase {
-  grid-area: phrase;
-  font-family: var(--dash-serif);
-  font-size: 16px;
-  line-height: 1.45;
-  color: var(--dash-texte);
-  max-width: 72ch;
-  margin-bottom: 8px;
-}
-
-.dash-frise-phrase p {
-  margin: 0;
-}
-
-.dash-frise-cell {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 2px;
+  height: 12px;
 }
 
 /* Commit : anneau à la teinte du projet sur le fond de page, centré sur l'instant. */
 .dash-frise-dot {
   position: absolute;
-  top: 50%;
-  width: 7px;
-  height: 7px;
+  top: 2px;
+  width: 8px;
+  height: 8px;
   box-sizing: border-box;
-  transform: translate(-50%, -50%);
+  transform: translateX(-50%);
   border-radius: 50%;
   border: 2px solid;
   background: var(--dash-fond);
-  z-index: 1;
 }
 
 a.dash-frise-dot:hover {
   background: var(--dash-texte-fort);
 }
 
-.dash-frise-count {
-  grid-area: count;
-  color: var(--dash-atenue);
-  font-size: 12px;
-  white-space: nowrap;
+.dash-frise-stack {
+  position: relative;
+  height: 104px;
+  border-bottom: 1px solid var(--dash-bordure-champ);
 }
 
-.dash-frise-axis .dash-frise-name,
-.dash-frise-axis .dash-frise-strip {
+/* Une case de temps : les projets s'empilent depuis la ligne de base. Le
+   retrait latéral laisse un filet de fond entre deux colonnes voisines. */
+.dash-frise-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  padding: 0 1px;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 1px;
+}
+
+.dash-frise-col-survol {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.dash-frise-seg {
+  display: block;
+  min-height: 2px;
+  flex-shrink: 0;
+}
+
+.dash-frise-seg:last-child {
+  border-radius: 2px 2px 0 0;
+}
+
+.dash-frise-axis {
+  position: relative;
   height: 16px;
-}
-
-.dash-frise-axis .dash-frise-strip {
-  border-bottom: 0;
 }
 
 .dash-frise-tick {
@@ -740,12 +886,163 @@ a.dash-frise-dot:hover {
   transform: none;
 }
 
+/* Légende : un projet par cellule, sa phrase de bilan dessous. */
+.dash-frise-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 56px;
+  row-gap: 16px;
+}
+
+.dash-frise-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.dash-frise-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.dash-frise-swatch {
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.dash-frise-name {
+  font-family: var(--dash-serif);
+  font-size: 17px;
+  color: var(--dash-texte-fort);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dash-frise-count {
+  color: var(--dash-atenue);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* Le récit du projet, en serif comme le bilan, aligné sur le nom. */
+.dash-frise-phrase {
+  margin-left: 19px;
+  font-family: var(--dash-serif);
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--dash-texte);
+  max-width: 72ch;
+}
+
+.dash-frise-phrase p,
+.dash-frise-phrase ul {
+  margin: 0;
+}
+
+.dash-frise-phrase ul {
+  padding-left: 1.1em;
+}
+
+.dash-frise-phrase li + li {
+  margin-top: 2px;
+}
+
 .dash-frise-empty {
   margin: 0;
   font-family: var(--dash-serif);
   font-style: italic;
   color: var(--dash-italique);
   font-size: 15px;
+}
+
+/* ---- Infobulle de la frise (position fixe près du pointeur) ---- */
+.dash-bulle {
+  position: fixed;
+  z-index: 50;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #262626;
+  border: 1px solid var(--dash-bordure-champ);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.dash-bulle p {
+  margin: 0;
+}
+
+.dash-bulle-heure {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--dash-atenue);
+}
+
+.dash-bulle-projet {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.dash-bulle-titre {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--dash-texte-fort);
+  font-size: 13px;
+}
+
+.dash-bulle-detail {
+  margin-left: auto;
+  color: var(--dash-atenue);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.dash-bulle-us {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: 17px !important;
+  min-width: 0;
+}
+
+.dash-bulle-us-id {
+  color: var(--dash-accent);
+  flex-shrink: 0;
+}
+
+.dash-bulle-us-nom {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dash-texte);
+}
+
+.dash-bulle-sous,
+.dash-bulle-extrait {
+  margin-left: 17px !important;
+  color: var(--dash-texte-doux);
+}
+
+.dash-bulle-extrait {
+  font-family: var(--dash-serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--dash-italique);
 }
 
 /* Point d'alerte sur ⚙ quand une collecte a échoué : l'erreur est dans l'infobulle. */
@@ -844,7 +1141,7 @@ a.dash-frise-dot:hover {
 
 .dash-field:focus {
   outline: none;
-  border-bottom-color: var(--dash-laiton);
+  border-bottom-color: var(--dash-accent);
 }
 
 textarea.dash-field {

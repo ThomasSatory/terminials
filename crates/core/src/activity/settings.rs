@@ -102,6 +102,24 @@ pub struct GitSettings {
     pub author_email: Option<String>,
 }
 
+/// Saisie des temps : ce qu'il faut déclarer par jour, et où va ce qui n'a pas d'US.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SaisieSettings {
+    /// Minutes à saisir du lundi au jeudi.
+    pub journee_minutes: u32,
+    /// Minutes à saisir le vendredi.
+    pub vendredi_minutes: u32,
+    /// US qui reçoit le temps sans US. Vide : l'US « Réunion » du sprint en
+    /// cours, trouvée par la collecte ClickUp.
+    pub us_reunion: String,
+}
+impl Default for SaisieSettings {
+    fn default() -> Self {
+        Self { journee_minutes: 450, vendredi_minutes: 420, us_reunion: String::new() }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -111,6 +129,7 @@ pub struct Settings {
     pub shell: ShellSettings,
     pub git: GitSettings,
     pub ticket_patterns: Vec<String>,
+    pub saisie: SaisieSettings,
 }
 
 /// `$XDG_CONFIG_HOME/terminials/settings.json`, défaut `~/.config/terminials/settings.json`.

@@ -295,6 +295,7 @@ mod tests {
             body: None,
             ticket_ids: tickets.iter().map(|s| s.to_string()).collect(),
             tickets: vec![],
+            us_ticket: None,
         }
     }
     const T0: i64 = 1_789_516_800; // 2026-09-16 00:00 UTC

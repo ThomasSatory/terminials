@@ -1,6 +1,6 @@
 import type { ActivityEvent, TicketRef, WorkspaceCount } from "./activityApi";
 import { dayRange, weekRange, shiftDay } from "./dashboardDay";
-import { SANS_WORKSPACE_COLOR, workspaceColor } from "./workspacePalette";
+import { workspaceColor } from "./workspacePalette";
 
 /**
  * Frise d'activité du dashboard : une ligne par projet, des cases de durée
@@ -30,6 +30,10 @@ export interface FriseCell extends CellCounts {
   total: number;
   /** Densité relative à la case la plus chargée de toute la frise, 0..1. */
   density: number;
+  /** US travaillées pendant la case (branche ou worktree), sans doublon. */
+  us: TicketRef[];
+  /** Derniers messages envoyés à Claude pendant la case, tronqués (infobulle). */
+  extraits: string[];
 }
 
 export interface FriseDot {
@@ -42,8 +46,8 @@ export interface FriseDot {
 }
 
 export interface FriseRow {
-  /** Dossier du workspace ; `null` pour les changements ClickUp sans projet. */
-  dir: string | null;
+  /** Dossier du workspace. */
+  dir: string;
   name: string;
   color: string;
   commits: number;
@@ -142,11 +146,31 @@ function totalDe(c: CellCounts): number {
   return c.commits + c.prompts + c.commands + c.clickup;
 }
 
+/** US d'un événement : celle de sa branche, sinon le premier ticket cité. */
+export function usDe(ev: ActivityEvent): TicketRef | null {
+  return ev.usTicket ?? ev.tickets[0] ?? null;
+}
+
+/** Messages à Claude retenus par case dans l'infobulle. */
+const EXTRAITS_PAR_CASE = 2;
+const EXTRAIT_MAX = 90;
+
+/**
+ * Message à Claude lisible dans l'infobulle, ou `null` pour le bruit : sorties
+ * de commandes (`<bash-stdout>`, `<command-name>`…), messages entre sessions,
+ * réponses d'un mot (« fait », « ok »).
+ */
+export function extraitPrompt(title: string): string | null {
+  const t = title.replace(/\s+/g, " ").trim();
+  if (t.startsWith("<") || t.startsWith("Another Claude session")) return null;
+  if (t.length < 12) return null;
+  return t.length > EXTRAIT_MAX ? `${t.slice(0, EXTRAIT_MAX - 1).trimEnd()}…` : t;
+}
+
 /**
  * Construit la frise. `byWorkspace` fixe l'ordre des lignes (du plus actif au
- * moins actif, même ordre que `colors`) ; une ligne « ClickUp » ferme la liste
- * si des changements sans projet existent. Les lignes sans aucun événement
- * dans la plage sont omises.
+ * moins actif, même ordre que `colors`). Les événements sans projet et les
+ * lignes sans aucun événement dans la plage sont omis.
  */
 export function buildFrise(
   mode: "day" | "week",
@@ -171,7 +195,7 @@ export function buildFrise(
     else parDir.set(dir, [ev]);
   }
 
-  const ordre: Array<{ dir: string | null; name: string }> = [...byWorkspace]
+  const ordre: Array<{ dir: string; name: string }> = [...byWorkspace]
     .sort((a, b) => b.events - a.events || a.dir.localeCompare(b.dir))
     .map((w) => ({ dir: w.dir, name: w.name }));
   // Projets vus dans les événements mais absents des stats (rare : stats et
@@ -181,7 +205,8 @@ export function buildFrise(
       ordre.push({ dir, name: dir.split("/").filter(Boolean).pop() ?? dir });
     }
   }
-  if (parDir.has(null)) ordre.push({ dir: null, name: "ClickUp" });
+  // Les changements ClickUp sans projet n'ont pas de ligne : ils restent dans
+  // le digest du bilan, mais une ligne « ClickUp » ne dit rien du travail fait.
 
   const rows: FriseRow[] = [];
   let maxTotal = 0;
@@ -189,10 +214,18 @@ export function buildFrise(
     const evs = parDir.get(dir);
     if (!evs || evs.length === 0) continue;
     const counts: CellCounts[] = Array.from({ length: nCells }, vide);
+    const us: TicketRef[][] = Array.from({ length: nCells }, () => []);
+    const extraits: string[][] = Array.from({ length: nCells }, () => []);
     const dots: FriseDot[] = [];
     for (const ev of evs) {
       const i = Math.min(nCells - 1, Math.floor((ev.ts - start) / cellSeconds));
       compter(counts[i], ev);
+      const ticket = usDe(ev);
+      if (ticket && ev.kind !== "claude_session" && !us[i].some((t) => t.id === ticket.id)) {
+        us[i].push(ticket);
+      }
+      const extrait = ev.kind === "claude_prompt" ? extraitPrompt(ev.title) : null;
+      if (extrait) extraits[i] = [...extraits[i], extrait].slice(-EXTRAITS_PAR_CASE);
       if (ev.kind === "commit") {
         dots.push({
           ts: ev.ts,
@@ -207,7 +240,7 @@ export function buildFrise(
     rows.push({
       dir,
       name,
-      color: dir === null ? SANS_WORKSPACE_COLOR : workspaceColor(dir, colors),
+      color: workspaceColor(dir, colors),
       commits: dots.length,
       events: evs.length,
       cells: counts.map((c, i) => ({
@@ -217,6 +250,8 @@ export function buildFrise(
         width: cellSeconds / span,
         total: totalDe(c),
         density: 0,
+        us: us[i],
+        extraits: extraits[i],
       })),
       dots: dots.sort((a, b) => a.ts - b.ts),
     });
@@ -266,15 +301,117 @@ function pluriel(n: number, s: string, p: string): string {
   return `${n} ${n === 1 ? s : p}`;
 }
 
-/** Infobulle d'une case : « 9h15 · 12 commandes, 3 échanges, 1 commit ». Vide si rien. */
-export function cellTooltip(cell: FriseCell, mode: "day" | "week"): string {
-  if (cell.total === 0) return "";
+/** « 12 commandes, 3 échanges, 1 commit » : le contenu d'une case. */
+function detailCase(cell: CellCounts): string {
   const parts: string[] = [];
   if (cell.commands > 0) parts.push(pluriel(cell.commands, "commande", "commandes"));
   if (cell.prompts > 0) parts.push(pluriel(cell.prompts, "échange", "échanges"));
   if (cell.commits > 0) parts.push(pluriel(cell.commits, "commit", "commits"));
   if (cell.clickup > 0) parts.push(pluriel(cell.clickup, "changement ClickUp", "changements ClickUp"));
-  return `${cellLabel(cell.t0, mode)} · ${parts.join(", ")}`;
+  return parts.join(", ");
+}
+
+/** Part d'un projet dans une colonne empilée. */
+export interface FriseSegment {
+  name: string;
+  color: string;
+  cell: FriseCell;
+  /** Hauteur relative à la pile la plus haute de toute la frise, 0..1. */
+  part: number;
+}
+
+/** Une case de temps, tous projets confondus : les projets actifs empilés. */
+export interface FriseColonne {
+  t0: number;
+  left: number;
+  width: number;
+  /** Dans l'ordre des lignes de la frise (le plus actif en bas de la pile). */
+  segments: FriseSegment[];
+}
+
+/**
+ * Vue « rythme » de la frise : pour chaque case où au moins un projet est
+ * actif, une colonne où les projets s'empilent. La hauteur totale d'une pile
+ * dit l'intensité du moment, les couleurs disent sur quoi.
+ */
+export function colonnesEmpilees(frise: Frise): FriseColonne[] {
+  if (frise.rows.length === 0) return [];
+  const n = frise.rows[0].cells.length;
+  const colonnes: FriseColonne[] = [];
+  let maxPile = 0;
+  for (let i = 0; i < n; i++) {
+    const segments: FriseSegment[] = [];
+    let pile = 0;
+    for (const row of frise.rows) {
+      const cell = row.cells[i];
+      if (cell.total === 0) continue;
+      segments.push({ name: row.name, color: row.color, cell, part: cell.total });
+      pile += cell.total;
+    }
+    if (segments.length === 0) continue;
+    maxPile = Math.max(maxPile, pile);
+    const { t0, left, width } = frise.rows[0].cells[i];
+    colonnes.push({ t0, left, width, segments });
+  }
+  for (const col of colonnes) {
+    for (const seg of col.segments) seg.part /= maxPile;
+  }
+  return colonnes;
+}
+
+/** Un projet dans l'infobulle d'une colonne. */
+export interface SurvolProjet {
+  name: string;
+  color: string;
+  detail: string;
+  us: TicketRef[];
+  commits: string[];
+  extraits: string[];
+}
+
+export interface SurvolColonne {
+  t0: number;
+  /** « 9h15 – 9h30 », « mar. 16, 9h – 10h ». */
+  titre: string;
+  projets: SurvolProjet[];
+}
+
+/**
+ * Contenu de l'infobulle d'une colonne : la plage horaire, puis pour chaque
+ * projet actif ce qui s'y est passé — compteurs, US, sujets des commits et
+ * derniers messages à Claude.
+ */
+export function survolColonne(col: FriseColonne, frise: Frise, mode: "day" | "week"): SurvolColonne {
+  const fin = cellLabel(col.t0 + frise.cellSeconds, "day");
+  const projets = col.segments.map((seg) => {
+    const row = frise.rows.find((r) => r.name === seg.name);
+    const commits = (row?.dots ?? [])
+      .filter((d) => d.ts >= col.t0 && d.ts < col.t0 + frise.cellSeconds)
+      .map((d) => d.title);
+    return {
+      name: seg.name,
+      color: seg.color,
+      detail: detailCase(seg.cell),
+      us: seg.cell.us,
+      commits,
+      extraits: seg.cell.extraits,
+    };
+  });
+  return { t0: col.t0, titre: `${cellLabel(col.t0, mode)} – ${fin}`, projets };
+}
+
+/** Colonne sous l'abscisse relative `x` (0..1), ou `null` entre deux colonnes actives. */
+export function colonneA(colonnes: FriseColonne[], x: number): FriseColonne | null {
+  return colonnes.find((c) => x >= c.left && x < c.left + c.width) ?? null;
+}
+
+/** Temps actif d'un projet (cases non vides), « 45 min », « 2 h », « 5 h 15 ». */
+export function dureeActive(row: FriseRow, cellSeconds: number): string {
+  const minutes = Math.round((row.cells.filter((c) => c.total > 0).length * cellSeconds) / 60);
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  return m === 0 ? `${h} h` : `${h} h ${String(m).padStart(2, "0")}`;
 }
 
 /** Infobulle d'un point : heure, sujet, branche et tickets. */

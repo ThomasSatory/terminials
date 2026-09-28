@@ -180,6 +180,9 @@ pub fn run() {
             activity::activity_summary,
             activity::activity_summary_cached,
             activity::activity_open_tasks,
+            activity::activity_reunion_us,
+            activity::activity_saisies,
+            activity::activity_saisir_temps,
             activity::activity_status,
             activity::activity_get_settings,
             activity::activity_set_settings

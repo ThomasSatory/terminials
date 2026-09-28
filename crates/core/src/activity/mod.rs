@@ -4,6 +4,7 @@
 pub mod collectors;
 pub mod digest;
 pub mod providers;
+pub mod saisie;
 pub mod settings;
 pub mod shell_integration;
 pub mod sprint;
@@ -80,6 +81,9 @@ pub struct ActivityEvent {
     pub body: Option<String>,
     pub ticket_ids: Vec<String>,
     pub tickets: Vec<TicketRef>,
+    /// US sur laquelle on travaillait, déduite de la branche ou du worktree
+    /// (`tickets::us_id`) et résolue dans les tickets connus : base du temps à saisir.
+    pub us_ticket: Option<TicketRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

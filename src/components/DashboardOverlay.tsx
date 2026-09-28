@@ -4,6 +4,7 @@ import { useDashboardStore } from "../store/dashboard";
 import { useWorkspaceStore } from "../store/workspace";
 import { focusTab } from "../lib/tabFocus";
 import { useActivityData, useSummary } from "../hooks/useActivityData";
+import { useSaisieTemps } from "../hooks/useSaisieTemps";
 import { activityApi, clickupActif, type ActivitySettings } from "../lib/activityApi";
 import {
   formatDayTitle,
@@ -12,17 +13,18 @@ import {
   weekRange,
   todayString,
 } from "../lib/dashboardDay";
-import { statsSentence } from "../lib/statsSentence";
 import { assignWorkspaceColors } from "../lib/workspacePalette";
 import { buildWeekDays } from "../lib/weekDays";
 import { buildFrise } from "../lib/frise";
 import { splitTitle } from "../lib/summaryTitle";
 import { attacherPuces } from "../lib/friseBilan";
+import { SAISIE_PAR_DEFAUT, tempsParUs } from "../lib/tempsSaisie";
 import { Frise } from "./dashboard/Frise";
 import { Timeline } from "./dashboard/Timeline";
 import { WeekDays } from "./dashboard/WeekDays";
 import { SummaryPanel, summaryFooter } from "./dashboard/SummaryPanel";
 import { OpenTasks } from "./dashboard/OpenTasks";
+import { TempsSaisie } from "./dashboard/TempsSaisie";
 import { SettingsPanel } from "./dashboard/SettingsPanel";
 import {
   ChevronLeftIcon,
@@ -45,10 +47,10 @@ function openLink(href: string): void {
  * conteneur (aucun listener `window`). N'est jamais lié à un workspace.
  *
  * Mise en page « un écran » (2026-09-22) : barre du haut, en-tête (date, titre
- * de journée écrit par le LLM, phrase de chiffres), frise d'activité par
- * projet — chaque ligne porte la phrase du bilan LLM pour ce projet —, puis
- * deux colonnes courtes : le reste du bilan (ou sa mention de génération) et
- * les tickets. La chronologie détaillée et le jour par jour vivent dans un
+ * de journée écrit par le LLM), frise d'activité par projet — chaque ligne
+ * porte la phrase du bilan LLM pour ce projet —, puis deux colonnes courtes :
+ * le reste du bilan (ou sa mention de génération), et à droite le temps à
+ * saisir par US puis les tickets du sprint. La chronologie détaillée et le jour par jour vivent dans un
  * volet à droite (touche `d`), les réglages dans le même volet (⚙).
  */
 export function DashboardOverlay() {
@@ -69,7 +71,7 @@ export function DashboardOverlay() {
   const setDetailsOpen = useDashboardStore((s) => s.setDetailsOpen);
   const bumpGenerate = useDashboardStore((s) => s.bumpGenerate);
 
-  const { loading, events, stats, openTasks, status, error, reload } = useActivityData();
+  const { loading, events, stats, openTasks, reunionUs, status, error, reload } = useActivityData();
   const semaine = mode === "week";
   // Un seul bilan : son kind suit le mode. Le « reste à faire » du LLM n'est
   // plus affiché : les tickets du sprint suffisent.
@@ -92,6 +94,8 @@ export function DashboardOverlay() {
     () => buildWeekDays(weekRange(day).days, events, colors, todayString()),
     [day, events, colors],
   );
+  // Boutons de saisie ClickUp : vue Jour seulement (une entrée porte une date).
+  const saisieTemps = useSaisieTemps(day);
   // Titre de journée et puces : séparés une fois par synthèse.
   const synthese = useMemo(
     () => (bilan.ui.status === "ok" ? splitTitle(bilan.ui.summary.text) : { title: "", body: "" }),
@@ -119,6 +123,19 @@ export function DashboardOverlay() {
     };
   }, [refreshTick]);
 
+  // Temps à saisir : la plage affichée (jour ou semaine), répartie par US.
+  const saisie = settings?.saisie ?? SAISIE_PAR_DEFAUT;
+  const temps = useMemo(
+    () =>
+      tempsParUs(
+        events,
+        new Map(byWorkspace.map((w) => [w.dir, w.name])),
+        saisie,
+        reunionUs,
+        Math.floor(Date.now() / 1000),
+      ),
+    [events, byWorkspace, saisie, reunionUs],
+  );
   // Focus au montage (blur implicite du textarea xterm) ; au démontage, le
   // focus revient au terminal actif — même contrat que DiffOverlay.
   useEffect(() => {
@@ -173,6 +190,7 @@ export function DashboardOverlay() {
     setDetailsOpen(false);
   };
 
+  const saisieActive = !semaine && settings !== null && clickupActif(settings.clickup);
   const agoLabel = collectedAgoLabel(status?.lastCollect ?? {}, Math.floor(Date.now() / 1000));
   const errors = status?.errors ?? [];
   const gearTitle = [agoLabel, ...errors].join("\n");
@@ -262,7 +280,6 @@ export function DashboardOverlay() {
             <RefreshIcon />
           </button>
         </h1>
-        {stats && <p className="dash-sentence">{statsSentence(stats.totals, stats.byWorkspace)}</p>}
       </div>
 
       <div className="dash-body">
@@ -296,8 +313,10 @@ export function DashboardOverlay() {
                 onOpenLink={openLink}
                 schedule={settings?.schedule}
               />
-              <div className="dash-section">
-                <h2 className="dash-h2">Reste à faire</h2>
+              <div className="dash-section dash-section-droite">
+                <h2 className="dash-h2">{semaine ? "Temps à saisir sur la semaine" : "Temps à saisir"}</h2>
+                <TempsSaisie temps={temps} onOpen={openLink} saisie={saisieActive ? saisieTemps : null} />
+                <h2 className="dash-h2 dash-h2-suite">Reste à faire</h2>
                 <OpenTasks
                   tasks={openTasks}
                   active={settings !== null && clickupActif(settings.clickup)}
