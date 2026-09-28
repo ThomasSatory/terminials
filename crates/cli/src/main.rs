@@ -61,11 +61,12 @@ fn main() {
         match terminials_cli::hooks::setup() {
             Ok(path) => {
                 println!("Hook installé : {}", path.display());
-                println!("Ajoute ceci à ~/.claude/settings.json (clés \"Stop\" et \"Notification\") :");
-                println!(
-                    "  \"hooks\": {{ \"Stop\": [{{ \"hooks\": [{{ \"type\": \"command\", \"command\": \"{}\" }}] }}] }}",
+                let entry = format!(
+                    "[{{ \"hooks\": [{{ \"type\": \"command\", \"command\": \"{}\" }}] }}]",
                     path.display()
                 );
+                println!("Ajoute ceci à ~/.claude/settings.json :");
+                println!("  \"hooks\": {{ \"Stop\": {entry}, \"Notification\": {entry} }}");
             }
             Err(e) => {
                 eprintln!("échec installation hook : {e}");

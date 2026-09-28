@@ -12,6 +12,7 @@ import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
 import { abbreviateHome } from "../lib/paths";
 import { openFolderDialog } from "../lib/openFolder";
 import { closePty } from "../lib/pty";
+import { addHomeWorkspace } from "../lib/homeWorkspace";
 import { finalIndex, resolveDrop, type DropTarget, type SidebarRow } from "../lib/reorder";
 import { WorkspaceForm } from "./WorkspaceForm";
 import { GroupForm } from "./GroupForm";
@@ -407,6 +408,14 @@ export function Sidebar() {
           setActive(w.id);
         }}
         onContextMenu={(e) => openMenu(e, workspaceMenu(w))}
+        // Clic molette = fermer, comme un onglet de navigateur (et comme les
+        // onglets de terminal). Pas pendant l'édition : la ligne est un formulaire.
+        onAuxClick={(e) => {
+          if (e.button !== 1 || editing) return;
+          e.preventDefault();
+          e.stopPropagation();
+          closeWs(w);
+        }}
         // `userSelect: none` ne bloque que le DÉMARRAGE d'une sélection sur la
         // ligne : WebKitGTK l'étend quand même depuis un ancêtre sélectionnable
         // pendant le glissement, et le texte du workspace finit surligné.
@@ -415,7 +424,9 @@ export function Sidebar() {
         // sans effet ici). En édition la ligne est un formulaire : on laisse
         // passer, sinon les champs ne prendraient plus le focus.
         onMouseDown={(e) => {
-          if (e.button !== 0 || editing) return;
+          // Bouton du milieu aussi : sans ça, WebKitGTK lance le défilement
+          // automatique ou colle la sélection primaire X11.
+          if ((e.button !== 0 && e.button !== 1) || editing) return;
           e.preventDefault();
         }}
         {...dragHandlers(w.id, "ws", editing)}
@@ -686,6 +697,17 @@ export function Sidebar() {
           title="Nouvel espace : nom + dossier (Ctrl+Shift+N)"
         >
           +
+        </button>
+        <button
+          className="icon-btn"
+          onClick={() => {
+            closeForms();
+            void addHomeWorkspace();
+          }}
+          title="Nouvel espace sur ~, sans dossier de projet (Ctrl+Shift+Entrée)"
+          style={{ fontSize: 18 }}
+        >
+          ~
         </button>
         <button
           className="icon-btn"

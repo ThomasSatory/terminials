@@ -1,26 +1,29 @@
 import type { WorkspaceCount } from "./activityApi";
+import { PALETTE } from "./palette";
 
 /**
- * Teintes de workspace du dashboard « Journal » (tâche 17) : chaque projet a sa
- * couleur, réutilisée partout (chip d'en-tête, glyphe de la chronologie, barre
- * de répartition du mode semaine). Le laiton d'accent ouvre la liste : il
- * revient au workspace le plus actif de la plage affichée.
+ * Teintes de workspace du dashboard : les couleurs franches de la palette de
+ * l'application (`PALETTE`, celle des groupes de la sidebar), sans le gris,
+ * réordonnées pour que les projets les plus actifs — voisins dans la frise —
+ * reçoivent des teintes bien distinctes (le vert et le teal ne se suivent pas).
+ * Chaque projet garde sa couleur partout (frise, chips, chronologie, semaine).
  */
 export const WORKSPACE_COLORS = [
-  "#c9a36a", // laiton (accent du dashboard)
-  "#9bb08a", // vert sauge
-  "#8da2bf", // bleu ardoise
-  "#c48b8b", // rose brique
-  "#b39ac6", // parme
-  "#7fb3a8", // vert d'eau
+  PALETTE[0], // vert
+  PALETTE[4], // orange
+  PALETTE[2], // violet
+  PALETTE[5], // jaune
+  PALETTE[3], // rose
+  PALETTE[1], // teal
+  PALETTE[6], // bleu
 ] as const;
 
-/** Teinte des événements sans workspace (changements ClickUp) : l'atténué des jetons. */
-export const SANS_WORKSPACE_COLOR = "#8f887b";
+/** Teinte des événements sans workspace (changements ClickUp) : le gris de la palette. */
+export const SANS_WORKSPACE_COLOR = PALETTE[7];
 
 /**
  * Associe une teinte à chaque workspace, du plus actif au moins actif ; au-delà
- * de six workspaces la palette cycle. À activité égale, l'ordre du dossier
+ * de sept workspaces la palette cycle. À activité égale, l'ordre du dossier
  * départage pour que l'affectation reste stable d'un rendu à l'autre.
  *
  * L'ordre d'insertion de la `Map` est significatif : la première clé est le

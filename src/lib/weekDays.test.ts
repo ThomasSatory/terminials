@@ -124,8 +124,8 @@ describe("buildWeekDays", () => {
       "2025-09-19",
     );
     expect(rows[0].segments).toEqual([
-      { dir: DIR_A, color: "#c9a36a", events: 3 },
-      { dir: DIR_B, color: "#9bb08a", events: 1 },
+      { dir: DIR_A, color: "#2ecc71", events: 3 },
+      { dir: DIR_B, color: "#e67e22", events: 1 },
       { dir: null, color: SANS_WORKSPACE_COLOR, events: 1 },
     ]);
     expect(rows[4].segments).toEqual([]);

@@ -1,5 +1,6 @@
 import { closePty } from "./pty";
 import { openFolderDialog } from "./openFolder";
+import { addHomeWorkspace } from "./homeWorkspace";
 import { focusTab } from "./tabFocus";
 import type { ShortcutAction } from "./shortcuts";
 import { useWorkspaceStore, navigableOrder, type Workspace } from "../store/workspace";
@@ -32,6 +33,9 @@ export function dispatchShortcut(action: ShortcutAction): void {
       // masquée (Ctrl+Shift+B), sinon le raccourci n'aurait aucun effet visible.
       if (!s.sidebarVisible) s.toggleSidebar();
       s.requestNewWorkspace(true);
+      return;
+    case "new-home-workspace":
+      void addHomeWorkspace();
       return;
     case "new-group":
       if (!s.sidebarVisible) s.toggleSidebar();

@@ -52,7 +52,7 @@ describe("groupByHour", () => {
     expect(hour.lines).toEqual([
       {
         kind: "commit",
-        color: "#c9a36a",
+        color: "#2ecc71",
         text: "store SQLite",
         muted: false,
         tickets: [],
@@ -79,7 +79,7 @@ describe("groupByHour", () => {
     // Seules les lignes d'un workspace autre que le plus actif portent son nom.
     expect(hour.lines[0].workspaceName).toBeUndefined();
     expect(hour.lines[1].workspaceName).toBe("webapp");
-    expect(hour.lines[1].color).toBe("#9bb08a");
+    expect(hour.lines[1].color).toBe("#e67e22");
   });
 
   it("agrège les commandes shell avec les deux premières distinctes", () => {

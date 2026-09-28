@@ -7,6 +7,7 @@
 export type ShortcutAction =
   | { type: "open-folder" }
   | { type: "new-workspace" }
+  | { type: "new-home-workspace" } // espace direct sur ~, sans formulaire
   | { type: "new-tab" }
   | { type: "close-tab" }
   | { type: "close-workspace" }
@@ -38,7 +39,9 @@ export interface KeyLike {
  *  sidebar ; PageUp/PageDown déplacent l'onglet actif dans sa barre. */
 const CTRL_SHIFT: Record<string, ShortcutAction> = {
   KeyO: { type: "open-folder" },
-  KeyN: { type: "new-workspace" }, // nouvel espace direct sur ~, sans dialog
+  KeyN: { type: "new-workspace" }, // formulaire nom + dossier
+  Enter: { type: "new-home-workspace" }, // espace direct sur ~, sans formulaire
+  NumpadEnter: { type: "new-home-workspace" },
   KeyT: { type: "new-tab" },
   KeyW: { type: "close-tab" },
   KeyQ: { type: "close-workspace" },

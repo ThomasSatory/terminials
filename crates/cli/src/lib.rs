@@ -26,14 +26,19 @@ pub fn send_request(path: &Path, method: &str, params: serde_json::Value) -> std
     serde_json::from_str(&resp_line).map_err(std::io::Error::other)
 }
 
-/// Ajoute `workspaceId` aux params si TERMINIALS_WORKSPACE_ID est présent dans l'env
-/// (shell lancé par l'app terminials) : le front route alors la commande vers le
-/// workspace émetteur au lieu du workspace actif.
+/// Ajoute `workspaceId` (et `ptyId`) aux params si TERMINIALS_WORKSPACE_ID
+/// (et TERMINIALS_PTY_ID) sont présents dans l'env (shell lancé par l'app
+/// terminials) : le front route alors la commande vers le workspace émetteur au
+/// lieu du workspace actif, et une notification vers l'onglet émetteur.
 pub fn with_workspace_id(mut params: serde_json::Value) -> serde_json::Value {
     if let Ok(ws) = std::env::var("TERMINIALS_WORKSPACE_ID") {
         if !ws.is_empty() {
             if let Some(obj) = params.as_object_mut() {
                 obj.insert("workspaceId".to_string(), serde_json::Value::String(ws));
+                let pty = std::env::var("TERMINIALS_PTY_ID").ok().and_then(|v| v.parse::<u64>().ok());
+                if let Some(pty) = pty {
+                    obj.insert("ptyId".to_string(), serde_json::Value::from(pty));
+                }
             }
         }
     }
@@ -44,17 +49,25 @@ pub fn with_workspace_id(mut params: serde_json::Value) -> serde_json::Value {
 mod tests {
     use super::*;
 
-    // Un seul test manipule TERMINIALS_WORKSPACE_ID (set + remove dans le même test) :
-    // pas de course avec les autres tests du binaire, exécutés en parallèle.
+    // Un seul test manipule TERMINIALS_WORKSPACE_ID / TERMINIALS_PTY_ID (set + remove
+    // dans le même test) : pas de course avec les autres tests du binaire, exécutés en
+    // parallèle.
     #[test]
     fn with_workspace_id_joins_env_var_when_present() {
         std::env::remove_var("TERMINIALS_WORKSPACE_ID");
+        std::env::remove_var("TERMINIALS_PTY_ID");
         let p = with_workspace_id(serde_json::json!({"title": "t"}));
         assert_eq!(p.get("workspaceId"), None);
 
         std::env::set_var("TERMINIALS_WORKSPACE_ID", "ws-42");
         let p = with_workspace_id(serde_json::json!({"title": "t"}));
         assert_eq!(p.get("workspaceId").and_then(|v| v.as_str()), Some("ws-42"));
+        assert_eq!(p.get("ptyId"), None);
+
+        std::env::set_var("TERMINIALS_PTY_ID", "7");
+        let p = with_workspace_id(serde_json::json!({"title": "t"}));
+        assert_eq!(p.get("ptyId").and_then(|v| v.as_u64()), Some(7));
         std::env::remove_var("TERMINIALS_WORKSPACE_ID");
+        std::env::remove_var("TERMINIALS_PTY_ID");
     }
 }

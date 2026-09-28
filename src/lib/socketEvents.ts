@@ -15,6 +15,18 @@ interface AgentNotification {
   body: string;
 }
 
+/**
+ * Onglet porteur du PTY `ptyId` (inversion de `tabPtys`), ou `undefined` si
+ * aucun : onglet fermé entre-temps, ou émetteur hors onglet (CLI lancée ailleurs).
+ */
+export function tabIdForPty(
+  tabPtys: Record<string, number>,
+  ptyId: unknown,
+): string | undefined {
+  if (typeof ptyId !== "number") return undefined;
+  return Object.entries(tabPtys).find(([, id]) => id === ptyId)?.[0];
+}
+
 /** Écoute les events émis par le backend (socket-command, agent-notification) → store. */
 export function registerSocketEvents(): Promise<UnlistenFn> {
   const store = () => useWorkspaceStore.getState();
@@ -32,7 +44,14 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
         s.addWorkspace(params.cwd ?? "/home");
         break;
       case "notify":
-        if (target) s.setNotification(target.id, { title: params.title, body: params.body });
+        // Hook Claude Code lancé dans un onglet : la CLI joint aussi ptyId
+        // (TERMINIALS_PTY_ID), ce qui allume le point de CET onglet.
+        if (target)
+          s.setNotification(
+            target.id,
+            { title: params.title, body: params.body },
+            tabIdForPty(s.tabPtys, params.ptyId),
+          );
         break;
       case "set-status":
         if (target) s.setStatus(target.id, { label: params.label, color: params.color });
@@ -51,11 +70,7 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
     // Inversion tabPtys (ptyId → tabId) : cible l’onglet émetteur (point bleu).
     // Onglet introuvable (fermé entre-temps, ptyId absent) → fallback unread
     // au niveau workspace (setNotification sans tabId).
-    const entry =
-      ptyId === undefined
-        ? undefined
-        : Object.entries(s.tabPtys).find(([, id]) => id === ptyId);
-    s.setNotification(workspaceId, { title, body }, entry?.[0]);
+    s.setNotification(workspaceId, { title, body }, tabIdForPty(s.tabPtys, ptyId));
   });
 
   // Dashboard d'activité (§7/§8 du design) : un événement collecté (git, claude,

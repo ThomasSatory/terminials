@@ -97,9 +97,11 @@ pub fn range_for(day: NaiveDate, kind: SummaryKind, tz: &impl TimeZone) -> (i64,
 
 /// Version des prompts système : entre dans la clé de cache (`cache_hash`) pour
 /// qu'un changement de format (v2 : titre + trois puces ; v3 : titre + une
-/// puce par projet, apparie à la frise par le nom du projet, le 2026-09-22)
+/// puce par projet, apparie à la frise par le nom du projet, le 2026-09-22 ;
+/// v4 : une section `## projet` par projet, sans plafond, et jusqu'à cinq
+/// puces chacune, le 2026-09-25)
 /// invalide les synthèses générées avec l'ancien prompt, sans migration SQL.
-pub const PROMPT_VERSION: &str = "v3";
+pub const PROMPT_VERSION: &str = "v4";
 
 /// Clé de cache d'une synthèse : hash du digest suffixé par la version du prompt.
 pub fn cache_hash(digest_hash: &str) -> String {
@@ -109,9 +111,9 @@ pub fn cache_hash(digest_hash: &str) -> String {
 /// Message système (invariant par type de synthèse), en français.
 pub fn system_prompt(kind: SummaryKind) -> &'static str {
     match kind {
-        SummaryKind::Bilan => "Tu es l'assistant de Thomas, développeur. À partir du journal d'activité fourni (commits git, prompts envoyés à Claude Code, commandes shell, changements ClickUp), rédige un bilan court de la journée qui raconte ce qui a été fait. Format strict : la première ligne est un titre de la journée, huit mots au plus, sans markdown ni ponctuation finale ; puis une ligne vide ; puis une puce par projet ayant eu de l'activité (`- `), dans l'ordre des sections `##` du journal, cinq puces au plus. Chaque puce commence par le nom du projet exactement tel qu'il est écrit au début de l'en-tête `##` de sa section, suivi de « : », puis une ou deux phrases (quarante mots au plus) qui disent ce qui a été fait, ce qui a été réglé et ce qui a bloqué, sans énumérer les commandes. Cite chaque ticket ClickUp mentionné sous la forme `[id](url)` avec l'URL fournie dans la section « Tickets cités ». N'invente rien qui ne soit pas dans le journal. Rien d'autre : ni préambule, ni conclusion, ni titre de section. Réponds en français.",
+        SummaryKind::Bilan => "Tu es l'assistant de Thomas, développeur. À partir du journal d'activité fourni (commits git, prompts envoyés à Claude Code, commandes shell, changements ClickUp), rédige le bilan de la journée qui lui servira d'aide-mémoire à la daily du lendemain : il doit pouvoir le relire tel quel sans rien oublier de ce qu'il a fait. Format strict : la première ligne est un titre de la journée, huit mots au plus, sans markdown ni ponctuation finale ; puis une ligne vide ; puis, pour chaque projet ayant eu de l'activité, dans l'ordre des sections `##` du journal et sans en omettre aucun : une ligne `## ` suivie du nom du projet exactement tel qu'il est écrit au début de l'en-tête `##` de sa section, puis une à cinq puces (`- `) d'une phrase courte chacune (vingt-cinq mots au plus), concrète et dite simplement comme à l'oral : ce qui a été fait, ce qui a été réglé, ce qui a bloqué ou reste en cours, sans énumérer les commandes ; une activité brève mérite quand même sa puce, et une tâche distincte, sa propre puce. Pas de section pour « ClickUp » ni pour « Tickets cités » : un changement ClickUp se range sous le projet qu'il concerne, sinon il est omis. Cite chaque ticket ClickUp mentionné sous la forme `[id](url)` avec l'URL fournie dans la section « Tickets cités ». N'invente rien qui ne soit pas dans le journal. Rien d'autre : ni préambule, ni conclusion, ni titre de section. Réponds en français.",
         SummaryKind::ResteAFaire => "Tu es l'assistant de Thomas, développeur. On te donne son journal d'activité, ses tâches ClickUp ouvertes et ses branches git non fusionnées. Rédige la liste de ce qui reste à faire, priorisée, en trois sections markdown : `## Tickets ClickUp` (échéance la plus proche d'abord, lien `[id](url)`), `## Branches à finir`, `## Pistes vues dans les prompts` (uniquement si le journal en contient). N'invente rien. Réponds en français, sans préambule.",
-        SummaryKind::Semaine => "Tu es l'assistant de Thomas, développeur. À partir des journaux d'activité des jours ouvrés de la semaine, rédige un bilan court de la semaine qui raconte ce qui a été fait. Format strict : la première ligne est un titre de la semaine, huit mots au plus, sans markdown ni ponctuation finale ; puis une ligne vide ; puis une puce par projet ayant eu de l'activité dans la semaine (`- `), du plus actif au moins actif, cinq puces au plus. Chaque puce commence par le nom du projet exactement tel qu'il est écrit au début de l'en-tête `##` de ses sections, suivi de « : », puis une ou deux phrases (quarante mots au plus) : ce qui a avancé au fil des jours, les tickets clos, le point de friction s'il y en a un. Liens tickets `[id](url)`. N'invente rien. Rien d'autre : ni préambule, ni conclusion, ni titre de section. Réponds en français.",
+        SummaryKind::Semaine => "Tu es l'assistant de Thomas, développeur. À partir des journaux d'activité des jours ouvrés de la semaine, rédige un bilan court de la semaine qui raconte ce qui a été fait. Format strict : la première ligne est un titre de la semaine, huit mots au plus, sans markdown ni ponctuation finale ; puis une ligne vide ; puis, pour chaque projet ayant eu de l'activité dans la semaine, du plus actif au moins actif et sans en omettre aucun : une ligne `## ` suivie du nom du projet exactement tel qu'il est écrit au début de l'en-tête `##` de ses sections, puis une à cinq puces (`- `) d'une phrase courte chacune (vingt-cinq mots au plus) : ce qui a avancé au fil des jours, les tickets clos, le point de friction s'il y en a un. Pas de section pour « ClickUp » ni pour « Tickets cités ». Liens tickets `[id](url)`. N'invente rien. Rien d'autre : ni préambule, ni conclusion, ni titre de section. Réponds en français.",
     }
 }
 
@@ -553,14 +555,17 @@ mod tests {
     }
 
     #[test]
-    fn prompts_v3_demandent_une_puce_par_projet() {
-        // Format « récit par projet » (2026-09-22) : la frise apparie chaque puce
-        // à sa ligne par le nom du projet, tel qu'écrit dans l'en-tête `##` du digest.
-        assert_eq!(PROMPT_VERSION, "v3");
+    fn prompts_v4_demandent_une_section_par_projet_sans_plafond() {
+        // Format v4 (2026-09-25) : une section `## projet` par projet, appariée à
+        // sa ligne de frise par le nom tel qu'écrit dans l'en-tête `##` du digest ;
+        // le plafond porte sur les puces d'un projet, plus sur le nombre de projets.
+        assert_eq!(PROMPT_VERSION, "v4");
         for kind in [SummaryKind::Bilan, SummaryKind::Semaine] {
             let p = system_prompt(kind);
-            assert!(p.contains("une puce par projet"), "{}", kind.as_str());
-            assert!(p.contains("cinq puces"), "{}", kind.as_str());
+            assert!(p.contains("pour chaque projet"), "{}", kind.as_str());
+            assert!(p.contains("sans en omettre aucun"), "{}", kind.as_str());
+            assert!(p.contains("une à cinq puces"), "{}", kind.as_str());
+            assert!(!p.contains("cinq puces au plus"), "{}", kind.as_str());
             assert!(!p.contains("trois puces"), "{}", kind.as_str());
         }
     }

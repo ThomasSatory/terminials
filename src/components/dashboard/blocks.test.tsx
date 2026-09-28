@@ -66,7 +66,7 @@ describe("Timeline", () => {
     );
     expect(html).toContain(">9h<");
     expect(html).toContain("dash-glyph-commit");
-    expect(html).toContain("color:#c9a36a");
+    expect(html).toContain("color:#2ecc71");
     expect(html).toContain("store SQLite");
   });
 
@@ -94,8 +94,8 @@ describe("WeekDays", () => {
       future: false,
       compteurs: "5 commits, 31 échanges",
       segments: [
-        { dir: "/dev/a", color: "#c9a36a", events: 9 },
-        { dir: "/dev/b", color: "#9bb08a", events: 1 },
+        { dir: "/dev/a", color: "#2ecc71", events: 9 },
+        { dir: "/dev/b", color: "#e67e22", events: 1 },
       ],
     },
     {
@@ -144,7 +144,7 @@ describe("Frise", () => {
   const ws = [{ dir: A, name: "a", events: 3, commits: 1 }];
   const colors = assignWorkspaceColors(ws);
 
-  it("une ligne par projet, une case par quart d'heure actif, un point cliquable par commit", () => {
+  it("une colonne par quart d'heure actif, un point cliquable par commit, une entrée de légende par projet", () => {
     const frise = buildFrise(
       "day",
       "2026-09-16",
@@ -155,11 +155,12 @@ describe("Frise", () => {
     const html = renderToStaticMarkup(
       createElement(Frise, { frise, mode: "day", onOpenTicket: () => {} }),
     );
-    expect((html.match(/dash-frise-row/g) ?? []).length).toBe(2); // projet + axe
-    expect((html.match(/dash-frise-cell/g) ?? []).length).toBe(2);
+    expect((html.match(/class="dash-frise-row"/g) ?? []).length).toBe(1);
+    expect((html.match(/class="dash-frise-col"/g) ?? []).length).toBe(2);
+    expect((html.match(/class="dash-frise-seg"/g) ?? []).length).toBe(2);
     expect(html).toContain('href="https://app.clickup.com/t/CU-1"');
     expect(html).toContain("11h30 · fix: x");
-    expect(html).toContain("1 commit");
+    expect(html).toContain("1 commit · 30 min");
     expect(html).toContain(">7h<");
   });
 

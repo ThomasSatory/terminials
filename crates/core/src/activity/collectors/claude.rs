@@ -20,8 +20,17 @@ pub struct Parsed {
 /// injectés par Claude Code, qui ne sont pas des prompts saisis par l'utilisateur.
 const IGNORED_PREFIXES: [&str; 3] = ["<local-command", "<command-name", "<system-reminder"];
 
+/// `entrypoint` des sessions lancées par `claude -p` — dont les propres appels
+/// du dashboard (synthèses, collecte ClickUp) : ce n'est pas de l'activité.
+const ENTREE_NON_INTERACTIVE: &str = "sdk-cli";
+
+fn est_non_interactive(value: &serde_json::Value) -> bool {
+    value.get("entrypoint").and_then(|v| v.as_str()) == Some(ENTREE_NON_INTERACTIVE)
+}
+
 /// Parse un transcript Claude Code (JSON Lines). Fonction pure, exposée pour les tests :
 /// ne touche ni au disque ni au store. Résout la racine git via `repo_root`.
+/// Une session non interactive (`claude -p`) ne rend rien.
 pub fn parse_transcript(path_label: &str, content: &str, ticket_patterns: &[String]) -> Parsed {
     parse_transcript_with(path_label, content, ticket_patterns, &mut |c| repo_root(c))
 }
@@ -54,6 +63,9 @@ pub fn parse_transcript_with(
             Ok(v) => v,
             Err(_) => continue,
         };
+        if est_non_interactive(&value) {
+            return Parsed::default();
+        }
 
         if session_id.is_none() {
             if let Some(sid) = value.get("sessionId").and_then(|v| v.as_str()) {
@@ -183,6 +195,40 @@ fn fmt_duration(total_sec: i64) -> String {
     }
 }
 
+/// `uuid` des lignes `user` d'un transcript non interactif (les `source_ref`
+/// de ses prompts), ou `None` si la session est interactive.
+fn uuids_si_non_interactive(content: &str) -> Option<Vec<String>> {
+    let mut non_interactive = false;
+    let mut uuids = Vec::new();
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else { continue };
+        non_interactive |= est_non_interactive(&value);
+        if value.get("type").and_then(|v| v.as_str()) == Some("user") {
+            if let Some(u) = value.get("uuid").and_then(|v| v.as_str()) {
+                uuids.push(u.to_string());
+            }
+        }
+    }
+    non_interactive.then_some(uuids)
+}
+
+/// Retire du store, une seule fois, les sessions `claude -p` collectées avant
+/// qu'elles ne soient ignorées (le curseur `mtime` ne les relira jamais) : la
+/// session est retrouvée par le chemin de son transcript, ses prompts par uuid.
+fn purger_non_interactives(store: &Store) -> Result<(), String> {
+    const FAIT: &str = "claude_purge_sdk_cli";
+    if store.get_cursor(FAIT).map_err(|e| e.to_string())?.is_some() {
+        return Ok(());
+    }
+    for path in store.claude_session_refs().map_err(|e| e.to_string())? {
+        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Some(uuids) = uuids_si_non_interactive(&content) else { continue };
+        store.delete_events(EventKind::ClaudePrompt, &uuids).map_err(|e| e.to_string())?;
+        store.delete_events(EventKind::ClaudeSession, &[path]).map_err(|e| e.to_string())?;
+    }
+    store.set_cursor(FAIT, "1").map_err(|e| e.to_string())
+}
+
 /// Dossier par défaut des transcripts Claude Code : `$HOME/.claude/projects`.
 pub fn default_projects_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_default();
@@ -199,6 +245,7 @@ pub fn collect(
     ticket_patterns: &[String],
     now: i64,
 ) -> Result<usize, String> {
+    purger_non_interactives(store)?;
     let cursor: i64 = store
         .get_cursor("claude")
         .map_err(|e| e.to_string())?
@@ -326,6 +373,38 @@ ligne invalide
         let p = parse_transcript_with("/p/s1.jsonl", FIXTURE, &[], &mut resolver);
         assert_eq!(p.prompts.len(), 2);
         assert_eq!(appels, 1, "même cwd pour les 2 prompts retenus → un seul appel au resolver");
+    }
+    const NON_INTERACTIF: &str = r#"{"type":"queue-operation","operation":"enqueue","sessionId":"s2"}
+{"type":"user","uuid":"p1","timestamp":"2026-09-16T09:00:00.000Z","cwd":"/home/t","entrypoint":"sdk-cli","message":{"role":"user","content":"Tu as accès aux outils MCP ClickUp."}}
+"#;
+    #[test]
+    fn session_claude_p_ignoree() {
+        let p = parse_transcript("/p/s2.jsonl", NON_INTERACTIF, &[]);
+        assert!(p.prompts.is_empty());
+        assert!(p.session.is_none());
+    }
+    #[test]
+    fn purge_unique_des_sessions_claude_p_deja_collectees() {
+        let dir = tempfile::tempdir().unwrap();
+        let chemin = dir.path().join("s2.jsonl");
+        std::fs::write(&chemin, NON_INTERACTIF).unwrap();
+        let chemin = chemin.to_string_lossy().to_string();
+        let store = Store::open_in_memory().unwrap();
+        // Ce qu'aurait inséré le collecteur avant de savoir ignorer `claude -p`.
+        let mut avant = parse_transcript(&chemin, &NON_INTERACTIF.replace(r#""entrypoint":"sdk-cli","#, ""), &[]);
+        store.insert_events(&avant.prompts).unwrap();
+        store.upsert_event(&avant.session.take().unwrap()).unwrap();
+        // Une vraie session, elle aussi déjà en base, doit survivre à la purge.
+        let vraie = parse_transcript("/p/s1.jsonl", FIXTURE, &[]);
+        store.insert_events(&vraie.prompts).unwrap();
+        store.upsert_event(vraie.session.as_ref().unwrap()).unwrap();
+
+        let vide = tempfile::tempdir().unwrap();
+        collect(&store, vide.path(), &[], 1_800_000_000).unwrap();
+        let restants = store.query(0, i64::MAX, None).unwrap();
+        assert_eq!(restants.len(), 3, "les 2 prompts et la session de s1 restent : {restants:?}");
+        assert!(restants.iter().all(|e| e.title != "Tu as accès aux outils MCP ClickUp."));
+        assert_eq!(store.get_cursor("claude_purge_sdk_cli").unwrap().as_deref(), Some("1"));
     }
     #[test]
     fn transcript_sans_prompt_n_a_pas_de_session() {
