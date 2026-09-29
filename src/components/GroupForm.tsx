@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PALETTE } from "../lib/palette";
+import { SIDEBAR_COLORS } from "../lib/palette";
 
 const INPUT: React.CSSProperties = {
   minWidth: 0,
@@ -64,17 +64,18 @@ export function GroupForm({
         </button>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-        {PALETTE.map((c) => (
+        {SIDEBAR_COLORS.map(({ name, hex }) => (
           <span
-            key={c}
-            onClick={() => setColor(c)}
+            key={hex}
+            title={name}
+            onClick={() => setColor(hex)}
             style={{
               width: 14,
               height: 14,
               borderRadius: 3,
-              background: c,
+              background: hex,
               cursor: "pointer",
-              outline: c === color ? "2px solid #fff" : "none",
+              outline: hex.toLowerCase() === color.toLowerCase() ? "2px solid #fff" : "none",
             }}
           />
         ))}

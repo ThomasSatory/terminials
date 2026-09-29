@@ -3,7 +3,7 @@ import { PALETTE } from "./palette";
 
 /**
  * Teintes de workspace du dashboard : les couleurs franches de la palette de
- * l'application (`PALETTE`, celle des groupes de la sidebar), sans le gris,
+ * l'application (`PALETTE`), sans le gris,
  * réordonnées pour que les projets les plus actifs — voisins dans la frise —
  * reçoivent des teintes bien distinctes (le vert et le teal ne se suivent pas).
  * Chaque projet garde sa couleur partout (frise, chips, chronologie, semaine).

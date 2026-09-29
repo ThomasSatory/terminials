@@ -12,6 +12,37 @@ export const PALETTE = [
   "#95a5a6", // gris
 ] as const;
 
+export type NamedColor = { name: string; hex: string };
+
+/** Couleurs des workspaces et des groupes : les 16 couleurs nommées de cmux. */
+export const SIDEBAR_COLORS: readonly NamedColor[] = [
+  { name: "Red", hex: "#C0392B" },
+  { name: "Crimson", hex: "#922B21" },
+  { name: "Orange", hex: "#A04000" },
+  { name: "Amber", hex: "#7D6608" },
+  { name: "Olive", hex: "#4A5C18" },
+  { name: "Green", hex: "#196F3D" },
+  { name: "Teal", hex: "#006B6B" },
+  { name: "Aqua", hex: "#0E6B8C" },
+  { name: "Blue", hex: "#1565C0" },
+  { name: "Navy", hex: "#1A5276" },
+  { name: "Indigo", hex: "#283593" },
+  { name: "Purple", hex: "#6A1B9A" },
+  { name: "Magenta", hex: "#AD1457" },
+  { name: "Rose", hex: "#880E4F" },
+  { name: "Brown", hex: "#7B3F00" },
+  { name: "Charcoal", hex: "#3E4B5E" },
+];
+
+/** Pas de 5, premier avec 16 : deux groupes créés à la suite ne reçoivent pas deux teintes voisines. */
+export function defaultGroupColor(n: number): string {
+  return SIDEBAR_COLORS[(n * 5) % SIDEBAR_COLORS.length].hex;
+}
+
+export function identityColor(w: { color?: string }, group?: { color: string }): string | undefined {
+  return w.color ?? group?.color;
+}
+
 /** Bleu cmux : toute la sémantique « un agent attend »
     (anneau de pane, rail sidebar, halo de pastille). */
 export const ATTENTION_COLOR = "#3b82f6";

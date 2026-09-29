@@ -10,7 +10,7 @@ import {
   setLastFolder,
   type SavedState,
 } from "./workspace";
-import { PALETTE, basename } from "../lib/palette";
+import { basename, defaultGroupColor } from "../lib/palette";
 
 const store = () => useWorkspaceStore.getState();
 const ws = (id: string) => store().workspaces.find((w) => w.id === id)!;
@@ -48,10 +48,16 @@ describe("workspace store", () => {
     expect(w.groupId).toBeNull();
   });
 
-  it("un workspace ne porte plus de couleur d'identité (c'est le groupe qui la porte)", () => {
-    const w = ws(store().addWorkspace("/a"));
-    expect(w).not.toHaveProperty("color");
-    expect((store() as unknown as Record<string, unknown>).setColor).toBeUndefined();
+  it("un workspace naît sans couleur propre", () => {
+    expect(ws(store().addWorkspace("/a"))).not.toHaveProperty("color");
+  });
+
+  it("setWorkspaceColor pose puis retire la couleur propre", () => {
+    const id = store().addWorkspace("/a");
+    store().setWorkspaceColor(id, "#7D6608");
+    expect(ws(id).color).toBe("#7D6608");
+    store().setWorkspaceColor(id, null);
+    expect(ws(id)).not.toHaveProperty("color");
   });
 
   it("addTab n'a pas de limite et rend le nouvel onglet actif", () => {
@@ -458,7 +464,7 @@ describe("groupes", () => {
 
   it("addGroup crée un groupe déplié, nom vide → « Groupe », couleur de la palette", () => {
     const g = store().addGroup("  ");
-    expect(store().groups).toEqual([{ id: g, name: "Groupe", color: PALETTE[0], collapsed: false }]);
+    expect(store().groups).toEqual([{ id: g, name: "Groupe", color: defaultGroupColor(0), collapsed: false }]);
     store().addGroup("h", "#123456");
     expect(store().groups[1]).toMatchObject({ name: "h", color: "#123456" });
   });
@@ -613,6 +619,12 @@ describe("création dans un groupe et duplication", () => {
     expect(store().activeId).toBe(copy);
   });
 
+  it("duplicateWorkspace copie la couleur propre", () => {
+    const a = store().addWorkspace("/a");
+    store().setWorkspaceColor(a, "#1565C0");
+    expect(ws(store().duplicateWorkspace(a)!).color).toBe("#1565C0");
+  });
+
   it("la copie se place juste sous son original, pas en fin de groupe", () => {
     const g = store().addGroup("g");
     const a = store().addWorkspace("/a", "a", g);
@@ -647,12 +659,13 @@ describe("création dans un groupe et duplication", () => {
   });
 });
 
-describe("persistance v4", () => {
+describe("persistance v5", () => {
+  const V5_KEY = "terminials:workspaces:v5";
   const V4_KEY = "terminials:workspaces:v4";
   const V3_KEY = "terminials:workspaces:v3";
   const V2_KEY = "terminials:workspaces:v2";
   const saved = (): SavedState =>
-    JSON.parse(localStorage.getItem(V4_KEY) ?? '{"groups":[],"workspaces":[]}') as SavedState;
+    JSON.parse(localStorage.getItem(V5_KEY) ?? '{"groups":[],"workspaces":[]}') as SavedState;
 
   beforeEach(() => {
     (globalThis as { localStorage?: Storage }).localStorage = localStorageStub();
@@ -712,20 +725,38 @@ describe("persistance v4", () => {
     expect(saved().workspaces.map((e) => e.cwd)).toEqual(["/b"]);
   });
 
-  it("les anciennes clés v1/v2/v3 ne sont plus écrites", () => {
+  it("les anciennes clés v1 à v4 ne sont plus écrites", () => {
     store().addWorkspace("/a");
     expect(localStorage.getItem("terminials:workspaces")).toBeNull();
     expect(localStorage.getItem(V2_KEY)).toBeNull();
     expect(localStorage.getItem(V3_KEY)).toBeNull();
+    expect(localStorage.getItem(V4_KEY)).toBeNull();
   });
 
-  it("une fois v4 écrite, un v3 résiduel modifié n'est plus relu", () => {
-    store().addWorkspace("/a"); // écrit v4
+  it("une fois v5 écrite, un v4 résiduel n'est plus relu", () => {
+    store().addWorkspace("/a"); // écrit v5
     localStorage.setItem(
-      V3_KEY,
-      JSON.stringify({ groups: [], workspaces: [{ cwd: "/old", name: "o", color: "#1", tabCount: 1, groupIndex: null }] }),
+      V4_KEY,
+      JSON.stringify({ groups: [], workspaces: [{ cwd: "/old", name: "o", tabCount: 1, groupIndex: null }] }),
     );
     expect(loadSavedState().workspaces.map((e) => e.cwd)).toEqual(["/a"]);
+  });
+
+  it("la couleur propre est écrite en v5, et omise sans couleur", () => {
+    const a = store().addWorkspace("/a");
+    store().addWorkspace("/b");
+    store().setWorkspaceColor(a, "#7D6608");
+    const raw = JSON.parse(localStorage.getItem(V5_KEY)!) as SavedState;
+    expect(raw.workspaces[0]).toEqual({ cwd: "/a", name: "a", tabCount: 1, groupIndex: null, color: "#7D6608" });
+    expect(raw.workspaces[1]).not.toHaveProperty("color");
+  });
+
+  it("une couleur v5 qui n'est pas une chaîne est ignorée", () => {
+    localStorage.setItem(
+      V5_KEY,
+      JSON.stringify({ groups: [], workspaces: [{ cwd: "/a", name: "a", tabCount: 1, groupIndex: null, color: 42 }] }),
+    );
+    expect(loadSavedState().workspaces[0]).not.toHaveProperty("color");
   });
 
   it("loadSavedState relit la sauvegarde et filtre le JSON invalide", () => {
@@ -734,10 +765,10 @@ describe("persistance v4", () => {
       groups: [],
       workspaces: [{ cwd: "/a", name: "a", tabCount: 1, groupIndex: null }],
     });
-    localStorage.setItem(V4_KEY, "{pas du json");
+    localStorage.setItem(V5_KEY, "{pas du json");
     expect(loadSavedState()).toEqual({ groups: [], workspaces: [] });
     localStorage.setItem(
-      V4_KEY,
+      V5_KEY,
       JSON.stringify({
         groups: [{ name: "g", color: "#1" }, { nope: 1 }],
         workspaces: [
@@ -756,7 +787,23 @@ describe("persistance v4", () => {
     });
   });
 
-  it("migration v3 → v4 : groupes et appartenance conservés, couleur des workspaces oubliée, clé v3 laissée en place", () => {
+  it("migration v4 → v5 : v4 relue si v5 absente, sans couleur, clé v4 laissée en place", () => {
+    localStorage.setItem(
+      V4_KEY,
+      JSON.stringify({
+        groups: [{ name: "g", color: "#0000ff", collapsed: false }],
+        workspaces: [{ cwd: "/a", name: "a", tabCount: 2, groupIndex: 0 }],
+      }),
+    );
+    const state = loadSavedState();
+    expect(state.workspaces).toEqual([{ cwd: "/a", name: "a", tabCount: 2, groupIndex: 0 }]);
+    expect(state.workspaces[0]).not.toHaveProperty("color");
+    store().restoreState(state);
+    expect(saved().workspaces).toHaveLength(1);
+    expect(localStorage.getItem(V4_KEY)).not.toBeNull();
+  });
+
+  it("migration v3 → v5 : groupes et appartenance conservés, couleur des workspaces oubliée, clé v3 laissée en place", () => {
     localStorage.setItem(
       V3_KEY,
       JSON.stringify({
@@ -771,7 +818,7 @@ describe("persistance v4", () => {
     expect(localStorage.getItem(V3_KEY)).not.toBeNull(); // retour arrière possible
   });
 
-  it("migration v2 → v4 : paneCount devient tabCount, tout hors-groupe, clé v2 conservée (retour arrière possible)", () => {
+  it("migration v2 → v5 : paneCount devient tabCount, tout hors-groupe, clé v2 conservée (retour arrière possible)", () => {
     localStorage.setItem(
       V2_KEY,
       JSON.stringify([{ cwd: "/a", name: "a", color: "#111111", paneCount: 3 }, { n: 1 }]),
@@ -783,9 +830,13 @@ describe("persistance v4", () => {
     expect(localStorage.getItem(V2_KEY)).not.toBeNull();
   });
 
-  it("un v4 présent (même vide) prime sur les clés antérieures", () => {
+  it("un v5 présent (même vide) prime sur les clés antérieures", () => {
     localStorage.setItem(V2_KEY, JSON.stringify([{ cwd: "/old", name: "o", color: "#1", paneCount: 1 }]));
-    localStorage.setItem(V4_KEY, JSON.stringify({ groups: [], workspaces: [] }));
+    localStorage.setItem(
+      V4_KEY,
+      JSON.stringify({ groups: [], workspaces: [{ cwd: "/old", name: "o", tabCount: 1, groupIndex: null }] }),
+    );
+    localStorage.setItem(V5_KEY, JSON.stringify({ groups: [], workspaces: [] }));
     expect(loadSavedState()).toEqual({ groups: [], workspaces: [] });
   });
 
@@ -819,6 +870,14 @@ describe("persistance v4", () => {
     expect(new Set(store().workspaces.map((w) => w.id)).size).toBe(3); // ids frais uniques
     expect(saved().workspaces.map((e) => e.tabCount)).toEqual([2, 9, 1]); // sauvegarde réécrite normalisée
     expect(saved().workspaces.map((e) => e.groupIndex)).toEqual([0, null, null]);
+  });
+
+  it("restoreState reprend la couleur propre", () => {
+    store().restoreState({
+      groups: [],
+      workspaces: [{ cwd: "/a", name: "a", tabCount: 1, groupIndex: null, color: "#1565C0" }],
+    });
+    expect(store().workspaces[0].color).toBe("#1565C0");
   });
 
   it("restoreState concatène sans écraser les workspaces créés pendant le boot", () => {

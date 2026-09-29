@@ -1,18 +1,37 @@
 import { useEffect } from "react";
 import { menuPosition } from "../lib/contextMenu";
+import type { NamedColor } from "../lib/palette";
 
-/** Entrée de menu : une action, ou un simple filet de séparation. */
-export type MenuItem = { label: string; shortcut?: string; run: () => void } | { separator: true };
+/** Entrée de menu : une action, un simple filet de séparation, ou une grille de couleurs. */
+export type MenuItem =
+  | { label: string; shortcut?: string; run: () => void }
+  | { separator: true }
+  | { swatches: readonly NamedColor[]; current?: string; pick: (hex: string) => void };
 
 const WIDTH = 210;
 const ITEM_H = 26;
 const SEP_H = 9;
 const PAD = 8;
+const SWATCH = 16;
+const SWATCH_GAP = 6;
+const SWATCH_COLS = 8;
+const SWATCH_PAD = 4;
+
+function swatchesHeight(count: number): number {
+  const rows = Math.ceil(count / SWATCH_COLS);
+  return 2 * SWATCH_PAD + rows * SWATCH + (rows - 1) * SWATCH_GAP;
+}
 
 /** Hauteur estimée (les entrées ont une hauteur fixe) : sert au recalage contre
     les bords, avant que le menu ne soit monté — donc sans mesure ni scintillement. */
-function height(items: MenuItem[]): number {
-  return PAD + items.reduce((h, i) => h + ("separator" in i ? SEP_H : ITEM_H), 0);
+export function menuHeight(items: MenuItem[]): number {
+  return (
+    PAD +
+    items.reduce(
+      (h, i) => h + ("separator" in i ? SEP_H : "swatches" in i ? swatchesHeight(i.swatches.length) : ITEM_H),
+      0,
+    )
+  );
 }
 
 /**
@@ -51,7 +70,7 @@ export function ContextMenu({
     typeof window === "undefined"
       ? { width: Number.MAX_SAFE_INTEGER, height: Number.MAX_SAFE_INTEGER }
       : { width: window.innerWidth, height: window.innerHeight };
-  const { left, top } = menuPosition(x, y, { width: WIDTH, height: height(items) }, viewport);
+  const { left, top } = menuPosition(x, y, { width: WIDTH, height: menuHeight(items) }, viewport);
 
   return (
     <div
@@ -89,6 +108,43 @@ export function ContextMenu({
               data-separator
               style={{ height: 1, margin: "4px 8px", background: "#333" }}
             />
+          ) : "swatches" in item ? (
+            <div
+              key={`swatches:${i}`}
+              style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(${SWATCH_COLS}, ${SWATCH}px)`,
+                gap: SWATCH_GAP,
+                padding: `${SWATCH_PAD}px 10px`,
+              }}
+            >
+              {item.swatches.map((c) => {
+                const isCurrent = item.current?.toLowerCase() === c.hex.toLowerCase();
+                return (
+                  <button
+                    key={c.hex}
+                    data-swatch={c.hex}
+                    title={c.name}
+                    aria-label={c.name}
+                    data-current={isCurrent || undefined}
+                    onClick={() => {
+                      item.pick(c.hex);
+                      onClose();
+                    }}
+                    style={{
+                      width: SWATCH,
+                      height: SWATCH,
+                      padding: 0,
+                      border: "none",
+                      borderRadius: 3,
+                      background: c.hex,
+                      cursor: "pointer",
+                      outline: isCurrent ? "2px solid #fff" : "none",
+                    }}
+                  />
+                );
+              })}
+            </div>
           ) : (
             <button
               key={item.label}

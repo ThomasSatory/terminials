@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { nextCopyName } from "../lib/copyName";
-import { PALETTE, basename } from "../lib/palette";
+import { basename, defaultGroupColor } from "../lib/palette";
 import { stripTrailingSlash } from "../lib/paths";
 import { moveItem } from "../lib/reorder";
 
@@ -31,6 +31,8 @@ export interface Workspace {
   activeTabId: string | null;
   /** Groupe d'appartenance, null = hors-groupe (affiché en tête de sidebar). */
   groupId: string | null;
+  /** Couleur propre ; absente, la ligne prend celle du groupe. */
+  color?: string;
   branch?: string;
   dirty?: boolean;
   ports: number[];
@@ -45,15 +47,17 @@ export interface Workspace {
   progress?: { value: number; label?: string };
 }
 
-/** Entrées de persistance v4 : listes ORDONNÉES réécrites en bloc à chaque mutation
+/** Entrées de persistance v5 : listes ORDONNÉES réécrites en bloc à chaque mutation
     (pas de clé par cwd : deux workspaces sur le même dossier — worktrees — coexistent).
-    `groupIndex` indexe `groups` ; null = hors-groupe. Seul le groupe porte une couleur. */
+    `groupIndex` indexe `groups` ; null = hors-groupe. `color` est omis quand le workspace
+    n'a pas de couleur propre. */
 export type SavedGroup = { name: string; color: string; collapsed: boolean };
 export type SavedWorkspace = {
   cwd: string;
   name: string;
   tabCount: number;
   groupIndex: number | null;
+  color?: string;
 };
 export type SavedState = { groups: SavedGroup[]; workspaces: SavedWorkspace[] };
 
@@ -94,6 +98,8 @@ interface WorkspaceState {
   moveTab: (wsId: string, tabId: string, toIndex: number) => void;
   setTabTitle: (wsId: string, tabId: string, title: string) => void;
   renameWorkspace: (wsId: string, name: string) => void;
+  /** null retire la couleur propre. */
+  setWorkspaceColor: (wsId: string, color: string | null) => void;
   /** Change le dossier d'un workspace : ses onglets respawnent (TerminalPane dépend de cwd). */
   setCwd: (wsId: string, cwd: string) => void;
   setNotification: (wsId: string, n: Notification, tabId?: string) => void;
@@ -130,27 +136,29 @@ let counter = 0;
 let colorIndex = 0;
 const uid = (prefix: string) => `${prefix}:${counter++}`;
 
-// --- Persistance localStorage v4 (I/O hors réducteurs ; no-op si localStorage absent,
+// --- Persistance localStorage v5 (I/O hors réducteurs ; no-op si localStorage absent,
 //     cas des tests node). Les clés antérieures sont lues une fois, dans l'ordre
-//     v3 puis v2, si v4 est absente — puis LAISSÉES en place : un build antérieur
+//     v4, v3 puis v2, si v5 est absente — puis LAISSÉES en place : un build antérieur
 //     partage le même localStorage WebKit et doit pouvoir redémarrer avec sa liste.
-//     Dès que v4 existe, les anciennes ne sont plus consultées. ---
-const STORAGE_KEY = "terminials:workspaces:v4";
+//     Dès que v5 existe, les anciennes ne sont plus consultées. ---
+const STORAGE_KEY = "terminials:workspaces:v5";
+const V4_KEY = "terminials:workspaces:v4";
 const V3_KEY = "terminials:workspaces:v3";
 const V2_KEY = "terminials:workspaces:v2";
 const LAST_FOLDER_KEY = "terminials:lastFolder";
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
-/** Tolère le `color` des entrées v3 : il est simplement ignoré. */
-function parseSavedWorkspace(e: unknown, groupCount: number): SavedWorkspace | null {
+/** Le `color` des entrées n'est lu qu'avec `withColor` (v5) : celui des entrées v3 est ignoré. */
+function parseSavedWorkspace(e: unknown, groupCount: number, withColor = false): SavedWorkspace | null {
   if (!isRecord(e)) return null;
   if (typeof e.cwd !== "string" || typeof e.name !== "string") return null;
   if (typeof e.tabCount !== "number") return null;
   const gi = e.groupIndex;
   const groupIndex =
     typeof gi === "number" && Number.isInteger(gi) && gi >= 0 && gi < groupCount ? gi : null;
-  return { cwd: e.cwd, name: e.name, tabCount: e.tabCount, groupIndex };
+  const color = withColor && typeof e.color === "string" ? { color: e.color } : {};
+  return { cwd: e.cwd, name: e.name, tabCount: e.tabCount, groupIndex, ...color };
 }
 
 function parseSavedGroup(g: unknown): SavedGroup | null {
@@ -169,9 +177,9 @@ function migrateV2(raw: unknown): SavedState | null {
   return { groups: [], workspaces };
 }
 
-/** Parse une sauvegarde `{groups, workspaces}` : v4, ou v3 dont le `color` des
-    workspaces est ignoré (le format des deux clés ne diffère que par ce champ). */
-function parseSavedState(raw: unknown): SavedState {
+/** Parse une sauvegarde `{groups, workspaces}` : v5 (`withColor`), ou v4 et v3 dont le
+    `color` des workspaces est ignoré (les trois formats ne diffèrent que par ce champ). */
+function parseSavedState(raw: unknown, withColor = false): SavedState {
   if (!isRecord(raw)) return { groups: [], workspaces: [] };
   const groups = Array.isArray(raw.groups)
     ? raw.groups.flatMap((g) => {
@@ -181,19 +189,21 @@ function parseSavedState(raw: unknown): SavedState {
     : [];
   const workspaces = Array.isArray(raw.workspaces)
     ? raw.workspaces.flatMap((e) => {
-        const parsed = parseSavedWorkspace(e, groups.length);
+        const parsed = parseSavedWorkspace(e, groups.length, withColor);
         return parsed ? [parsed] : [];
       })
     : [];
   return { groups, workspaces };
 }
 
-/** État sauvegardé (pour la restauration au boot). Si v4 est absent, relit v3, puis v2. */
+/** État sauvegardé (pour la restauration au boot). Si v5 est absent, relit v4, v3, puis v2. */
 export function loadSavedState(): SavedState {
   const empty: SavedState = { groups: [], workspaces: [] };
   if (typeof localStorage === "undefined") return empty;
   try {
-    const v4 = localStorage.getItem(STORAGE_KEY);
+    const v5 = localStorage.getItem(STORAGE_KEY);
+    if (v5 !== null) return parseSavedState(JSON.parse(v5), true);
+    const v4 = localStorage.getItem(V4_KEY);
     if (v4 !== null) return parseSavedState(JSON.parse(v4));
     const v3 = localStorage.getItem(V3_KEY);
     if (v3 !== null) return parseSavedState(JSON.parse(v3));
@@ -242,6 +252,7 @@ function persist(workspaces: Workspace[], groups: Group[]): void {
           name: w.name,
           tabCount: w.tabs.length,
           groupIndex: gi === -1 ? null : gi,
+          ...(w.color ? { color: w.color } : {}),
         };
       }),
     };
@@ -291,7 +302,13 @@ function insertAmong(rest: Workspace[], ws: Workspace, groupId: string | null, i
   return [...rest.slice(0, at), ws, ...rest.slice(at)];
 }
 
-function newWorkspace(cwd: string, name: string, tabCount: number, groupId: string | null): Workspace {
+function newWorkspace(
+  cwd: string,
+  name: string,
+  tabCount: number,
+  groupId: string | null,
+  color?: string,
+): Workspace {
   const tabs = Array.from({ length: tabCount }, (): Tab => ({ id: uid("tab") }));
   return {
     id: uid("ws"),
@@ -300,6 +317,7 @@ function newWorkspace(cwd: string, name: string, tabCount: number, groupId: stri
     tabs,
     activeTabId: tabs[0].id,
     groupId,
+    ...(color ? { color } : {}),
     ports: [],
     unread: false,
     unreadTabs: [],
@@ -373,7 +391,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const name = nextCopyName(src.name, s.workspaces.map((w) => w.name));
       // Un onglet neuf : un PTY ne se clone pas, et l'historique du shell d'origine
       // n'appartient pas à la copie.
-      const copy = newWorkspace(src.cwd, name, 1, src.groupId);
+      const copy = newWorkspace(src.cwd, name, 1, src.groupId, src.color);
       const index = members(s.workspaces, src.groupId).indexOf(src) + 1;
       set((st) => ({ workspaces: insertAmong(st.workspaces, copy, copy.groupId, index), activeId: copy.id }));
       persistNow();
@@ -473,6 +491,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       updateWs(wsId, (w) => ({ ...w, name: name.trim() || basename(w.cwd) }));
       persistNow();
     },
+    setWorkspaceColor: (wsId, color) => {
+      updateWs(wsId, (w) => {
+        const { color: _old, ...rest } = w;
+        return color ? { ...rest, color } : rest;
+      });
+      persistNow();
+    },
     setCwd: (wsId, cwd) => {
       const next = stripTrailingSlash(cwd);
       updateWs(wsId, (w) => ({ ...w, cwd: next }));
@@ -555,7 +580,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     // --- groupes ---
     addGroup: (name, color) => {
       const id = uid("grp");
-      const c = color ?? PALETTE[colorIndex % PALETTE.length];
+      const c = color ?? defaultGroupColor(colorIndex);
       if (color === undefined) colorIndex++;
       set((s) => ({
         groups: [...s.groups, { id, name: name.trim() || "Groupe", color: c, collapsed: false }],
@@ -610,7 +635,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         // tabCount vient du disque : au moins 1 (plus de borne haute, la barre est libre).
         const tabCount = Math.max(1, Math.floor(e.tabCount) || 1);
         const groupId = e.groupIndex === null ? null : (groups[e.groupIndex]?.id ?? null);
-        return newWorkspace(e.cwd, e.name, tabCount, groupId);
+        return newWorkspace(e.cwd, e.name, tabCount, groupId, e.color);
       });
       // Concaténation (jamais remplacement) : un workspace créé pendant la fenêtre des
       // invoke dir_exists du boot (bouton +, commande socket new-workspace) ne doit pas

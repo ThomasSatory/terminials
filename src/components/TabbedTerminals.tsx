@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Workspace } from "../store/workspace";
 import { useWorkspaceStore } from "../store/workspace";
-import { ATTENTION_COLOR } from "../lib/palette";
+import { ATTENTION_COLOR, identityColor } from "../lib/palette";
 import { closePty } from "../lib/pty";
 import { dropBoundary, finalIndex, type RowRect } from "../lib/reorder";
 import { focusTab } from "../lib/tabFocus";
@@ -40,9 +40,10 @@ export function TabbedTerminals({ ws, visible }: { ws: Workspace; visible: boole
   const closeTab = useWorkspaceStore((s) => s.closeTab);
   const addTab = useWorkspaceStore((s) => s.addTab);
   const moveTab = useWorkspaceStore((s) => s.moveTab);
-  // Couleur d'accent de l'onglet actif : celle du GROUPE du workspace (il n'a
-  // plus de couleur propre), neutre hors-groupe.
-  const accent = useWorkspaceStore((s) => s.groups.find((g) => g.id === ws.groupId)?.color ?? "#5a5a5a");
+  // Couleur d'accent de l'onglet actif : couleur propre du workspace, sinon celle
+  // de son groupe, neutre sinon.
+  const group = useWorkspaceStore((s) => s.groups.find((g) => g.id === ws.groupId));
+  const accent = identityColor(ws, group) ?? "#5a5a5a";
   const [hoverId, setHoverId] = useState<string | null>(null);
 
   // Focus du terminal quand l'onglet actif change (clic, Alt+←/→, nouvel onglet) :

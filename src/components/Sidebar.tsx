@@ -8,7 +8,13 @@ import {
   type Workspace,
 } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
-import { PALETTE, ATTENTION_COLOR, STATUS_DEFAULT_COLOR } from "../lib/palette";
+import {
+  SIDEBAR_COLORS,
+  ATTENTION_COLOR,
+  STATUS_DEFAULT_COLOR,
+  defaultGroupColor,
+  identityColor,
+} from "../lib/palette";
 import { abbreviateHome } from "../lib/paths";
 import { openFolderDialog } from "../lib/openFolder";
 import { closePty } from "../lib/pty";
@@ -34,8 +40,7 @@ const DRAG_THRESHOLD = 4;
 /** Indentation des workspaces membres d'un groupe (filet vertical à gauche). */
 const GROUP_INDENT = 12;
 
-/** Pastille d'identité : elle porte la couleur du GROUPE (un workspace n'a plus
-    de couleur propre), ou ce gris hors-groupe. */
+/** Pastille d'identité d'un workspace sans couleur propre ni groupe. */
 const NO_GROUP_DOT = "#5a5a5a";
 
 /** Diamètre de la pastille, et décalage des lignes secondaires (chemin, méta)
@@ -70,6 +75,7 @@ export function Sidebar() {
     closeWorkspace,
     tabPtys,
     renameWorkspace,
+    setWorkspaceColor,
     setCwd,
     addWorkspace,
     duplicateWorkspace,
@@ -280,6 +286,9 @@ export function Sidebar() {
     },
     { label: "Dupliquer", run: () => duplicateWorkspace(w.id) },
     { separator: true },
+    { swatches: SIDEBAR_COLORS, current: w.color, pick: (hex) => setWorkspaceColor(w.id, hex) },
+    ...(w.color ? [{ label: "Retirer la couleur", run: () => setWorkspaceColor(w.id, null) }] : []),
+    { separator: true },
     { label: "Fermer", shortcut: "Ctrl+Maj+Q", run: () => closeWs(w) },
   ];
 
@@ -300,6 +309,8 @@ export function Sidebar() {
         setEditingGroupId(g.id);
       },
     },
+    { separator: true },
+    { swatches: SIDEBAR_COLORS, current: g.color, pick: (hex) => setGroupColor(g.id, hex) },
     { separator: true },
     // Dissoudre ne ferme aucun terminal : les workspaces redeviennent hors-groupe.
     { label: "Dissoudre le groupe", run: () => removeGroup(g.id) },
@@ -455,16 +466,15 @@ export function Sidebar() {
             gap: 7,
           }}
         >
-          {/* Pastille d'identité : couleur du groupe, grise hors-groupe. Un
-              workspace n'a plus de couleur propre, il n'y a donc plus rien à
-              changer au clic. */}
+          {/* Pastille d'identité : couleur propre du workspace, sinon celle du
+              groupe, grise hors-groupe. Elle se change au clic droit. */}
           <span
             title={group ? group.name : undefined}
             style={{
               width: DOT,
               height: DOT,
               borderRadius: "50%",
-              background: group ? group.color : NO_GROUP_DOT,
+              background: identityColor(w, group) ?? NO_GROUP_DOT,
               flexShrink: 0,
               boxShadow: hasAttention(w) ? `0 0 0 3px ${ATTENTION_COLOR}40` : "none",
             }}
@@ -677,7 +687,7 @@ export function Sidebar() {
         <div style={{ display: "flex", padding: "7px 10px", margin: "1px 6px" }}>
           <GroupForm
             initialName=""
-            initialColor={PALETTE[groups.length % PALETTE.length]}
+            initialColor={defaultGroupColor(groups.length)}
             onCommit={(r) => {
               addGroup(r.name, r.color);
               setCreatingGroup(false);
