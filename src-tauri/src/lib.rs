@@ -153,6 +153,13 @@ fn workspace_ports(reg: State<'_, Arc<PtyRegistry>>, pty_id: PtyId) -> Vec<u16> 
     }
 }
 
+/// Dossier courant du shell d'un PTY : un nouvel onglet démarre là.
+#[tauri::command]
+fn pty_cwd(reg: State<'_, Arc<PtyRegistry>>, pty_id: PtyId) -> Option<String> {
+    let pid = reg.handles.lock().unwrap().get(&pty_id)?.pid?;
+    terminials_core::cwd::process_cwd(pid)?.into_os_string().into_string().ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -172,6 +179,7 @@ pub fn run() {
             git_file_diff,
             dir_exists,
             workspace_ports,
+            pty_cwd,
             images::save_pasted_image,
             activity::activity_register_workspaces,
             activity::activity_collect_now,

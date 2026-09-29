@@ -60,6 +60,22 @@ describe("workspace store", () => {
     expect(ws(id)).not.toHaveProperty("color");
   });
 
+  it("addTab garde le dossier de départ demandé, et n'en pose pas sinon", () => {
+    const id = store().addWorkspace("/a");
+    const t1 = store().addTab(id, "/a/front");
+    const t2 = store().addTab(id);
+    expect(ws(id).tabs.find((t) => t.id === t1)?.cwd).toBe("/a/front");
+    expect(ws(id).tabs.find((t) => t.id === t2)).not.toHaveProperty("cwd");
+  });
+
+  it("setCwd renvoie tous les onglets au nouveau dossier du workspace", () => {
+    const id = store().addWorkspace("/a");
+    store().addTab(id, "/a/front");
+    store().setCwd(id, "/b");
+    expect(ws(id).cwd).toBe("/b");
+    for (const t of ws(id).tabs) expect(t).not.toHaveProperty("cwd");
+  });
+
   it("addTab n'a pas de limite et rend le nouvel onglet actif", () => {
     const id = store().addWorkspace("/tmp");
     for (let i = 0; i < 6; i++) store().addTab(id);
@@ -746,6 +762,17 @@ describe("persistance v5", () => {
       JSON.stringify({ groups: [], workspaces: [{ cwd: "/old", name: "o", tabCount: 1, groupIndex: null }] }),
     );
     expect(loadSavedState().workspaces.map((e) => e.cwd)).toEqual(["/a"]);
+  });
+
+  it("le dossier de départ d'un onglet n'est pas persisté", () => {
+    const id = store().addWorkspace("/a");
+    store().addTab(id, "/a/front");
+    expect(JSON.parse(localStorage.getItem(V5_KEY)!).workspaces[0]).toEqual({
+      cwd: "/a",
+      name: "a",
+      tabCount: 2,
+      groupIndex: null,
+    });
   });
 
   it("la couleur propre est écrite en v5, et omise sans couleur", () => {

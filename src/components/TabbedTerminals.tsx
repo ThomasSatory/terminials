@@ -5,6 +5,7 @@ import { ATTENTION_COLOR, identityColor } from "../lib/palette";
 import { closePty } from "../lib/pty";
 import { dropBoundary, finalIndex, type RowRect } from "../lib/reorder";
 import { focusTab } from "../lib/tabFocus";
+import { openTab } from "../lib/newTab";
 import { TerminalPane } from "./TerminalPane";
 
 export const TAB_BAR_HEIGHT = 28;
@@ -38,7 +39,6 @@ const TAB_CLOSE: CSSProperties = {
 export function TabbedTerminals({ ws, visible }: { ws: Workspace; visible: boolean }) {
   const setActiveTab = useWorkspaceStore((s) => s.setActiveTab);
   const closeTab = useWorkspaceStore((s) => s.closeTab);
-  const addTab = useWorkspaceStore((s) => s.addTab);
   const moveTab = useWorkspaceStore((s) => s.moveTab);
   // Couleur d'accent de l'onglet actif : couleur propre du workspace, sinon celle
   // de son groupe, neutre sinon.
@@ -224,7 +224,7 @@ export function TabbedTerminals({ ws, visible }: { ws: Workspace; visible: boole
         )}
         <button
           className="icon-btn"
-          onClick={() => addTab(ws.id)}
+          onClick={() => void openTab(ws.id)}
           title="Nouvel onglet (Ctrl+Shift+T)"
           style={{ width: TAB_BAR_HEIGHT, height: TAB_BAR_HEIGHT, borderRadius: 0, flexShrink: 0 }}
         >
@@ -247,7 +247,7 @@ export function TabbedTerminals({ ws, visible }: { ws: Workspace; visible: boole
                 visibility: shown ? "visible" : "hidden",
               }}
             >
-              <TerminalPane wsId={ws.id} tabId={tab.id} cwd={ws.cwd} visible={shown} />
+              <TerminalPane wsId={ws.id} tabId={tab.id} cwd={tab.cwd ?? ws.cwd} visible={shown} />
             </div>
           );
         })}

@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Mocks des modules à effets de bord (IPC Tauri, dialog natif GTK).
-vi.mock("./pty", () => ({ closePty: vi.fn() }));
+vi.mock("./pty", () => ({ closePty: vi.fn(), ptyCwd: vi.fn(() => Promise.resolve(null)) }));
 vi.mock("./openFolder", () => ({ openFolderDialog: vi.fn(() => Promise.resolve()) }));
 
 import { dispatchShortcut } from "./shortcutDispatch";
-import { closePty } from "./pty";
+import { closePty, ptyCwd } from "./pty";
 import { openFolderDialog } from "./openFolder";
 import { registerTabFocus, unregisterTabFocus } from "./tabFocus";
 import { useWorkspaceStore, sidebarOrder } from "../store/workspace";
@@ -60,12 +60,22 @@ describe("dispatchShortcut", () => {
     expect(store().groups[0].collapsed).toBe(true);
   });
 
-  it("new-tab ajoute un onglet actif au workspace actif, sans limite", () => {
+  it("new-tab ajoute un onglet actif au workspace actif, sans limite", async () => {
     const id = store().addWorkspace("/a");
     for (let i = 0; i < 5; i++) dispatchShortcut({ type: "new-tab" });
-    expect(ws(id).tabs).toHaveLength(6);
+    await vi.waitFor(() => expect(ws(id).tabs).toHaveLength(6));
     expect(ws(id).activeTabId).toBe(tabIds(id)[5]);
     expect(store().toast).toBeNull();
+  });
+
+  it("new-tab ouvre l'onglet dans le dossier courant du shell de l'onglet actif", async () => {
+    const id = store().addWorkspace("/a");
+    store().setTabPty(tabIds(id)[0], 3);
+    vi.mocked(ptyCwd).mockResolvedValueOnce("/a/sous-dossier");
+    dispatchShortcut({ type: "new-tab" });
+    await vi.waitFor(() => expect(ws(id).tabs).toHaveLength(2));
+    expect(ws(id).tabs[1].cwd).toBe("/a/sous-dossier");
+    expect(ptyCwd).toHaveBeenCalledWith(3);
   });
 
   it("close-tab ferme l'onglet actif ; sur le dernier, ferme les PTYs et le workspace", () => {

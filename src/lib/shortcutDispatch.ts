@@ -2,6 +2,7 @@ import { closePty } from "./pty";
 import { openFolderDialog } from "./openFolder";
 import { addHomeWorkspace } from "./homeWorkspace";
 import { focusTab } from "./tabFocus";
+import { openTab } from "./newTab";
 import type { ShortcutAction } from "./shortcuts";
 import { useWorkspaceStore, navigableOrder, type Workspace } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
@@ -44,14 +45,9 @@ export function dispatchShortcut(action: ShortcutAction): void {
     case "toggle-group":
       if (active?.groupId) s.toggleGroupCollapsed(active.groupId);
       return;
-    case "new-tab": {
-      if (!active) return;
-      const tabId = s.addTab(active.id);
-      // Le TerminalPane n'existe pas encore : le focus se fera à son montage
-      // (TabbedTerminals focus l'onglet actif quand il change).
-      focusTab(tabId);
+    case "new-tab":
+      if (active) void openTab(active.id);
       return;
-    }
     case "close-tab":
       if (!active?.activeTabId) return;
       // Dernier onglet = fermeture du workspace : on ferme explicitement ses PTYs

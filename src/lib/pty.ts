@@ -35,6 +35,11 @@ export async function spawnPty(
   };
 }
 
+/** Dossier courant du shell d'un PTY ; null s'il est illisible (shell terminé, pas de /proc). */
+export function ptyCwd(id: number): Promise<string | null> {
+  return invoke<string | null>("pty_cwd", { ptyId: id });
+}
+
 /** Ferme un PTY côté backend (le shell est tué, le thread lecteur se termine). */
 export function closePty(id: number): void {
   void invoke("close_pty", { id });

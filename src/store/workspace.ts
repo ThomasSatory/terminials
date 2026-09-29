@@ -13,6 +13,8 @@ export interface Notification {
 export interface Tab {
   id: string;
   title?: string;
+  /** Dossier de départ, jamais persisté ; absent, celui du workspace. */
+  cwd?: string;
 }
 
 /** Groupe de workspaces : simple étiquette repliable (nom + couleur), sans dossier. */
@@ -85,7 +87,7 @@ interface WorkspaceState {
       pas : la copie démarre des shells neufs. null si `wsId` est inconnu. */
   duplicateWorkspace: (wsId: string) => string | null;
   /** Nouvel onglet, rendu actif. Jamais refusé. */
-  addTab: (wsId: string) => string;
+  addTab: (wsId: string, cwd?: string) => string;
   /** Ferme un onglet ; fermer le DERNIER ferme le workspace (comme closeWorkspace). */
   closeTab: (wsId: string, tabId: string) => void;
   closeWorkspace: (wsId: string) => void;
@@ -397,8 +399,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       persistNow();
       return copy.id;
     },
-    addTab: (wsId) => {
-      const tab: Tab = { id: uid("tab") };
+    addTab: (wsId, cwd) => {
+      const tab: Tab = cwd ? { id: uid("tab"), cwd } : { id: uid("tab") };
       updateWs(wsId, (w) => ({ ...w, tabs: [...w.tabs, tab], activeTabId: tab.id }));
       persistNow();
       return tab.id;
@@ -500,7 +502,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
     setCwd: (wsId, cwd) => {
       const next = stripTrailingSlash(cwd);
-      updateWs(wsId, (w) => ({ ...w, cwd: next }));
+      updateWs(wsId, (w) => ({ ...w, cwd: next, tabs: w.tabs.map(({ cwd: _start, ...t }) => t) }));
       persistNow();
     },
     setNotification: (wsId, n, tabId) =>
