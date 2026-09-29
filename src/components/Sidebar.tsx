@@ -93,7 +93,8 @@ export function Sidebar() {
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
   // Formulaires de création ouverts en bas de liste (rien n'est créé tant qu'ils
   // ne sont pas validés : ni le + ni le + groupe ne créent silencieusement).
-  const [creating, setCreating] = useState(false);
+  // Hors groupe quand la création vient du clic droit dans la zone vide.
+  const [creating, setCreating] = useState<false | "groupe-actif" | "hors-groupe">(false);
   const [creatingGroup, setCreatingGroup] = useState(false);
   // Groupe dont l'en-tête a demandé « Nouveau workspace » : le formulaire de
   // création s'ouvre juste sous lui et le workspace naîtra dedans.
@@ -235,7 +236,7 @@ export function Sidebar() {
   useEffect(() => {
     if (!newWorkspaceRequested) return;
     closeForms();
-    setCreating(true);
+    setCreating("groupe-actif");
     useWorkspaceStore.getState().requestNewWorkspace(false);
   }, [newWorkspaceRequested]);
 
@@ -598,6 +599,14 @@ export function Sidebar() {
   return (
     <div
       ref={listRef}
+      onContextMenu={(e) => {
+        // Dans un champ de formulaire, le menu natif (couper, coller) reste le bon.
+        if (e.target instanceof HTMLElement && e.target.closest("input, textarea")) return;
+        openMenu(e, [
+          { label: "Nouveau workspace", run: () => setCreating("hors-groupe") },
+          { label: "Nouveau groupe", shortcut: "Ctrl+Maj+G", run: () => setCreatingGroup(true) },
+        ]);
+      }}
       style={{
         width: 240,
         background: "#141414",
@@ -676,7 +685,7 @@ export function Sidebar() {
             home={home}
             focusField="name"
             onCommit={(r) => {
-              addWorkspace(r.cwd, r.name);
+              addWorkspace(r.cwd, r.name, creating === "hors-groupe" ? null : undefined);
               setCreating(false);
             }}
             onCancel={() => setCreating(false)}
@@ -702,7 +711,7 @@ export function Sidebar() {
           className="icon-btn"
           onClick={() => {
             closeForms();
-            setCreating(true);
+            setCreating("groupe-actif");
           }}
           title="Nouvel espace : nom + dossier (Ctrl+Shift+N)"
         >

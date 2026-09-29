@@ -619,6 +619,12 @@ describe("création dans un groupe et duplication", () => {
     expect(store().activeId).toBe(copy);
   });
 
+  it("groupId null explicite : hors-groupe même si l'actif est groupé", () => {
+    const g = store().addGroup("g");
+    store().addWorkspace("/a", undefined, g);
+    expect(ws(store().addWorkspace("/b", undefined, null)).groupId).toBeNull();
+  });
+
   it("duplicateWorkspace copie la couleur propre", () => {
     const a = store().addWorkspace("/a");
     store().setWorkspaceColor(a, "#1565C0");

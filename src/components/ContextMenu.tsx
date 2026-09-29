@@ -35,9 +35,9 @@ export function menuHeight(items: MenuItem[]): number {
 }
 
 /**
- * Menu contextuel de la sidebar (clic droit sur un workspace ou un en-tête de
- * groupe). Seul point d'entrée des actions : il n'y a plus de boutons au survol
- * sur les lignes.
+ * Menu contextuel de la sidebar (clic droit sur un workspace, un en-tête de
+ * groupe ou la zone vide). Seul point d'entrée des actions : il n'y a plus de
+ * boutons au survol sur les lignes.
  *
  * Le voile plein écran ferme au clic à côté (et avale le clic pour qu'il
  * n'active pas la ligne qui se trouve dessous) ; Échap ferme aussi.
@@ -80,6 +80,8 @@ export function ContextMenu({
       }}
       onContextMenu={(e) => {
         e.preventDefault();
+        // Le menu est rendu dans la sidebar : sans ça, la zone vide rouvrirait le sien.
+        e.stopPropagation();
         onClose();
       }}
       style={{ position: "fixed", inset: 0, zIndex: 1000 }}
