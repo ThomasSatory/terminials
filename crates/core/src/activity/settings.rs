@@ -63,6 +63,35 @@ pub enum ClickupSource {
 pub struct ClickupSettings {
     pub source: ClickupSource,
     pub token: String,
+    /// Listes ClickUp à suivre pour « Reste à faire », par identifiant ou par
+    /// URL (`…/v/l/li/<id>`). Vide : les listes de sprint dont la période
+    /// (`API 180 (8/25 - 9/21)`) contient le jour. Utile quand l'équipe ne
+    /// travaille pas en sprints datés. Voie MCP seulement.
+    pub listes: Vec<String>,
+}
+
+impl ClickupSettings {
+    /// Identifiants des listes suivies, dans l'ordre, sans doublon ni entrée
+    /// illisible. Pur.
+    pub fn ids_listes(&self) -> Vec<String> {
+        let mut ids: Vec<String> = Vec::new();
+        for id in self.listes.iter().filter_map(|l| id_liste(l)) {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        ids
+    }
+}
+
+/// `"1234"` ou `"https://app.clickup.com/9/v/l/li/1234?x=y"` → `"1234"`. Pur.
+pub fn id_liste(saisie: &str) -> Option<String> {
+    let s = saisie.trim();
+    let id = match s.find("/li/") {
+        Some(i) => s[i + 4..].split(['/', '?', '#']).next().unwrap_or(""),
+        None => s,
+    };
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_digit())).then(|| id.to_string())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,6 +216,32 @@ pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn id_liste_accepte_l_identifiant_ou_l_url() {
+        assert_eq!(id_liste(" 1234 ").as_deref(), Some("1234"));
+        assert_eq!(id_liste("https://app.clickup.com/9/v/l/li/1234").as_deref(), Some("1234"));
+        assert_eq!(id_liste("https://app.clickup.com/9/v/l/li/1234?pr=1").as_deref(), Some("1234"));
+        assert_eq!(id_liste("https://app.clickup.com/9/v/l/li/1234/"), Some("1234".into()));
+        assert_eq!(id_liste(""), None);
+        assert_eq!(id_liste("Sprint 42"), None);
+        assert_eq!(id_liste("https://app.clickup.com/t/abc"), None);
+    }
+
+    #[test]
+    fn ids_listes_sans_doublon_ni_entree_illisible() {
+        let c = ClickupSettings {
+            listes: vec!["12".into(), "n'importe quoi".into(), "https://x/v/l/li/12".into(), "34".into()],
+            ..Default::default()
+        };
+        assert_eq!(c.ids_listes(), vec!["12".to_string(), "34".to_string()]);
+    }
+
+    #[test]
+    fn listes_absentes_du_fichier_valent_vide() {
+        let s: Settings = serde_json::from_str(r#"{"clickup":{"source":"claude_mcp"}}"#).unwrap();
+        assert!(s.clickup.listes.is_empty());
+    }
     #[test]
     fn defauts_sur_claude_cli_en_gardant_les_champs_gemma() {
         let s = Settings::default();

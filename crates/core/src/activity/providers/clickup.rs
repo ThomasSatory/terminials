@@ -77,7 +77,7 @@ pub fn from_settings(s: &ClickupSettings) -> Option<Box<dyn ClickupSource>> {
         SourceReglee::Off => None,
         SourceReglee::Api if s.token.is_empty() => None,
         SourceReglee::Api => Some(Box::new(ClickupClient::new(&s.token))),
-        SourceReglee::ClaudeMcp => Some(Box::new(ClickupMcp::default())),
+        SourceReglee::ClaudeMcp => Some(Box::new(ClickupMcp { listes: s.ids_listes(), ..Default::default() })),
     }
 }
 
@@ -223,11 +223,14 @@ impl ClickupClient {
 pub struct ClickupMcp {
     pub binary: String,
     pub timeout: Duration,
+    /// Identifiants des listes suivies (réglage `clickup.listes`). Vide : les
+    /// listes de sprint du jour, reconnues à la période de leur nom.
+    pub listes: Vec<String>,
 }
 
 impl Default for ClickupMcp {
     fn default() -> Self {
-        ClickupMcp { binary: "claude".to_string(), timeout: DELAI_MCP }
+        ClickupMcp { binary: "claude".to_string(), timeout: DELAI_MCP, listes: Vec::new() }
     }
 }
 
@@ -252,12 +255,19 @@ pub const ARGS_MCP: [&str; 7] = [
 /// qu'un filtre par liste ne les retrouve pas — seule la recherche par
 /// emplacement les voit. `retenir_us` revérifie ensuite type et sprint sur la
 /// réponse, le prompt n'est pas le seul garde-fou.
-pub fn prompt_mcp(q: &ClickupQuery, aujourd_hui: NaiveDate) -> String {
+///
+/// Avec des `listes` explicites, le périmètre est ces listes-là, tous types de
+/// tâche confondus : une équipe sans sprints datés ni types « Story » n'aurait
+/// sinon jamais rien dans « Reste à faire ».
+pub fn prompt_mcp(q: &ClickupQuery, aujourd_hui: NaiveDate, listes: &[String]) -> String {
     let resolus = if q.resolve_ids.is_empty() {
         "aucun identifiant n'est demandé, rends une liste vide".to_string()
     } else {
         format!("les tâches dont voici les identifiants : {}", q.resolve_ids.join(", "))
     };
+    if !listes.is_empty() {
+        return prompt_mcp_listes(q, aujourd_hui, listes, &resolus);
+    }
     format!(
         "Tu as accès aux outils MCP ClickUp. Réponds UNIQUEMENT avec un objet JSON, \
 sans texte autour ni balises markdown.\n\n\
@@ -297,6 +307,49 @@ Chaque tâche est un objet plat :\n\
 période comprise (« API 180 (8/25 - 9/21) ») ; `null` pour \"updated\" et \"resolved\".",
         date = aujourd_hui.format("%d/%m/%Y"),
         max = MAX_TACHES,
+        since = q.updated_since_ms,
+        resolus = resolus,
+    )
+}
+
+/// Variante de `prompt_mcp` pour des listes désignées par leur identifiant. Pur.
+fn prompt_mcp_listes(q: &ClickupQuery, aujourd_hui: NaiveDate, listes: &[String], resolus: &str) -> String {
+    format!(
+        "Tu as accès aux outils MCP ClickUp. Réponds UNIQUEMENT avec un objet JSON, \
+sans texte autour ni balises markdown.\n\n\
+Nous sommes le {date}.\n\n\
+Trois listes à remplir :\n\
+- \"open\" : MES tâches des listes ClickUp suivies, non terminées, au plus {max}. \
+Marche à suivre, à respecter :\n\
+  1. Les listes suivies sont celles dont voici les identifiants : {listes}.\n\
+  2. Pour chacune, cherche les tâches qui m'y sont assignées par une recherche \
+filtrée sur l'emplacement de la liste et sur mon identifiant d'assigné : elle rend \
+aussi les tâches rattachées à la liste sans y vivre, qu'un filtre par liste manquerait.\n\
+  3. Garde TOUS les types de tâche, y compris le type par défaut « Tâche » (souvent \
+rendu `null`). Écarte seulement la tâche de réunion décrite plus bas.\n\
+  4. Écarte les tâches fermées ou terminées.\n\
+- \"updated\" : mes tâches modifiées depuis l'instant {since} (epoch millisecondes), \
+tâches fermées incluses, au plus {max}. Aucun filtre de liste ni de type ici : \
+cette liste alimente la chronologie.\n\
+- \"resolved\" : {resolus}, tâches fermées incluses. Aucun filtre non plus.\n\n\
+Et un objet seul :\n\
+- \"reunion\" : dans les listes suivies, la tâche dont le type ClickUp est « Réunion » \
+(à défaut, celle qui s'intitule « Réunions » ou « Réunion »), QUEL QUE SOIT son \
+assigné. `null` si aucune.\n\n\
+Forme exacte de la réponse :\n\
+{{\"open\":[…],\"updated\":[…],\"resolved\":[…],\"reunion\":{{…}} ou null}}\n\
+Chaque tâche est un objet plat :\n\
+{{\"id\":\"…\",\"name\":\"…\",\"status\":\"…\",\"closed\":true ou false,\"url\":\"…\",\
+\"dueDate\":epoch millisecondes ou null,\"priority\":\"…\" ou null,\"listName\":\"…\" ou null,\
+\"taskType\":\"…\" ou null,\"sprint\":\"…\" ou null,\"updatedAt\":epoch millisecondes}}\n\
+`id` est l'identifiant personnalisé de la tâche (« ABC-123 ») quand elle en a un.\n\
+`closed` vaut true si le statut de la tâche est un statut fermé ou terminé.\n\
+`taskType` est le nom du type ClickUp de la tâche, `null` pour le type par défaut.\n\
+`sprint` est le nom de la liste suivie où la tâche a été trouvée ; `null` pour \
+\"updated\" et \"resolved\".",
+        date = aujourd_hui.format("%d/%m/%Y"),
+        max = MAX_TACHES,
+        listes = listes.join(", "),
         since = q.updated_since_ms,
         resolus = resolus,
     )
@@ -344,17 +397,24 @@ impl ClickupSource for ClickupMcp {
     fn fetch(&self, q: &ClickupQuery) -> Result<ClickupBatch, ClickupError> {
         let args: Vec<&str> = ARGS_MCP.to_vec();
         let aujourd_hui = Local::now().date_naive();
-        let sortie = run_claude_p(&self.binary, &args, &prompt_mcp(q, aujourd_hui), self.timeout).map_err(|e| match e {
+        let prompt = prompt_mcp(q, aujourd_hui, &self.listes);
+        let sortie = run_claude_p(&self.binary, &args, &prompt, self.timeout).map_err(|e| match e {
             ClaudeProcessError::Spawn(msg) => ClickupError::Network(format!("claude introuvable : {msg}")),
             ClaudeProcessError::Timeout => ClickupError::Network("claude -p : délai dépassé".to_string()),
             ClaudeProcessError::Failed { code, stderr } => ClickupError::Http { status: code.max(0) as u16, body: stderr },
         })?;
         let mut batch = parse_batch(&sortie)?;
-        batch.open = retenir_us(batch.open, aujourd_hui, true);
-        // Même garde-fou que pour les US : une réunion d'un autre sprint est écartée.
-        batch.reunion = batch
-            .reunion
-            .filter(|t| t.sprint.as_deref().is_some_and(|s| est_sprint_actuel(s, aujourd_hui)));
+        if self.listes.is_empty() {
+            batch.open = retenir_us(batch.open, aujourd_hui, true);
+            // Même garde-fou que pour les US : une réunion d'un autre sprint est écartée.
+            batch.reunion = batch
+                .reunion
+                .filter(|t| t.sprint.as_deref().is_some_and(|s| est_sprint_actuel(s, aujourd_hui)));
+        } else {
+            batch.reunion = batch.reunion.filter(|t| t.sprint.is_some());
+            let reunion = batch.reunion.as_ref().map(|r| r.id.clone());
+            batch.open = retenir_taches_listes(batch.open, reunion.as_deref());
+        }
         Ok(batch)
     }
 
@@ -419,6 +479,19 @@ pub fn retenir_us(taches: Vec<RawTask>, aujourd_hui: NaiveDate, exiger_sprint: b
             !exiger_sprint
                 || t.sprint.as_deref().is_some_and(|s| est_sprint_actuel(s, aujourd_hui))
         })
+        .collect()
+}
+
+/// Pendant de `retenir_us` pour des listes suivies explicitement : tous les
+/// types passent, mais la tâche doit venir d'une liste suivie (`sprint`
+/// renseigné), être ouverte et ne pas être la tâche de réunion — elle ne sert
+/// qu'à la saisie des temps. Pur.
+pub fn retenir_taches_listes(taches: Vec<RawTask>, reunion: Option<&str>) -> Vec<RawTask> {
+    taches
+        .into_iter()
+        .filter(|t| t.sprint.is_some())
+        .filter(|t| t.status_type != "closed")
+        .filter(|t| Some(t.id.as_str()) != reunion)
         .collect()
 }
 
@@ -561,7 +634,7 @@ mod tests {
 
     #[test]
     fn prompt_mcp_annonce_les_trois_listes_la_borne_et_les_identifiants() {
-        let p = prompt_mcp(&requete(), jour_test());
+        let p = prompt_mcp(&requete(), jour_test(), &[]);
         assert!(p.contains("\"open\"") && p.contains("\"updated\"") && p.contains("\"resolved\""), "{p}");
         assert!(p.contains("1789000000000"), "la borne de modification doit être dans le prompt : {p}");
         assert!(p.contains("86cx00001") && p.contains("86cx00002"), "{p}");
@@ -655,7 +728,7 @@ mod tests {
 
     #[test]
     fn prompt_mcp_cadre_le_perimetre_sprint_et_le_type() {
-        let p = prompt_mcp(&requete(), jour_test());
+        let p = prompt_mcp(&requete(), jour_test(), &[]);
         assert!(p.contains("21/09/2026"), "la date du jour doit être dans le prompt : {p}");
         assert!(p.contains("taskType") && p.contains("sprint"), "{p}");
         assert!(p.to_lowercase().contains("sprint en cours"), "{p}");
@@ -663,8 +736,46 @@ mod tests {
     }
 
     #[test]
+    fn prompt_mcp_avec_listes_suivies_les_nomme_et_garde_tous_les_types() {
+        let p = prompt_mcp(&requete(), jour_test(), &["111".to_string(), "222".to_string()]);
+        assert!(p.contains("111, 222"), "{p}");
+        assert!(p.contains("TOUS les types"), "{p}");
+        assert!(!p.contains("API 180"), "pas de recette de sprint daté : {p}");
+        assert!(p.contains("\"reunion\""), "{p}");
+    }
+
+    #[test]
+    fn retenir_taches_listes_garde_tous_les_types_mais_pas_la_reunion() {
+        let liste = Some("Équipe");
+        let mut fermee = us("fermee", None, liste);
+        fermee.status_type = "closed".into();
+        let taches = vec![
+            us("tache", None, liste),
+            us("story", Some("Story"), liste),
+            us("reunion", None, liste),
+            us("ailleurs", None, None),
+            fermee,
+        ];
+        let ids: Vec<_> = retenir_taches_listes(taches, Some("reunion")).into_iter().map(|t| t.id).collect();
+        assert_eq!(ids, vec!["tache", "story"]);
+    }
+
+    #[test]
+    fn mcp_fetch_avec_listes_ne_filtre_ni_type_ni_periode() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = faux_claude(
+            dir.path(),
+            r#"cat > /dev/null; printf '{"open":[{"id":"1","name":"n","status":"en cours","closed":false,"url":"u","dueDate":null,"priority":null,"listName":null,"taskType":null,"sprint":"Équipe","updatedAt":1},{"id":"R","name":"Réunions","status":"en cours","closed":false,"url":"u","dueDate":null,"priority":null,"listName":null,"taskType":null,"sprint":"Équipe","updatedAt":1}],"updated":[],"resolved":[],"reunion":{"id":"R","name":"Réunions","status":"en cours","closed":false,"url":"u","dueDate":null,"priority":null,"listName":null,"taskType":null,"sprint":"Équipe","updatedAt":1}}'"#,
+        );
+        let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20), listes: vec!["42".into()] };
+        let b = fetch_reessaye(&mcp, &requete()).unwrap();
+        assert_eq!(b.open.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), vec!["1"]);
+        assert_eq!(b.reunion.map(|r| r.id), Some("R".to_string()));
+    }
+
+    #[test]
     fn prompt_mcp_sans_identifiant_a_resoudre_demande_une_liste_vide() {
-        let p = prompt_mcp(&ClickupQuery { updated_since_ms: 1, resolve_ids: vec![] }, jour_test());
+        let p = prompt_mcp(&ClickupQuery { updated_since_ms: 1, resolve_ids: vec![] }, jour_test(), &[]);
         assert!(p.to_lowercase().contains("vide"), "{p}");
     }
 
@@ -770,7 +881,7 @@ mod tests {
             dir.path(),
             r#"cat > /dev/null; printf '{"open":[{"id":"1","name":"%s","status":"s","closed":false,"url":"u","dueDate":null,"priority":null,"listName":null,"taskType":"Story","sprint":"TEST 1 (1/1 - 12/31)","updatedAt":1}],"updated":[],"resolved":[]}' "$*""#,
         );
-        let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20) };
+        let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20), ..Default::default() };
         let b = fetch_reessaye(&mcp, &requete()).unwrap();
         assert_eq!(b.open.len(), 1);
         let args = &b.open[0].name;
@@ -787,7 +898,7 @@ mod tests {
             dir.path(),
             r#"cat > /dev/null; echo 'Voici le résultat :'; echo '```json'; echo '{"open":[],"updated":[],"resolved":[]}'; echo '```'"#,
         );
-        let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20) };
+        let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20), ..Default::default() };
         assert_eq!(fetch_reessaye(&mcp, &requete()).unwrap(), ClickupBatch::default());
     }
 
@@ -795,17 +906,17 @@ mod tests {
     fn mcp_fetch_en_echec_rend_une_erreur() {
         let dir = tempfile::tempdir().unwrap();
         let bin = faux_claude(dir.path(), "cat > /dev/null; echo 'boum' >&2; exit 1");
-        let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20) };
+        let mcp = ClickupMcp { binary: bin, timeout: Duration::from_secs(20), ..Default::default() };
         assert!(matches!(fetch_reessaye(&mcp, &requete()), Err(ClickupError::Http { .. })));
 
-        let mcp = ClickupMcp { binary: "/nonexistent/claude".into(), timeout: Duration::from_secs(5) };
+        let mcp = ClickupMcp { binary: "/nonexistent/claude".into(), timeout: Duration::from_secs(5), ..Default::default() };
         assert!(matches!(mcp.fetch(&requete()), Err(ClickupError::Network(_))));
     }
 
     #[test]
     fn from_settings_choisit_la_source() {
         use crate::activity::settings::ClickupSource as S;
-        let source = |source, token: &str| from_settings(&ClickupSettings { source, token: token.into() }).map(|s| s.name());
+        let source = |source, token: &str| from_settings(&ClickupSettings { source, token: token.into(), ..Default::default() }).map(|s| s.name());
         assert_eq!(source(S::ClaudeMcp, ""), Some("clickup-mcp"));
         assert_eq!(source(S::Api, "pk_1"), Some("clickup-api"));
         assert_eq!(source(S::Api, ""), None, "clé API sans jeton : aucune source");

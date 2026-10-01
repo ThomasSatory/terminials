@@ -113,6 +113,8 @@ export type ClickupSource = "claude_mcp" | "api" | "off";
 export interface ClickupSettings {
   source: ClickupSource;
   token: string;
+  /** Listes suivies (identifiants ou URLs). Vide : les listes de sprint du jour. */
+  listes: string[];
 }
 
 export interface ActivitySettings {

@@ -10,10 +10,10 @@ import { clickupActif, type OpenTask, type Summary } from "../../lib/activityApi
 
 describe("clickupActif", () => {
   it("le MCP est actif sans jeton, la clé API exige un jeton, « off » n'est jamais actif", () => {
-    expect(clickupActif({ source: "claude_mcp", token: "" })).toBe(true);
-    expect(clickupActif({ source: "api", token: "" })).toBe(false);
-    expect(clickupActif({ source: "api", token: "pk_1" })).toBe(true);
-    expect(clickupActif({ source: "off", token: "pk_1" })).toBe(false);
+    expect(clickupActif({ source: "claude_mcp", token: "", listes: [] })).toBe(true);
+    expect(clickupActif({ source: "api", token: "", listes: [] })).toBe(false);
+    expect(clickupActif({ source: "api", token: "pk_1", listes: [] })).toBe(true);
+    expect(clickupActif({ source: "off", token: "pk_1", listes: [] })).toBe(false);
   });
 });
 

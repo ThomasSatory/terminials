@@ -236,10 +236,27 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       </label>
 
       {settings.clickup.source === "claude_mcp" && (
-        <p className="dash-settings-note">
-          Interroge ClickUp via claude -p (Sonnet), une fois par heure. Environ 1 à 2 minutes par
-          collecte.
-        </p>
+        <>
+          <p className="dash-settings-note">
+            Interroge ClickUp via claude -p (Sonnet), une fois par heure. Environ 1 à 2 minutes
+            par collecte.
+          </p>
+          <label>
+            Listes suivies
+            <textarea
+              className="dash-field"
+              rows={2}
+              placeholder="Une URL ou un identifiant de liste par ligne"
+              value={(settings.clickup.listes ?? []).join("\n")}
+              onChange={(e) =>
+                update({ clickup: { ...settings.clickup, listes: e.target.value.split("\n") } })
+              }
+            />
+          </label>
+          <p className="dash-settings-note">
+            Vide : les listes de sprint dont la période contient le jour.
+          </p>
+        </>
       )}
 
       {settings.clickup.source === "api" && (
