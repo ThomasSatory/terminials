@@ -8,7 +8,8 @@
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "frontendDist": "../dist",
+    "beforeBundleCommand": "cargo build --release -p terminials-cli"
   },
   "app": {
     "windows": [
@@ -32,6 +33,13 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/bin/terminials": "../target/release/terminials"
+        }
+      }
+    }
   }
 }

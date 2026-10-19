@@ -20,6 +20,16 @@ Le but : rendre le travail des agents *observable*. Sidebar verticale de workspa
 
 Hors périmètre : splits (la grille 1→4 a été remplacée par les onglets), navigateur intégré, command palette.
 
+## Installation depuis une release (sans build)
+
+Chaque tag `v*` publie sur [les releases GitHub](https://github.com/ThomasSatory/terminials/releases) un `.deb` (GUI `terminials-app` + CLI `terminials`) et une archive des deux binaires bruts, buildés sous Ubuntu 22.04 :
+
+```bash
+sudo apt install ./terminials_<version>_amd64.deb   # installe aussi les dépendances (webkit2gtk…)
+```
+
+Pour publier une version : monter `version` dans `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` et `package.json`, puis `git tag v<version> && git push origin v<version>`.
+
 ## Prérequis (Ubuntu / Debian)
 
 ```bash

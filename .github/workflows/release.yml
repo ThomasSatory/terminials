@@ -1,0 +1,64 @@
+# Publie une release GitHub avec l'app déjà buildée, à chaque tag `v*`.
+#   git tag v0.2.0 && git push origin v0.2.0
+# Le tag doit correspondre à la version de src-tauri/tauri.conf.json.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    # 22.04 plutôt que latest : binaires liés à une glibc plus ancienne, donc
+    # installables sur plus de distributions.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier que le tag correspond à la version
+        run: |
+          version=$(jq -r .version src-tauri/tauri.conf.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME ≠ version v$version de tauri.conf.json"
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Dépendances système
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # rustup est préinstallé sur le runner : pas d'action tierce dans un job
+      # qui a le droit d'écrire les releases, ni de cache de build réutilisé.
+      - run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - run: npm ci
+
+      # Construit le front, la GUI et (beforeBundleCommand) la CLI, puis le .deb
+      # qui embarque les deux binaires.
+      - run: npm run tauri build
+
+      - name: Archive des binaires bruts
+        run: |
+          dir=terminials-$VERSION-linux-x86_64
+          mkdir "$dir"
+          cp target/release/terminials-app target/release/terminials "$dir/"
+          tar czf "$dir.tar.gz" "$dir"
+
+      - name: Publier la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --generate-notes --title "terminials $VERSION" \
+            target/release/bundle/deb/*.deb \
+            terminials-$VERSION-linux-x86_64.tar.gz
