@@ -33,6 +33,23 @@ case "$TYPE" in
       "Claude is waiting for your input"|"") MSG="Claude attend ta réponse" ;;
     esac
     terminials notify --title "$TITLE" --body "$MSG" >/dev/null 2>&1 ;;
+  SessionStart|SessionEnd)
+    # Reprise des sessions au relancement de l'app : l'onglet retient la session qui y tourne.
+    # Une session `claude -p` (entrypoint sdk-cli) n'est pas une session à reprendre.
+    [ "$CLAUDE_CODE_ENTRYPOINT" = "sdk-cli" ] && exit 0
+    SID=$(echo "$EVENT" | jq -r '.session_id // empty' 2>/dev/null)
+    [ -n "$SID" ] || exit 0
+    if [ "$TYPE" = "SessionStart" ]; then
+      [ -n "$CWD" ] && terminials claude-session --session-id "$SID" --cwd "$CWD" >/dev/null 2>&1
+    else
+      # Seule une sortie voulue (/exit, Ctrl+D, /logout) oublie la session. La fermeture de
+      # l'app tue Claude par SIGHUP, qui finit en reason=other : la session reste à reprendre.
+      REASON=$(echo "$EVENT" | jq -r '.reason // empty' 2>/dev/null)
+      case "$REASON" in
+        prompt_input_exit|logout)
+          terminials claude-session --session-id "$SID" --ended >/dev/null 2>&1 ;;
+      esac
+    fi ;;
 esac
 exit 0
 "#;

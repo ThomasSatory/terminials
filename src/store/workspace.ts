@@ -3,6 +3,7 @@ import { nextCopyName } from "../lib/copyName";
 import { basename, defaultGroupColor } from "../lib/palette";
 import { stripTrailingSlash } from "../lib/paths";
 import { moveItem } from "../lib/reorder";
+import { parseClaudeSession, type ClaudeSession } from "../lib/claudeResume";
 
 export interface Notification {
   title: string;
@@ -13,8 +14,14 @@ export interface Notification {
 export interface Tab {
   id: string;
   title?: string;
-  /** Dossier de départ, jamais persisté ; absent, celui du workspace. */
+  /** Dossier de départ, absent : celui du workspace. Persisté seulement via `claude`. */
   cwd?: string;
+  /** Session Claude Code en cours dans l'onglet (hook SessionStart), persistée : elle est
+      reprise au prochain lancement de l'app. */
+  claude?: ClaudeSession;
+  /** Id de session à reprendre au lancement du shell, posé par la restauration et
+      consommé une fois (un respawn par changement de dossier ne relance pas la reprise). */
+  pendingResume?: string;
 }
 
 /** Groupe de workspaces : simple étiquette repliable (nom + couleur), sans dossier. */
@@ -60,6 +67,9 @@ export type SavedWorkspace = {
   tabCount: number;
   groupIndex: number | null;
   color?: string;
+  /** Session Claude de chaque onglet, dans l'ordre des onglets (null = aucune). Omis quand
+      aucun onglet n'en porte : la sauvegarde reste celle des builds antérieurs. */
+  claudeSessions?: (ClaudeSession | null)[];
 };
 export type SavedState = { groups: SavedGroup[]; workspaces: SavedWorkspace[] };
 
@@ -99,6 +109,13 @@ interface WorkspaceState {
   /** Réordonne l'onglet `tabId` à l'index `toIndex` de la barre. */
   moveTab: (wsId: string, tabId: string, toIndex: number) => void;
   setTabTitle: (wsId: string, tabId: string, title: string) => void;
+  /** Une session Claude démarre dans l'onglet (hook SessionStart) : la dernière l'emporte. */
+  setTabClaudeSession: (wsId: string, tabId: string, session: ClaudeSession) => void;
+  /** L'utilisateur a quitté la session `sessionId` : l'onglet ne la reprendra pas. Une
+      autre session, démarrée depuis dans l'onglet, est conservée. */
+  endTabClaudeSession: (wsId: string, tabId: string, sessionId: string) => void;
+  /** Retire la reprise en attente de l'onglet, une fois la commande tapée dans son shell. */
+  consumePendingResume: (wsId: string, tabId: string) => void;
   renameWorkspace: (wsId: string, name: string) => void;
   /** null retire la couleur propre. */
   setWorkspaceColor: (wsId: string, color: string | null) => void;
@@ -160,7 +177,9 @@ function parseSavedWorkspace(e: unknown, groupCount: number, withColor = false):
   const groupIndex =
     typeof gi === "number" && Number.isInteger(gi) && gi >= 0 && gi < groupCount ? gi : null;
   const color = withColor && typeof e.color === "string" ? { color: e.color } : {};
-  return { cwd: e.cwd, name: e.name, tabCount: e.tabCount, groupIndex, ...color };
+  const sessions = Array.isArray(e.claudeSessions) ? e.claudeSessions.map(parseClaudeSession) : [];
+  const claude = sessions.some((x) => x !== null) ? { claudeSessions: sessions } : {};
+  return { cwd: e.cwd, name: e.name, tabCount: e.tabCount, groupIndex, ...color, ...claude };
 }
 
 function parseSavedGroup(g: unknown): SavedGroup | null {
@@ -249,12 +268,14 @@ function persist(workspaces: Workspace[], groups: Group[]): void {
       groups: groups.map((g) => ({ name: g.name, color: g.color, collapsed: g.collapsed })),
       workspaces: workspaces.map((w) => {
         const gi = groups.findIndex((g) => g.id === w.groupId);
+        const sessions = w.tabs.map((t) => t.claude ?? null);
         return {
           cwd: w.cwd,
           name: w.name,
           tabCount: w.tabs.length,
           groupIndex: gi === -1 ? null : gi,
           ...(w.color ? { color: w.color } : {}),
+          ...(sessions.some((x) => x !== null) ? { claudeSessions: sessions } : {}),
         };
       }),
     };
@@ -310,8 +331,16 @@ function newWorkspace(
   tabCount: number,
   groupId: string | null,
   color?: string,
+  claudeSessions: (ClaudeSession | null)[] = [],
 ): Workspace {
-  const tabs = Array.from({ length: tabCount }, (): Tab => ({ id: uid("tab") }));
+  // Un onglet restauré avec sa session Claude redémarre dans le dossier de la session
+  // et la reprend dès que son shell est lancé.
+  const tabs = Array.from({ length: tabCount }, (_, i): Tab => {
+    const claude = claudeSessions[i];
+    return claude
+      ? { id: uid("tab"), cwd: claude.cwd, claude, pendingResume: claude.id }
+      : { id: uid("tab") };
+  });
   return {
     id: uid("ws"),
     cwd,
@@ -334,6 +363,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   };
   const updateWs = (wsId: string, f: (w: Workspace) => Workspace) =>
     set((s) => ({ workspaces: s.workspaces.map((w) => (w.id === wsId ? f(w) : w)) }));
+  const updateTab = (wsId: string, tabId: string, f: (t: Tab) => Tab) =>
+    updateWs(wsId, (w) => ({ ...w, tabs: w.tabs.map((t) => (t.id === tabId ? f(t) : t)) }));
 
   /** Retire un workspace : purge ses PTY mappings, réactive un voisin dans l'ordre visible. */
   const removeWorkspace = (s: WorkspaceState, wsId: string): Partial<WorkspaceState> => {
@@ -466,7 +497,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
             : w,
         ),
       })),
-    moveTab: (wsId, tabId, toIndex) =>
+    moveTab: (wsId, tabId, toIndex) => {
       set((s) => {
         const w = s.workspaces.find((x) => x.id === wsId);
         if (!w) return {};
@@ -474,7 +505,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         const tabs = moveItem(w.tabs, from, toIndex);
         if (tabs === w.tabs) return {};
         return { workspaces: s.workspaces.map((x) => (x.id === wsId ? { ...x, tabs } : x)) };
-      }),
+      });
+      // Les sessions Claude sont sauvegardées dans l'ordre des onglets.
+      persistNow();
+    },
     setTabTitle: (wsId, tabId, title) =>
       set((s) => {
         const w = s.workspaces.find((x) => x.id === wsId);
@@ -489,6 +523,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           ),
         };
       }),
+    setTabClaudeSession: (wsId, tabId, session) => {
+      const tab = get().workspaces.find((w) => w.id === wsId)?.tabs.find((t) => t.id === tabId);
+      if (!tab || (tab.claude?.id === session.id && tab.claude.cwd === session.cwd)) return;
+      updateTab(wsId, tabId, (t) => ({ ...t, claude: session }));
+      persistNow();
+    },
+    endTabClaudeSession: (wsId, tabId, sessionId) => {
+      const tab = get().workspaces.find((w) => w.id === wsId)?.tabs.find((t) => t.id === tabId);
+      // Les hooks arrivent par des connexions socket distinctes : la fin de l'ancienne
+      // session (/clear) peut suivre le début de la nouvelle. On ne retire que la bonne.
+      if (tab?.claude?.id !== sessionId) return;
+      updateTab(wsId, tabId, ({ claude: _ended, ...t }) => t);
+      persistNow();
+    },
+    consumePendingResume: (wsId, tabId) =>
+      updateTab(wsId, tabId, ({ pendingResume: _done, ...t }) => t),
     renameWorkspace: (wsId, name) => {
       updateWs(wsId, (w) => ({ ...w, name: name.trim() || basename(w.cwd) }));
       persistNow();
@@ -637,7 +687,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         // tabCount vient du disque : au moins 1 (plus de borne haute, la barre est libre).
         const tabCount = Math.max(1, Math.floor(e.tabCount) || 1);
         const groupId = e.groupIndex === null ? null : (groups[e.groupIndex]?.id ?? null);
-        return newWorkspace(e.cwd, e.name, tabCount, groupId, e.color);
+        return newWorkspace(e.cwd, e.name, tabCount, groupId, e.color, e.claudeSessions);
       });
       // Concaténation (jamais remplacement) : un workspace créé pendant la fenêtre des
       // invoke dir_exists du boot (bouton +, commande socket new-workspace) ne doit pas

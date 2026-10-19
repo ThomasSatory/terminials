@@ -13,6 +13,7 @@ import { injectPaths } from "./lib/injectFiles";
 import { resolvePaneId, toCssPoint } from "./lib/dropTarget";
 import { activityApi } from "./lib/activityApi";
 import { useWorkspaceStore, loadSavedState } from "./store/workspace";
+import { keepExistingSessions } from "./lib/claudeResume";
 import { useDashboardStore } from "./store/dashboard";
 import { nextDelayMs, DIRTY_BUDGET, PORTS_BUDGET } from "./lib/pollSchedule";
 import "./App.css";
@@ -59,7 +60,15 @@ export default function App() {
           ),
         );
         if (cancelled) return;
-        const valid = saved.workspaces.filter((_, i) => checks[i]);
+        // Session Claude dont le dossier a disparu : l'onglet repart sans reprise.
+        const valid = await Promise.all(
+          saved.workspaces
+            .filter((_, i) => checks[i])
+            .map((entry) =>
+              keepExistingSessions(entry, (path) => invoke<boolean>("dir_exists", { path })),
+            ),
+        );
+        if (cancelled) return;
         const missing = saved.workspaces.filter((_, i) => !checks[i]);
         const s = useWorkspaceStore.getState();
         if (missing.length > 0) {

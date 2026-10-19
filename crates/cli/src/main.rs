@@ -40,6 +40,18 @@ enum Cmd {
         #[arg(long)]
         label: Option<String>,
     },
+    /// Signale la session Claude Code qui tourne dans l'onglet (hooks SessionStart / SessionEnd),
+    /// pour la reprendre au prochain lancement de l'app.
+    ClaudeSession {
+        #[arg(long)]
+        session_id: String,
+        /// Dossier de la session (requis au démarrage, `claude --resume` en dépend).
+        #[arg(long)]
+        cwd: Option<String>,
+        /// La session est terminée par l'utilisateur : ne plus la reprendre.
+        #[arg(long)]
+        ended: bool,
+    },
     /// Installe les hooks d'intégration (Claude Code).
     Hooks {
         #[command(subcommand)]
@@ -66,7 +78,9 @@ fn main() {
                     path.display()
                 );
                 println!("Ajoute ceci à ~/.claude/settings.json :");
-                println!("  \"hooks\": {{ \"Stop\": {entry}, \"Notification\": {entry} }}");
+                println!(
+                    "  \"hooks\": {{ \"Stop\": {entry}, \"Notification\": {entry}, \"SessionStart\": {entry}, \"SessionEnd\": {entry} }}"
+                );
             }
             Err(e) => {
                 eprintln!("échec installation hook : {e}");
@@ -92,6 +106,10 @@ fn main() {
         Cmd::SetProgress { value, label } => (
             "set-progress",
             with_workspace_id(serde_json::json!({"value": value, "label": label})),
+        ),
+        Cmd::ClaudeSession { session_id, cwd, ended } => (
+            "claude-session",
+            with_workspace_id(serde_json::json!({"sessionId": session_id, "cwd": cwd, "ended": ended})),
         ),
         Cmd::Hooks { .. } => unreachable!("traité plus haut"),
     };

@@ -1039,3 +1039,108 @@ describe("sondes idempotentes (git, ports)", () => {
     expect(store().workspaces).toBe(before);
   });
 });
+
+describe("sessions Claude par onglet", () => {
+  const V5_KEY = "terminials:workspaces:v5";
+  const SID = "6db82e10-f79a-44eb-a88f-8737db058caf";
+  const SID2 = "12ad1e7f-9d4e-4d50-bd20-a1a1bd004bed";
+  const saved = (): SavedState => JSON.parse(localStorage.getItem(V5_KEY)!) as SavedState;
+
+  beforeEach(() => {
+    (globalThis as { localStorage?: Storage }).localStorage = localStorageStub();
+    store().reset();
+  });
+
+  afterEach(() => {
+    delete (globalThis as { localStorage?: Storage }).localStorage;
+  });
+
+  it("la session d'un onglet est persistée dans l'ordre des onglets", () => {
+    const id = store().addWorkspace("/a");
+    store().addTab(id);
+    store().setTabClaudeSession(id, tabIds(id)[1], { id: SID, cwd: "/a/api" });
+    expect(saved().workspaces[0].claudeSessions).toEqual([null, { id: SID, cwd: "/a/api" }]);
+    store().moveTab(id, tabIds(id)[1], 0);
+    expect(saved().workspaces[0].claudeSessions).toEqual([{ id: SID, cwd: "/a/api" }, null]);
+  });
+
+  it("sans session, la sauvegarde garde sa forme antérieure", () => {
+    store().addWorkspace("/a");
+    expect(saved().workspaces[0]).not.toHaveProperty("claudeSessions");
+  });
+
+  it("la dernière session démarrée dans l'onglet l'emporte", () => {
+    const id = store().addWorkspace("/a");
+    const tab = tabIds(id)[0];
+    store().setTabClaudeSession(id, tab, { id: SID, cwd: "/a" });
+    store().setTabClaudeSession(id, tab, { id: SID2, cwd: "/a" });
+    expect(ws(id).tabs[0].claude?.id).toBe(SID2);
+  });
+
+  it("la fin d'une session ne retire que cette session", () => {
+    const id = store().addWorkspace("/a");
+    const tab = tabIds(id)[0];
+    store().setTabClaudeSession(id, tab, { id: SID2, cwd: "/a" });
+    // Fin tardive de l'ancienne session (/clear) : la nouvelle reste.
+    store().endTabClaudeSession(id, tab, SID);
+    expect(ws(id).tabs[0].claude?.id).toBe(SID2);
+    store().endTabClaudeSession(id, tab, SID2);
+    expect(ws(id).tabs[0].claude).toBeUndefined();
+    expect(saved().workspaces[0]).not.toHaveProperty("claudeSessions");
+  });
+
+  it("la restauration rouvre l'onglet dans le dossier de la session et arme la reprise", () => {
+    store().restoreState({
+      groups: [],
+      workspaces: [
+        { cwd: "/a", name: "a", tabCount: 2, groupIndex: null, claudeSessions: [null, { id: SID, cwd: "/a/api" }] },
+      ],
+    });
+    const [first, second] = store().workspaces[0].tabs;
+    expect(first.cwd).toBeUndefined();
+    expect(first.pendingResume).toBeUndefined();
+    expect(second).toMatchObject({ cwd: "/a/api", claude: { id: SID, cwd: "/a/api" }, pendingResume: SID });
+    // La session reste persistée : un nouvel arrêt de l'app la reprendra encore.
+    expect(saved().workspaces[0].claudeSessions).toEqual([null, { id: SID, cwd: "/a/api" }]);
+  });
+
+  it("consumePendingResume désarme la reprise sans oublier la session", () => {
+    store().restoreState({
+      groups: [],
+      workspaces: [{ cwd: "/a", name: "a", tabCount: 1, groupIndex: null, claudeSessions: [{ id: SID, cwd: "/a" }] }],
+    });
+    const w = store().workspaces[0];
+    store().consumePendingResume(w.id, w.tabs[0].id);
+    expect(ws(w.id).tabs[0].pendingResume).toBeUndefined();
+    expect(ws(w.id).tabs[0].claude?.id).toBe(SID);
+  });
+
+  it("loadSavedState écarte un id de session invalide", () => {
+    localStorage.setItem(
+      V5_KEY,
+      JSON.stringify({
+        groups: [],
+        workspaces: [
+          {
+            cwd: "/a",
+            name: "a",
+            tabCount: 2,
+            groupIndex: null,
+            claudeSessions: [{ id: "x; rm -rf ~", cwd: "/a" }, { id: SID, cwd: "/a" }],
+          },
+          { cwd: "/b", name: "b", tabCount: 1, groupIndex: null, claudeSessions: [{ id: "abc", cwd: "/b" }] },
+        ],
+      }),
+    );
+    const [a, b] = loadSavedState().workspaces;
+    expect(a.claudeSessions).toEqual([null, { id: SID, cwd: "/a" }]);
+    expect(b).not.toHaveProperty("claudeSessions");
+  });
+
+  it("un workspace dupliqué ne reprend pas la session de l'original", () => {
+    const id = store().addWorkspace("/a");
+    store().setTabClaudeSession(id, tabIds(id)[0], { id: SID, cwd: "/a" });
+    const copy = store().duplicateWorkspace(id)!;
+    expect(ws(copy).tabs[0].claude).toBeUndefined();
+  });
+});
