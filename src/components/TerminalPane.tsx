@@ -9,6 +9,7 @@ import { useWorkspaceStore } from "../store/workspace";
 import { matchShortcut } from "../lib/shortcuts";
 import { registerTabFocus, unregisterTabFocus } from "../lib/tabFocus";
 import { injectPaths, savePastedImage } from "../lib/injectFiles";
+import { resumeCommand } from "../lib/claudeResume";
 
 const SHELL = "/bin/bash";
 
@@ -121,7 +122,16 @@ export function TerminalPane({
         return;
       }
       pty = p;
-      useWorkspaceStore.getState().setTabPty(tabId, p.id);
+      const st = useWorkspaceStore.getState();
+      st.setTabPty(tabId, p.id);
+      // Onglet restauré avec une session Claude : la commande est tapée dans le shell, comme
+      // cmux. Le shell la lit dès qu'il est prêt et survit à la sortie de Claude.
+      const tab = st.workspaces.find((w) => w.id === wsId)?.tabs.find((t) => t.id === tabId);
+      if (tab?.pendingResume) {
+        const cmd = resumeCommand(tab.pendingResume);
+        if (cmd) p.write(cmd);
+        st.consumePendingResume(wsId, tabId);
+      }
       term.onData((d) => p.write(d));
       // Le shell est mort : on l'indique au lieu de laisser un terminal figé.
       listen<{ id: number }>("pty-exit", (e) => {

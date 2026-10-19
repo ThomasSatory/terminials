@@ -2,6 +2,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useWorkspaceStore } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
 import { coalesce } from "./coalesce";
+import { parseClaudeSession } from "./claudeResume";
 
 interface SocketCommand {
   method: string;
@@ -25,6 +26,23 @@ export function tabIdForPty(
 ): string | undefined {
   if (typeof ptyId !== "number") return undefined;
   return Object.entries(tabPtys).find(([, id]) => id === ptyId)?.[0];
+}
+
+/**
+ * Hook SessionStart / SessionEnd relayé par `terminials claude-session` : retient ou oublie
+ * la session Claude de l'onglet émetteur. Sans onglet identifiable (CLI lancée hors
+ * onglet, onglet fermé), ou avec un id de session invalide, rien n'est retenu.
+ */
+export function applyClaudeSession(wsId: string, params: Record<string, unknown>): void {
+  const s = useWorkspaceStore.getState();
+  const tabId = tabIdForPty(s.tabPtys, params.ptyId);
+  if (!tabId) return;
+  if (params.ended === true) {
+    if (typeof params.sessionId === "string") s.endTabClaudeSession(wsId, tabId, params.sessionId);
+    return;
+  }
+  const session = parseClaudeSession({ id: params.sessionId, cwd: params.cwd });
+  if (session) s.setTabClaudeSession(wsId, tabId, session);
 }
 
 /** Écoute les events émis par le backend (socket-command, agent-notification) → store. */
@@ -58,6 +76,9 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
         break;
       case "set-progress":
         if (target) s.setProgress(target.id, { value: params.value, label: params.label });
+        break;
+      case "claude-session":
+        if (target) applyClaudeSession(target.id, params);
         break;
       default:
         break;

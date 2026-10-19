@@ -60,3 +60,66 @@ fn notify_binary_joins_workspace_id_from_env() {
     assert!(line.contains("\"workspaceId\":\"ws-77\""), "ligne reçue: {line}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `terminials claude-session` (appelé par le hook SessionStart) envoie l'id de session,
+/// son dossier, et joint workspaceId + ptyId : le front retrouve ainsi l'onglet émetteur.
+#[test]
+fn claude_session_binary_sends_session_and_pty() {
+    let dir = std::env::temp_dir().join(format!("terminials-xdg-claude-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = UnixListener::bind(dir.join("terminials.sock")).unwrap();
+
+    let handle = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let mut w = stream;
+        w.write_all(b"{\"status\":\"ok\"}\n").unwrap();
+        line
+    });
+
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_terminials"))
+        .args(["claude-session", "--session-id", "6db82e10-f79a-44eb-a88f-8737db058caf", "--cwd", "/srv/app"])
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env("TERMINIALS_WORKSPACE_ID", "ws-9")
+        .env("TERMINIALS_PTY_ID", "3")
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let line = handle.join().unwrap();
+    let req: serde_json::Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(req["method"], "claude-session");
+    assert_eq!(req["params"]["sessionId"], "6db82e10-f79a-44eb-a88f-8737db058caf");
+    assert_eq!(req["params"]["cwd"], "/srv/app");
+    assert_eq!(req["params"]["ended"], false);
+    assert_eq!(req["params"]["workspaceId"], "ws-9");
+    assert_eq!(req["params"]["ptyId"], 3);
+
+    // Fin de session (hook SessionEnd) : `--ended` sans dossier.
+    let listener = UnixListener::bind(dir.join("terminials-end.sock")).unwrap();
+    std::fs::rename(dir.join("terminials-end.sock"), dir.join("terminials.sock")).unwrap();
+    let handle = thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let mut w = stream;
+        w.write_all(b"{\"status\":\"ok\"}\n").unwrap();
+        line
+    });
+    let status = std::process::Command::new(env!("CARGO_BIN_EXE_terminials"))
+        .args(["claude-session", "--session-id", "6db82e10-f79a-44eb-a88f-8737db058caf", "--ended"])
+        .env("XDG_RUNTIME_DIR", &dir)
+        .env("TERMINIALS_WORKSPACE_ID", "ws-9")
+        .env("TERMINIALS_PTY_ID", "3")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let req: serde_json::Value = serde_json::from_str(&handle.join().unwrap()).unwrap();
+    assert_eq!(req["params"]["ended"], true);
+    assert!(req["params"]["cwd"].is_null());
+    let _ = std::fs::remove_dir_all(&dir);
+}

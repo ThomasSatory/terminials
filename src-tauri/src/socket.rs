@@ -60,7 +60,7 @@ fn dispatch(app: &AppHandle, req: Request) -> Response {
     match req.method.as_str() {
         "ping" => Response::ok(serde_json::json!({"pong": true})),
         "capabilities" => Response::ok(serde_json::json!({
-            "methods": ["ping","capabilities","notify","new-workspace","set-status","set-progress"]
+            "methods": ["ping","capabilities","notify","new-workspace","set-status","set-progress","claude-session"]
         })),
         "notify" => {
             let title = req.params.get("title").and_then(|v| v.as_str()).unwrap_or("terminials");
@@ -69,7 +69,7 @@ fn dispatch(app: &AppHandle, req: Request) -> Response {
             let _ = app.emit("socket-command", &req);
             Response::ok(serde_json::Value::Null)
         }
-        "new-workspace" | "set-status" | "set-progress" => {
+        "new-workspace" | "set-status" | "set-progress" | "claude-session" => {
             let _ = app.emit("socket-command", &req);
             Response::ok(serde_json::Value::Null)
         }
