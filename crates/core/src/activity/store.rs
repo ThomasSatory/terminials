@@ -8,7 +8,7 @@ use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
 use crate::activity::tickets::{ticket_url, us_id};
 use crate::activity::{
-    ActivityEvent, ActivityStats, DayCounts, EventKind, HourCounts, KindCounts, NewEvent,
+    ActivityEvent, ActivityStats, CorrectionBranche, DayCounts, EventKind, HourCounts, KindCounts, NewEvent,
     OpenTask, TicketInfo, TicketRef, Totals, WorkspaceCount,
 };
 
@@ -132,6 +132,33 @@ impl Store {
                     e.source_ref,
                 ])?;
                 count += n;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// Corrige la branche et les tickets de prompts déjà en base (clé `(kind, source_ref)`),
+    /// uniquement si la base contient encore la branche figée erronée : une branche déjà
+    /// corrigée n'est jamais réécrite. Retourne le nombre de lignes changées.
+    pub fn corriger_prompts(&self, corrections: &[CorrectionBranche]) -> StoreResult<usize> {
+        let mut count = 0usize;
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "UPDATE events SET branch = ?3, ticket_ids = ?4
+                 WHERE kind = ?1 AND source_ref = ?2 AND branch IS ?5
+                   AND (branch IS NOT ?3 OR ticket_ids IS NOT ?4)",
+            )?;
+            for c in corrections {
+                let e = &c.event;
+                count += stmt.execute(params![
+                    e.kind.as_str(),
+                    e.source_ref,
+                    e.branch,
+                    e.ticket_ids.join(","),
+                    c.branche_figee,
+                ])?;
             }
         }
         tx.commit()?;
@@ -731,6 +758,31 @@ mod tests {
                    body: None, ticket_ids: vec![], source_ref: sref.into() }
     }
     const T0: i64 = 1_758_067_200; // 2025-09-17 00:00:00 UTC (peu importe : les tests utilisent offset 0)
+
+    #[test]
+    fn corriger_prompts_ne_reecrit_que_la_branche_figee() {
+        let s = Store::open_in_memory().unwrap();
+        let mut e = ev(T0 + 3600, EventKind::ClaudePrompt, "/r", "p", "u1");
+        e.branch = Some("feat/ABC-1-x".into());
+        e.ticket_ids = vec!["ABC-1".into()];
+        s.insert_events(&[e.clone()]).unwrap();
+        let mut bonne = e.clone();
+        bonne.branch = Some("feat/ABC-2-x".into());
+        bonne.ticket_ids = vec!["ABC-2".into()];
+        let corr = CorrectionBranche { event: bonne.clone(), branche_figee: e.branch.clone() };
+        assert_eq!(s.corriger_prompts(std::slice::from_ref(&corr)).unwrap(), 1);
+        assert_eq!(s.corriger_prompts(std::slice::from_ref(&corr)).unwrap(), 0, "déjà corrigé");
+        let lu = &s.query(T0, T0 + 86400, None).unwrap()[0];
+        assert_eq!(lu.branch.as_deref(), Some("feat/ABC-2-x"));
+        assert_eq!(lu.ticket_ids, vec!["ABC-2".to_string()]);
+        // Un checkout ultérieur donne une autre branche réelle : la valeur en base,
+        // différente de la branche figée, n'est pas réécrite.
+        let mut autre = bonne;
+        autre.branch = Some("feat/ABC-3-x".into());
+        let corr = CorrectionBranche { event: autre, branche_figee: e.branch };
+        assert_eq!(s.corriger_prompts(&[corr]).unwrap(), 0);
+        assert_eq!(s.query(T0, T0 + 86400, None).unwrap()[0].branch.as_deref(), Some("feat/ABC-2-x"));
+    }
 
     #[test]
     fn insert_est_idempotent_par_kind_et_source_ref() {
