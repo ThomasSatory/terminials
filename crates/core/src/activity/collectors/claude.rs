@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::activity::store::Store;
 use crate::activity::tickets::extract_ticket_ids;
-use crate::activity::{repo_root, EventKind, NewEvent};
+use crate::activity::{repo_root, CorrectionBranche, EventKind, NewEvent};
 
 /// Résultat du parsing pur d'un transcript : les prompts humains retenus et,
 /// s'il y en a au moins un, l'événement de session qui les résume.
@@ -14,6 +14,9 @@ use crate::activity::{repo_root, EventKind, NewEvent};
 pub struct Parsed {
     pub prompts: Vec<NewEvent>,
     pub session: Option<NewEvent>,
+    /// Prompts hors dépôt de lancement, dont la branche en base est peut-être encore le
+    /// `gitBranch` figé : à corriger par `Store::corriger_prompts`.
+    pub corrections: Vec<CorrectionBranche>,
 }
 
 /// Préfixes de contenu à ignorer : échos de commande slash et contexte système
@@ -32,7 +35,13 @@ fn est_non_interactive(value: &serde_json::Value) -> bool {
 /// ne touche ni au disque ni au store. Résout la racine git via `repo_root`.
 /// Une session non interactive (`claude -p`) ne rend rien.
 pub fn parse_transcript(path_label: &str, content: &str, ticket_patterns: &[String]) -> Parsed {
-    parse_transcript_with(path_label, content, ticket_patterns, &mut |c| repo_root(c))
+    parse_transcript_with(
+        path_label,
+        content,
+        ticket_patterns,
+        &mut |c| repo_root(c),
+        &mut |c| crate::git::branch(c),
+    )
 }
 
 /// Comme [`parse_transcript`], mais avec la résolution de racine git injectable
@@ -40,14 +49,24 @@ pub fn parse_transcript(path_label: &str, content: &str, ticket_patterns: &[Stri
 /// vérifier que la résolution est mise en cache : un seul appel par `cwd` distinct
 /// (les sessions changent rarement de dossier, donc évite un `git rev-parse` par
 /// prompt).
+///
+/// `gitBranch` n'est fiable que pour le dépôt où la session a été lancée : Claude Code
+/// le fige, même quand le `cwd` bascule ensuite dans un dépôt imbriqué ou un worktree.
+/// Le dépôt de lancement est la racine git du `cwd` du premier message user. Pour un
+/// message d'un autre dépôt, la branche vient de `resolve_branch` (branche courante du
+/// `cwd`, mise en cache par `cwd`), et reste vide si elle ne répond pas.
 pub fn parse_transcript_with(
     path_label: &str,
     content: &str,
     ticket_patterns: &[String],
     resolve_repo_root: &mut dyn FnMut(&str) -> String,
+    resolve_branch: &mut dyn FnMut(&str) -> Option<String>,
 ) -> Parsed {
     let mut repo_root_cache: HashMap<String, String> = HashMap::new();
+    let mut branch_cache: HashMap<String, Option<String>> = HashMap::new();
+    let mut launch_root: Option<String> = None;
     let mut prompts = Vec::new();
+    let mut corrections = Vec::new();
     let mut session_id: Option<String> = None;
     let mut min_ts: Option<i64> = None;
     let mut max_ts: Option<i64> = None;
@@ -86,6 +105,17 @@ pub fn parse_transcript_with(
         if value.get("type").and_then(|v| v.as_str()) != Some("user") {
             continue;
         }
+        // Dépôt de lancement : premier message user portant un cwd, même s'il est
+        // ignoré ensuite comme prompt.
+        if launch_root.is_none() {
+            if let Some(c) = value.get("cwd").and_then(|v| v.as_str()) {
+                let root = repo_root_cache
+                    .entry(c.to_string())
+                    .or_insert_with(|| resolve_repo_root(c))
+                    .clone();
+                launch_root = Some(root);
+            }
+        }
         let content_str = match value.pointer("/message/content").and_then(|v| v.as_str()) {
             Some(s) => s,
             None => continue,
@@ -106,10 +136,25 @@ pub fn parse_transcript_with(
                 .or_insert_with(|| resolve_repo_root(c))
                 .clone()
         });
-        let branch = value
+        let git_branch = value
             .get("gitBranch")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let hors_depot_lancement = match (&workspace_dir, &launch_root) {
+            (Some(w), Some(l)) => w != l,
+            _ => false,
+        };
+        // Hors dépôt de lancement, `gitBranch` est faux à coup sûr : sans réponse de git
+        // (HEAD détaché, worktree supprimé), pas de branche plutôt que la mauvaise —
+        // `us_id` se rabat alors sur le nom du dossier.
+        let branch = if hors_depot_lancement {
+            branch_cache
+                .entry(cwd.unwrap_or_default().to_string())
+                .or_insert_with(|| resolve_branch(cwd.unwrap_or_default()))
+                .clone()
+        } else {
+            git_branch.clone()
+        };
         let uuid = value
             .get("uuid")
             .and_then(|v| v.as_str())
@@ -133,7 +178,7 @@ pub fn parse_transcript_with(
             first_branch = branch.clone();
         }
 
-        prompts.push(NewEvent {
+        let event = NewEvent {
             ts,
             kind: EventKind::ClaudePrompt,
             workspace_dir,
@@ -142,7 +187,11 @@ pub fn parse_transcript_with(
             body: None,
             ticket_ids,
             source_ref: uuid,
-        });
+        };
+        if hors_depot_lancement {
+            corrections.push(CorrectionBranche { event: event.clone(), branche_figee: git_branch });
+        }
+        prompts.push(event);
     }
 
     let session = if prompts.is_empty() {
@@ -182,7 +231,7 @@ pub fn parse_transcript_with(
         })
     };
 
-    Parsed { prompts, session }
+    Parsed { prompts, session, corrections }
 }
 
 /// Formate une durée en secondes : `"12 min"` en dessous d'une heure, sinon `"1 h 31 min"`.
@@ -299,6 +348,10 @@ pub fn collect(
                 inserted += store
                     .insert_events(&parsed.prompts)
                     .map_err(|e| e.to_string())?;
+                // Re-collecte : corrige branche et tickets des prompts déjà en base.
+                store
+                    .corriger_prompts(&parsed.corrections)
+                    .map_err(|e| e.to_string())?;
             }
             if let Some(session) = &parsed.session {
                 store.upsert_event(session).map_err(|e| e.to_string())?;
@@ -370,9 +423,124 @@ ligne invalide
             appels += 1;
             c.to_string()
         };
-        let p = parse_transcript_with("/p/s1.jsonl", FIXTURE, &[], &mut resolver);
+        let p = parse_transcript_with("/p/s1.jsonl", FIXTURE, &[], &mut resolver, &mut |_| None);
         assert_eq!(p.prompts.len(), 2);
         assert_eq!(appels, 1, "même cwd pour les 2 prompts retenus → un seul appel au resolver");
+    }
+    /// Session lancée dans `/home/t/mono` (gitBranch figé sur ABC-1), puis prompts dans
+    /// un worktree imbriqué `/home/t/mono/sub/.claude/worktrees/f`.
+    const IMBRIQUE: &str = r#"{"type":"user","uuid":"i0","timestamp":"2026-09-16T09:00:00.000Z","cwd":"/home/t/mono","gitBranch":"feat/ABC-100-lancement","message":{"role":"user","content":"<command-name>/x</command-name>"}}
+{"type":"user","uuid":"i1","timestamp":"2026-09-16T09:01:00.000Z","cwd":"/home/t/mono","gitBranch":"feat/ABC-100-lancement","message":{"role":"user","content":"Premier prompt"}}
+{"type":"user","uuid":"i2","timestamp":"2026-09-16T09:02:00.000Z","cwd":"/home/t/mono/sub/.claude/worktrees/f","gitBranch":"feat/ABC-100-lancement","message":{"role":"user","content":"Second prompt"}}
+{"type":"user","uuid":"i3","timestamp":"2026-09-16T09:03:00.000Z","cwd":"/home/t/mono/sub/.claude/worktrees/f","gitBranch":"feat/ABC-100-lancement","message":{"role":"user","content":"Troisieme prompt"}}
+"#;
+    fn racine(c: &str) -> String {
+        match c.find("/sub/") {
+            Some(_) => "/home/t/mono/sub/.claude/worktrees/f".to_string(),
+            None => "/home/t/mono".to_string(),
+        }
+    }
+    fn patterns() -> Vec<String> {
+        vec![r"ABC-\d+".to_string()]
+    }
+    #[test]
+    fn depot_de_lancement_garde_git_branch() {
+        let mut appels = 0usize;
+        let p = parse_transcript_with(
+            "/p/s.jsonl",
+            FIXTURE,
+            &patterns(),
+            &mut |c| c.to_string(),
+            &mut |_| {
+                appels += 1;
+                Some("autre".to_string())
+            },
+        );
+        assert!(p.prompts.iter().all(|e| e.branch.as_deref() == Some("feature/CU-86c1abc")));
+        assert_eq!(appels, 0);
+    }
+    #[test]
+    fn worktree_imbrique_prend_la_branche_du_resolveur() {
+        let p = parse_transcript_with(
+            "/p/s.jsonl",
+            IMBRIQUE,
+            &patterns(),
+            &mut |c| racine(c),
+            &mut |_| Some("feat/ABC-200-fichiers".to_string()),
+        );
+        assert_eq!(p.prompts.len(), 3);
+        assert_eq!(p.prompts[0].branch.as_deref(), Some("feat/ABC-100-lancement"));
+        assert_eq!(p.prompts[0].ticket_ids, vec!["ABC-100".to_string()]);
+        for e in &p.prompts[1..] {
+            assert_eq!(e.branch.as_deref(), Some("feat/ABC-200-fichiers"));
+            assert_eq!(e.ticket_ids, vec!["ABC-200".to_string()]);
+        }
+        let us = |e: &NewEvent| crate::activity::tickets::us_id(e.branch.as_deref(), e.workspace_dir.as_deref());
+        assert_eq!(us(&p.prompts[0]).as_deref(), Some("ABC-100"));
+        assert_eq!(us(&p.prompts[1]).as_deref(), Some("ABC-200"));
+    }
+    #[test]
+    fn resolveur_muet_ne_reprend_pas_la_branche_figee() {
+        let p = parse_transcript_with(
+            "/p/s.jsonl",
+            IMBRIQUE,
+            &patterns(),
+            &mut |c| racine(c),
+            &mut |_| None,
+        );
+        assert_eq!(p.prompts[0].branch.as_deref(), Some("feat/ABC-100-lancement"));
+        assert!(p.prompts[1..].iter().all(|e| e.branch.is_none() && e.ticket_ids.is_empty()));
+        assert_eq!(p.corrections.len(), 2, "la branche figée en base est à effacer");
+    }
+    #[test]
+    fn corrections_ne_portent_que_les_prompts_hors_depot_de_lancement() {
+        let p = parse_transcript_with(
+            "/p/s.jsonl",
+            IMBRIQUE,
+            &patterns(),
+            &mut |c| racine(c),
+            &mut |_| Some("feat/ABC-200-fichiers".to_string()),
+        );
+        assert_eq!(p.corrections.len(), 2);
+        for c in &p.corrections {
+            assert_eq!(c.event.branch.as_deref(), Some("feat/ABC-200-fichiers"));
+            assert_eq!(c.branche_figee.as_deref(), Some("feat/ABC-100-lancement"));
+        }
+    }
+    #[test]
+    fn sous_dossier_du_depot_de_lancement_garde_git_branch() {
+        let transcript = r#"{"type":"user","uuid":"s1","timestamp":"2026-09-16T09:01:00.000Z","cwd":"/home/t/mono","gitBranch":"feat/ABC-100-lancement","message":{"role":"user","content":"Un"}}
+{"type":"user","uuid":"s2","timestamp":"2026-09-16T09:02:00.000Z","cwd":"/home/t/mono/src","gitBranch":"feat/ABC-100-lancement","message":{"role":"user","content":"Deux"}}
+"#;
+        let mut appels = 0usize;
+        let p = parse_transcript_with(
+            "/p/s.jsonl",
+            transcript,
+            &patterns(),
+            &mut |_| "/home/t/mono".to_string(),
+            &mut |_| {
+                appels += 1;
+                Some("autre".to_string())
+            },
+        );
+        assert_eq!(p.prompts.len(), 2);
+        assert!(p.prompts.iter().all(|e| e.branch.as_deref() == Some("feat/ABC-100-lancement")));
+        assert_eq!(appels, 0);
+    }
+    #[test]
+    fn branche_resolue_une_seule_fois_par_cwd() {
+        let mut appels = 0usize;
+        parse_transcript_with(
+            "/p/s.jsonl",
+            IMBRIQUE,
+            &[],
+            &mut |c| racine(c),
+            &mut |_| {
+                appels += 1;
+                Some("b".to_string())
+            },
+        );
+        assert_eq!(appels, 1);
     }
     const NON_INTERACTIF: &str = r#"{"type":"queue-operation","operation":"enqueue","sessionId":"s2"}
 {"type":"user","uuid":"p1","timestamp":"2026-09-16T09:00:00.000Z","cwd":"/home/t","entrypoint":"sdk-cli","message":{"role":"user","content":"Tu as accès aux outils MCP ClickUp."}}

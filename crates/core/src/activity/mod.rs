@@ -60,6 +60,17 @@ pub struct NewEvent {
     pub source_ref: String,
 }
 
+/// Correction de branche d'un prompt déjà en base : `event` porte la branche réelle
+/// (résolue par git, vide si git ne répond pas) et les tickets qui en découlent ; `branche_figee` est le
+/// `gitBranch` du transcript, c'est-à-dire la valeur erronée qu'une collecte
+/// précédente a pu stocker. La correction ne s'applique que si la base contient
+/// encore cette valeur : une branche déjà corrigée n'est jamais réécrite.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CorrectionBranche {
+    pub event: NewEvent,
+    pub branche_figee: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TicketRef {
