@@ -1,89 +1,53 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useReglagesStore } from "../../store/reglages";
-import { useSuperviseurStore, SUPERVISEUR, demandeEnTete, type DemandeValidation } from "../../store/superviseur";
+import { useSuperviseurStore, SUPERVISEUR, type DemandeValidation } from "../../store/superviseur";
 import { useWorkspaceStore } from "../../store/workspace";
 import { allerA, autoriserDemande, refuserDemande } from "../../lib/executeurSuperviseur";
 import { nomBoutPaire, titreOnglet } from "../../lib/outilsSuperviseur";
 import { apercuParlant, tonLigne } from "../../lib/mosaique";
 import { deNom, depuisLibelle } from "../../lib/superviseurLibelles";
-import { useMaintenantSuperviseur, type InfoEspaceSuperviseur } from "../../hooks/useEtatSuperviseur";
+import type { InfoEspaceSuperviseur } from "../../hooks/useEtatSuperviseur";
 import { Kbd } from "../ui/Kbd";
-import { IconeCoche, IconeMonter, IconeRoute, MiniAvatar, ViseurPoint } from "./elements";
+import { IconeCoche, IconeRoute, MiniAvatar, ViseurPoint } from "./elements";
 
 /**
- * Pile « À valider » (maquette Superviseur) : la carte en tête montre ce qui sera écrit,
- * au caractère près, où, et pourquoi ; Autoriser (Ctrl+Entrée, géré par le panneau),
- * Refuser, Aller voir ; « Toujours autoriser les échanges entre ces deux espaces » pour
- * un échange. Les autres cartes attendent dessous (« Ensuite »).
+ * Carte « À valider » : ce qui sera écrit, au caractère près, où, et pourquoi. Elle se
+ * range sur la carte de l'espace ÉCRIT (poste de suivi, `EspacesPoste`). Autoriser
+ * (Ctrl+Entrée, géré par la racine du poste) passe par `autoriserDemande`, donc par le
+ * garde-fou ; Refuser et « Aller au terminal » ne tracent rien dans une session. Masquée
+ * (niveau sous Agir, ou pause), elle montre le texte exact sans case ni boutons de
+ * validation : seul « Aller au terminal » reste.
  */
 
 /** Après une décision à la souris, la carte (et le bouton cliqué) disparaît : le focus
-    tombait sur <body>, hors du panneau, où Échap et Ctrl+Entrée ne portent plus. Il passe
-    à la carte suivante, sinon au champ de saisie du panneau. */
+    tombait sur <body>, hors du poste, où Échap et Ctrl+Entrée ne portent plus. Il passe
+    au prochain bouton « Autoriser », sinon au champ de saisie du poste. */
 function relayerFocus() {
   requestAnimationFrame(() => {
     const actif = document.activeElement;
     if (actif && actif !== document.body && actif.isConnected) return;
-    document.querySelector<HTMLElement>(".sup-autoriser, .sup-champ-texte")?.focus();
+    const suivant =
+      document.querySelector<HTMLElement>(".sup-poste .sup-autoriser") ??
+      document.querySelector<HTMLElement>(".sup-poste .sup-champ-texte");
+    suivant?.focus();
   });
 }
 
 /** Une réponse courte à une demande d'autorisation (« 1 ») s'affiche en touche. */
 const TOUCHE_MAX = 24;
 
-export function PileValidation({ espaces, nom }: { espaces: Map<string, InfoEspaceSuperviseur>; nom: string }) {
-  const demandes = useSuperviseurStore((s) => s.demandes);
-  const focus = useSuperviseurStore((s) => s.demandeFocus);
-  const ouvertes = useMemo(() => demandes.filter((d) => d.statut === "ouverte"), [demandes]);
-  const tete = demandeEnTete({ demandes, demandeFocus: focus });
-  const maintenant = useMaintenantSuperviseur(15000);
-  if (!tete) return null;
-  const suivantes = ouvertes.filter((d) => d !== tete);
-
-  return (
-    <div className="sup-pile">
-      <Carte key={tete.id} d={tete} rang={ouvertes.indexOf(tete) + 1} total={ouvertes.length} espaces={espaces} nom={nom} maintenant={maintenant} />
-      {suivantes.length > 0 && (
-        <div className="sup-ensuite">
-          {suivantes.map((d) => {
-            const w = espaces.get(d.cible.wsId);
-            return (
-              <button
-                key={d.id}
-                type="button"
-                className="sup-ligne-survol sup-ensuite-ligne sup-ent"
-                aria-label={`Afficher : ${d.titre}`}
-                onClick={() => useSuperviseurStore.getState().focaliserDemande(d.id)}
-              >
-                <span className="sup-intertitre">Ensuite</span>
-                {w && <MiniAvatar mono={w.mono} couleur={w.couleur} taille={18} />}
-                <span className="sup-ensuite-titre">{d.titre}</span>
-                <span className="sup-ensuite-depuis">{depuisLibelle(d.depuis, maintenant)}</span>
-                <IconeMonter />
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** Carte en tête de pile ; Ctrl+Entrée (panneau) appelle `autoriserEnTete`. */
-function Carte({
+export function CarteValidation({
   d,
-  rang,
-  total,
   espaces,
   nom,
   maintenant,
+  masquee,
 }: {
   d: DemandeValidation;
-  rang: number;
-  total: number;
   espaces: Map<string, InfoEspaceSuperviseur>;
   nom: string;
   maintenant: number;
+  masquee: boolean;
 }) {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const paires = useReglagesStore((s) => s.reglages.superviseur.paires);
@@ -118,7 +82,7 @@ function Carte({
   };
 
   return (
-    <div className="sup-carte" role="group" aria-label={`${d.titre}, à valider`}>
+    <div className="sup-carte" role="group" aria-label={`${d.titre}, à valider`} data-masquee={masquee || undefined}>
       <div className="sup-carte-tete">
         <span className="sup-carte-route">
           {d.de === SUPERVISEUR ? (
@@ -150,11 +114,6 @@ function Carte({
             {depuisLibelle(d.depuis, maintenant)}
           </span>
         </span>
-        {total > 1 && (
-          <span className="sup-carte-compte">
-            {rang} sur {total}
-          </span>
-        )}
       </div>
 
       <div className="sup-carte-boite">
@@ -188,9 +147,19 @@ function Carte({
         </div>
       </div>
 
-      {d.pourquoi && <div className="sup-carte-pourquoi">{d.pourquoi}</div>}
+      {d.pourquoi && (
+        <div className="sup-carte-pourquoi">
+          <span className="sup-carte-avis" aria-hidden="true">
+            <ViseurPoint taille={14} epaisseur={1.7} />
+          </span>
+          <span>
+            <span className="sup-intertitre sup-carte-label">Avis de {nom}</span>
+            {d.pourquoi}
+          </span>
+        </div>
+      )}
 
-      {d.paire && nomsPaire && !dejaAutorisee && (
+      {!masquee && d.paire && nomsPaire && !dejaAutorisee && (
         <button
           type="button"
           className="sup-fl sup-toujours"
@@ -212,23 +181,29 @@ function Carte({
       )}
 
       <div className="sup-carte-actions">
-        <button type="button" className="sup-prim sup-autoriser" onClick={autoriser}>
-          Autoriser
-          <Kbd variante="sur-accent">Ctrl+Entrée</Kbd>
-        </button>
-        <button type="button" className="sup-sec" onClick={() => {
-            refuserDemande(d.id);
-            relayerFocus();
-          }}>
-          Refuser
-        </button>
-        <span style={{ flex: 1 }} />
-        {cible && (
-          <button type="button" className="sup-ghost" onClick={() => allerA(cible.id, d.cible.tabId)}>
-            Aller voir
-            {cible.raccourci && <Kbd variante="puce">{cible.raccourci}</Kbd>}
-          </button>
+        {!masquee && (
+          <>
+            <button type="button" className="sup-prim sup-autoriser" onClick={autoriser}>
+              Autoriser
+              <Kbd variante="sur-accent">Ctrl+Entrée</Kbd>
+            </button>
+            <button
+              type="button"
+              className="sup-sec"
+              onClick={() => {
+                refuserDemande(d.id);
+                relayerFocus();
+              }}
+            >
+              Refuser
+            </button>
+          </>
         )}
+        <span style={{ flex: 1 }} />
+        <button type="button" className="sup-ghost" onClick={() => allerA(d.cible.wsId, d.cible.tabId)}>
+          Aller au terminal
+          {cible?.raccourci && <Kbd variante="puce">{cible.raccourci}</Kbd>}
+        </button>
       </div>
       {erreur && (
         <div className="sup-carte-erreur" role="alert">

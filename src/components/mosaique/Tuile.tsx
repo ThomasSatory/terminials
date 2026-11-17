@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type MouseEvent } from "react";
+import { memo, useMemo, type CSSProperties, type MouseEvent } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useWorkspaceStore } from "../../store/workspace";
 import { useDernieresLignes } from "../../hooks/useDernieresLignes";
@@ -14,7 +14,9 @@ import {
   derniereCommande,
   etiquetteTemps,
   ligneBranche,
+  MARGE_CADRE_SAISIE,
   messageTermine,
+  sansCadreSaisie,
   sujetTermine,
   titreSansGlyphe,
   tonLigne,
@@ -84,7 +86,10 @@ export const Tuile = memo(function Tuile({
     }),
   );
   const home = useHome();
-  const lignes = useDernieresLignes(w?.tabId ?? null, nbLignes);
+  // On lit plus bas que nécessaire puis on retire le cadre de saisie et la barre d'état
+  // d'un agent plein écran : la tuile montre où il en est, pas son pied d'écran.
+  const brutes = useDernieresLignes(w?.tabId ?? null, nbLignes + MARGE_CADRE_SAISIE);
+  const lignes = useMemo(() => sansCadreSaisie(brutes).slice(-nbLignes), [brutes, nbLignes]);
   const cles = useClesLignes(lignes);
   if (!w) return null;
 

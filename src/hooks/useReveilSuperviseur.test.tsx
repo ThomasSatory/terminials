@@ -26,6 +26,7 @@ vi.mock("../lib/terminalRegistry", () => ({ lireDernieresLignes: vi.fn(() => [])
 import { useReveilSuperviseur } from "./useReveilSuperviseur";
 import { useReglagesStore } from "../store/reglages";
 import { useSuperviseurStore } from "../store/superviseur";
+import { useWorkspaceStore } from "../store/workspace";
 
 function Hote() {
   useReveilSuperviseur();
@@ -98,5 +99,22 @@ describe("useReveilSuperviseur — reprise", () => {
     });
     await vider();
     expect(appels.filter((a) => a.cmd === "reglages_ecrire")).toHaveLength(1);
+  });
+
+  it("un espace fermé perd son résumé", async () => {
+    const espace = (id: string) => ({ id, name: id, cwd: `/dev/${id}`, tabs: [{ id: `${id}:t` }], activeTabId: `${id}:t`, unread: false, unreadTabs: [] as string[] });
+    act(() => {
+      useWorkspaceStore.setState({ workspaces: [espace("e1"), espace("e2")] } as never);
+    });
+    useSuperviseurStore.getState().poserResume("e1", "Migration en cours", "travail");
+    useSuperviseurStore.getState().poserResume("e2", "Tests verts", "repos");
+    act(() => {
+      useWorkspaceStore.setState({ workspaces: [espace("e2")] } as never);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+    expect(Object.keys(useSuperviseurStore.getState().resumes)).toEqual(["e2"]);
+    act(() => useWorkspaceStore.setState({ workspaces: [] } as never));
   });
 });

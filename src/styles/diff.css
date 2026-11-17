@@ -16,11 +16,6 @@
   outline: none;
   animation: var(--diff-entree, inB) 0.3s var(--courbe-glisse) both;
 }
-/* Panneau du superviseur ouvert : sa place est réservée à droite (--reserve-panneau),
-   comme pour les terminaux ; rien de la vue ne passe dessous. */
-.app[data-panneau-superviseur] .diff-v {
-  right: var(--reserve-panneau);
-}
 
 /* ---------- Barre d'en-tête ---------- */
 

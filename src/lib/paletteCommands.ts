@@ -24,7 +24,7 @@ export type CiblePalette =
   | { type: "raccourci"; action: ShortcutAction }
   /** Action sans raccourci, portée par le store. */
   | { type: "dupliquer"; wsId: string }
-  /** Ouvre le panneau du superviseur ; avec `demande`, la lui envoie aussi. */
+  /** Ouvre le poste de suivi du superviseur ; avec `demande`, la lui envoie aussi. */
   | { type: "superviseur"; demande?: string }
   /** Rouvre un espace récemment fermé (même nom, même dossier). */
   | { type: "reprendre"; cwd: string; nom: string }

@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 vi.mock("./pty", () => ({ closePty: vi.fn(), ptyCwd: vi.fn(() => Promise.resolve(null)) }));
 vi.mock("./openFolder", () => ({ openFolderDialog: vi.fn(() => Promise.resolve()) }));
 
-import { dispatchShortcut, fermerEspace, fermerTousLesEspaces } from "./shortcutDispatch";
+import { dispatchShortcut, fermerEspace, fermerTousLesEspaces, fermerPanneauSuperviseur, ouvrirPosteSuperviseur } from "./shortcutDispatch";
 import { closePty, ptyCwd } from "./pty";
 import { openFolderDialog } from "./openFolder";
 import { registerTabFocus, unregisterTabFocus } from "./tabFocus";
@@ -203,6 +203,70 @@ describe("dispatchShortcut", () => {
     expect(ui().vue).toBe("terminal");
   });
 
+  it("choisir une autre destination referme le poste de suivi du superviseur", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    const poste = () => useSuperviseurStore.getState().panneauOuvert;
+    const ouvrir = () => useSuperviseurStore.getState().ouvrirPanneau();
+    // Aller à un espace (Ctrl 1…9, PageUp/PageDown).
+    ouvrir();
+    dispatchShortcut({ type: "select-workspace", index: 0 });
+    expect(poste()).toBe(false);
+    ouvrir();
+    dispatchShortcut({ type: "next-workspace" });
+    expect(poste()).toBe(false);
+    // Mosaïque, à l'entrée seulement.
+    ouvrir();
+    dispatchShortcut({ type: "toggle-mosaique" });
+    expect(poste()).toBe(false);
+    expect(ui().vue).toBe("mosaique");
+    dispatchShortcut({ type: "toggle-mosaique" });
+    // Récap et Paramètres, à l'ouverture.
+    ouvrir();
+    dispatchShortcut({ type: "toggle-dashboard" });
+    expect(poste()).toBe(false);
+    useDashboardStore.getState().close();
+    ouvrir();
+    dispatchShortcut({ type: "toggle-parametres" });
+    expect(poste()).toBe(false);
+    expect(ui().parametres).not.toBeNull();
+    expect([a, b]).toContain(store().activeId);
+  });
+
+  it("ouvrir le poste depuis le récap ou les Paramètres les ferme", () => {
+    store().addWorkspace("/a");
+    useDashboardStore.getState().open || dispatchShortcut({ type: "toggle-dashboard" });
+    dispatchShortcut({ type: "toggle-superviseur" });
+    expect(useDashboardStore.getState().open).toBe(false);
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(true);
+    fermerPanneauSuperviseur();
+    ui().ouvrirParametres();
+    dispatchShortcut({ type: "toggle-superviseur" });
+    expect(ui().parametres).toBeNull();
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(true);
+  });
+
+  it("poste ouvert sur la mosaïque ou les Paramètres : le raccourci ferme le poste et montre la vue", () => {
+    store().addWorkspace("/a");
+    ui().setVue("mosaique");
+    useSuperviseurStore.getState().ouvrirPanneau();
+    dispatchShortcut({ type: "toggle-mosaique" });
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(false);
+    expect(ui().vue).toBe("mosaique");
+    ui().setVue("terminal");
+    useSuperviseurStore.getState().ouvrirPanneau();
+    dispatchShortcut({ type: "toggle-parametres" });
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(false);
+    expect(ui().parametres).not.toBeNull();
+  });
+
+  it("ouvrirPosteSuperviseur ferme palette et calques légers", () => {
+    ui().ouvrirPalette();
+    ouvrirPosteSuperviseur();
+    expect(ui().paletteOuverte).toBe(false);
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(true);
+  });
+
   it("prev/next-workspace suivent l'ordre visible avec wrap", () => {
     const a = store().addWorkspace("/a");
     const b = store().addWorkspace("/b");
@@ -361,13 +425,14 @@ describe("dispatchShortcut", () => {
     expect(store().activeId).toBe(a);
   });
 
-  it("toggle-superviseur : panneau si actif, sinon son réglage dans les Paramètres", () => {
+  it("toggle-superviseur : bascule le poste de suivi, même désactivé (il propose alors de l'activer)", () => {
     useReglagesStore.getState().reset();
     useSuperviseurStore.getState().reset();
     dispatchShortcut({ type: "toggle-superviseur" });
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(true);
+    expect(ui().parametres).toBeNull();
+    dispatchShortcut({ type: "toggle-superviseur" });
     expect(useSuperviseurStore.getState().panneauOuvert).toBe(false);
-    expect(ui().parametres?.section).toBe("superviseur");
-    ui().fermerParametres();
     useReglagesStore.getState().setSuperviseurActif(true);
     dispatchShortcut({ type: "toggle-superviseur" });
     expect(useSuperviseurStore.getState().panneauOuvert).toBe(true);

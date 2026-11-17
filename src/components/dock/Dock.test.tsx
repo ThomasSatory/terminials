@@ -4,6 +4,7 @@ import { Dock } from "./Dock";
 import { useWorkspaceStore, type Group, type Workspace } from "../../store/workspace";
 import { useUiStore } from "../../store/ui";
 import { useDashboardStore } from "../../store/dashboard";
+import { useSuperviseurStore } from "../../store/superviseur";
 
 /** Espace minimal, posé directement dans le store (sans persistance). */
 function espace(id: string, name: string, groupId: string | null, p: Partial<Workspace> = {}): Workspace {
@@ -42,14 +43,17 @@ describe("Dock", () => {
   beforeEach(() => {
     etat(useUiStore, { vue: "terminal", dockVisible: true, paletteOuverte: false, menuEspace: null });
     etat(useDashboardStore, { open: false, unreadSummary: false });
+    etat(useSuperviseurStore, { panneauOuvert: false });
     poser([], [], null);
   });
 
-  it("sans espace : ni bande, ni séparateur, ni mosaïque, mais « + », activité et palette", () => {
+  it("sans espace : ni bande, ni mosaïque, mais « + », activité et palette", () => {
     const html = renderToStaticMarkup(<Dock />);
     expect(html).toContain('aria-label="Espaces de travail"');
     expect(html).not.toContain("dock-bande");
-    expect(html).not.toContain("dock-sep");
+    // Seul filet : celui qui suit la marque du superviseur (présente même désactivé).
+    expect(html.match(/dock-sep/g)?.length).toBe(1);
+    expect(html).toContain('data-dock-superviseur=""');
     expect(html).toContain('data-dock-add=""');
     expect(html).not.toContain("Mosaïque des agents");
     expect(html).toContain('aria-label="Activité de la journée (Ctrl+Maj+H)"');
@@ -79,8 +83,8 @@ describe("Dock", () => {
     expect(html).toContain("master •  ·  :1420");
     expect(html).toContain("Autoriser ?");
     expect(html).toContain(">Ctrl 3<");
-    // Hors groupe puis groupe : un filet les sépare.
-    expect(html.match(/dock-sep/g)?.length).toBe(2);
+    // Un filet de plus qu'entre hors groupe et groupe : celui de la marque du superviseur.
+    expect(html.match(/dock-sep/g)?.length).toBe(3);
     expect(html).toContain('aria-label="Replier le groupe produit (2 espaces)"');
   });
 
@@ -107,6 +111,13 @@ describe("Dock", () => {
     const html = renderToStaticMarkup(<Dock />);
     expect(html).toContain('data-dock-group="g:1"');
     expect(html).not.toContain("dock-pile");
+  });
+
+  it("poste de suivi ouvert : aucun avatar marqué ouvert", () => {
+    poser([espace("ws:1", "notes", null)], [], "ws:1");
+    etat(useSuperviseurStore, { panneauOuvert: true });
+    const html = renderToStaticMarkup(<Dock />);
+    expect(html).not.toContain("actions de l’espace");
   });
 
   it("mosaïque : bouton enfoncé, aucun avatar marqué ouvert", () => {

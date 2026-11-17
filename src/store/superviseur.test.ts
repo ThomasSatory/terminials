@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   MAX_FIL,
   SUPERVISEUR,
-  demandeEnTete,
   demandesOuvertes,
   espaceEnRelais,
   modeSuperviseur,
@@ -31,7 +30,7 @@ const demande = (o: Partial<NouvelleDemande> = {}): NouvelleDemande => ({
 describe("store du superviseur", () => {
   beforeEach(() => st().reset());
 
-  it("fil : entrées horodatées, non lus comptés panneau fermé seulement", () => {
+  it("fil : entrées horodatées, non lus comptés poste de suivi fermé seulement", () => {
     const id = st().ajouterEntree({ genre: "observation", wsId: "ws:1", a: 5, parties: [{ type: "texte", texte: "a fini" }] });
     expect(st().fil[0]).toMatchObject({ id, a: 5, genre: "observation" });
     expect(st().nonLus).toBe(1);
@@ -59,16 +58,12 @@ describe("store du superviseur", () => {
     st().majOutil(404, { statut: "erreur" }); // id inconnu : sans effet
   });
 
-  it("demandes : pile, focus, décision, case « toujours »", () => {
+  it("demandes : décision, case « toujours »", () => {
     const a = st().ajouterDemande(demande({ depuis: 1 }));
     const b = st().ajouterDemande(demande({ depuis: 2, titre: "Répondre à site" }));
-    expect(demandeEnTete(st())?.id).toBe(a);
-    st().focaliserDemande(b);
-    expect(demandeEnTete(st())?.id).toBe(b);
     st().basculerToujours(b);
     expect(st().demandes[1].toujours).toBe(true);
     st().deciderDemande(b, "autorisee");
-    expect(st().demandeFocus).toBeNull();
     expect(demandesOuvertes(st()).map((d) => d.id)).toEqual([a]);
     // Une demande tranchée ne se retranche pas.
     st().deciderDemande(b, "refusee");
@@ -141,5 +136,45 @@ describe("clôture des échanges à la désactivation", () => {
     expect(s.echanges.find((x) => x.id === a)?.etat).toBe("refuse");
     expect(s.echanges.find((x) => x.id === b)?.etat).toBe("repondu");
     expect(espaceEnRelais(s, "ws-a")).toBe(false);
+  });
+});
+
+describe("résumés par espace", () => {
+  it("poserResume nettoie le texte, remplace le précédent et garde le groupe", () => {
+    st().poserResume("ws:1", "  Migre\n la base \u001b[31mvers v2\u001b[0m  ", "travail", 5);
+    expect(st().resumes["ws:1"]).toEqual({ texte: "Migre la base vers v2", a: 5, groupe: "travail" });
+    st().poserResume("ws:1", "Tests verts", "repos", 9);
+    expect(st().resumes["ws:1"]).toEqual({ texte: "Tests verts", a: 9, groupe: "repos" });
+  });
+
+  it("poserResume borne le texte à 160 caractères", () => {
+    st().poserResume("ws:1", "x".repeat(300), "travail");
+    expect(Array.from(st().resumes["ws:1"].texte)).toHaveLength(160);
+    expect(st().resumes["ws:1"].texte.endsWith("…")).toBe(true);
+  });
+
+  it("un texte vide après nettoyage retire l'entrée (et ne change rien s'il n'y en a pas)", () => {
+    st().poserResume("ws:1", "Quelque chose", "travail");
+    st().poserResume("ws:1", " \n\t ", "travail");
+    expect(st().resumes).toEqual({});
+    const avant = st().resumes;
+    st().poserResume("ws:9", "", "repos");
+    expect(st().resumes).toBe(avant);
+  });
+
+  it("oublierResumes retire les espaces disparus, référence stable si rien à retirer", () => {
+    st().poserResume("ws:1", "Un", "travail");
+    st().poserResume("ws:2", "Deux", "repos");
+    const avant = st().resumes;
+    st().oublierResumes(["ws:1", "ws:2", "ws:3"]);
+    expect(st().resumes).toBe(avant);
+    st().oublierResumes(["ws:2"]);
+    expect(Object.keys(st().resumes)).toEqual(["ws:2"]);
+  });
+
+  it("reset vide les résumés", () => {
+    st().poserResume("ws:1", "Un", "travail");
+    st().reset();
+    expect(st().resumes).toEqual({});
   });
 });

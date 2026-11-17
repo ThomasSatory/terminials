@@ -7,6 +7,7 @@ import {
   heureFil,
   ligneEtatSuperviseur,
   signatureBulle,
+  suggestionsEspace,
   suggestionsSuperviseur,
   texteBulle,
   texteMasque,
@@ -66,7 +67,7 @@ describe("textes du fil", () => {
     expect(texteBulle(2, 1)).toEqual({ titre: "2 agents vous attendent", note: "dont 1 écriture à valider", accent: true });
     expect(texteBulle(0, 2).titre).toBe("2 écritures à valider");
     // Cartes seules : le titre les compte déjà, la note ne le répète pas.
-    expect(texteBulle(0, 2).note).toBe("à autoriser dans le panneau");
+    expect(texteBulle(0, 2).note).toBe("à autoriser dans le poste de suivi");
     expect(texteBulle(1, 0).note).toBe("clic sur un espace pour y aller");
     expect(signatureBulle(["a", "b"], ["d:1"])).toBe("a,b|d:1");
   });
@@ -94,5 +95,16 @@ describe("deNom", () => {
     expect(deNom("site-vitrine")).toBe("de site-vitrine");
     expect(deNom("3d-viewer")).toBe("de 3d-viewer");
     expect(deNom("")).toBe("de ");
+  });
+});
+
+describe("suggestionsEspace", () => {
+  it("écrit le nom de l'espace dans chaque phrase, avec l'élision", () => {
+    expect(suggestionsEspace("api-paiements")).toEqual([
+      "Où en est api-paiements ?",
+      "Résume les changements d’api-paiements",
+      "Préviens-moi quand api-paiements a fini",
+    ]);
+    expect(suggestionsEspace("site-vitrine")[1]).toBe("Résume les changements de site-vitrine");
   });
 });

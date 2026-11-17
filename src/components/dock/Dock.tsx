@@ -15,6 +15,7 @@ import { useDashboardStore } from "../../store/dashboard";
 import { couleurGroupe } from "../../lib/couleurEspace";
 import { etatVisuelAvatar, type EtatAgent, type SourcesTravail } from "../../lib/etatAgent";
 import { dispatchShortcut } from "../../lib/shortcutDispatch";
+import { useSuperviseurStore } from "../../store/superviseur";
 import { focusTab } from "../../lib/tabFocus";
 import {
   segmentsDock,
@@ -25,6 +26,8 @@ import {
   abscisseIndicateur,
   largeurEtiquette,
   largeurMembres,
+  abscisseCompteur,
+  pileAvecCompteur,
   geometrieAvatars,
 } from "../../lib/dockLayout";
 import { TAILLE_AVATAR_DOCK } from "../../lib/reglages";
@@ -152,6 +155,7 @@ export function Dock({ accueil = false }: { accueil?: boolean }) {
   const geoAvatars = geometrieAvatars(taille);
 
   const recapOuvert = useDashboardStore((s) => s.open);
+  const posteOuvert = useSuperviseurStore((s) => s.panneauOuvert);
   const resumeNonLu = useDashboardStore((s) => s.unreadSummary);
 
   const enveloppeRef = useRef<HTMLDivElement>(null);
@@ -288,7 +292,7 @@ export function Dock({ accueil = false }: { accueil?: boolean }) {
   // Espace « ouvert » : son terminal est affiché. Dans la mosaïque et le récap, aucun
   // avatar n'est marqué ouvert (maquettes) : l'indicateur glisse alors sous le bouton de
   // la vue affichée (Mosaïque, Activité).
-  const ouvertId = vue === "terminal" && !recapOuvert ? activeId : null;
+  const ouvertId = vue === "terminal" && !recapOuvert && !posteOuvert ? activeId : null;
   const indicateur = abscisseIndicateur(segments, repli.replis, ouvertId, taille);
   const cibleTrait = cibleIndicateur(recapOuvert, vue);
   const xIndicateur = abscisseIndicateurNav(cibleTrait, indicateur, geo);
@@ -393,6 +397,7 @@ export function Dock({ accueil = false }: { accueil?: boolean }) {
     }
     // Choisir un espace, c'est vouloir son terminal : récap et mosaïque s'effacent. Seule
     // la vue des fichiers modifiés reste ouverte et passe à l'espace choisi (maquette Diff/09).
+    useSuperviseurStore.getState().fermerPanneau();
     useDashboardStore.getState().close();
     ui.fermerCalques();
     if (ui.vue !== "terminal") ui.setVue("terminal");
@@ -625,12 +630,12 @@ export function Dock({ accueil = false }: { accueil?: boolean }) {
                           />
                         );
                       })}
-                      {estGroupe && nbMembres > 0 && (
+                      {estGroupe && pileAvecCompteur(nbMembres) && (
                         <span
                           className="dock-compte"
                           aria-hidden="true"
                           data-visible={replie || undefined}
-                          style={{ left: geoAvatars.compteur }}
+                          style={{ left: abscisseCompteur(nbMembres, taille) }}
                         >
                           {nbMembres}
                         </span>

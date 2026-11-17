@@ -30,21 +30,24 @@ export function estQuestionEtatAgents(texte: string): boolean {
 }
 
 /**
- * L'utilisateur écrit au superviseur (panneau, palette, suggestion) : son message entre
+ * L'utilisateur écrit au superviseur (poste de suivi, palette, suggestion) : son message entre
  * au fil et réveille le moteur aussitôt.
  * - En pause, le moteur ignore tout réveil : la réponse vient d'ici, tout de suite, avec
  *   de quoi reprendre (sinon le message resterait sans suite).
  * - « Où en sont mes agents ? » : le tableau de l'état réel (cliquable) est posé sans
  *   attendre le modèle, qui peut le commenter ensuite.
  */
-export function envoyerAuSuperviseur(texte: string): void {
+export function envoyerAuSuperviseur(texte: string, wsId?: string | null): void {
   const t = texte.trim();
   if (!t) return;
   const sup = useSuperviseurStore.getState();
-  sup.ajouterEntree({ genre: "utilisateur", parties: [{ type: "texte", texte: t }] });
+  // « À propos de cet espace » : l'espace suit le message (fil filtré, événement du moteur).
+  const apropos = wsId ? { wsId } : {};
+  sup.ajouterEntree({ genre: "utilisateur", ...apropos, parties: [{ type: "texte", texte: t }] });
   if (useReglagesStore.getState().reglages.superviseur.pause) {
     sup.ajouterEntree({
       genre: "superviseur",
+      ...apropos,
       parties: [
         { type: "texte", ton: "discret", texte: TEXTE_EN_PAUSE_MESSAGE },
         { type: "action", libelle: "Reprendre", action: { type: "reprendre" } },
@@ -52,9 +55,9 @@ export function envoyerAuSuperviseur(texte: string): void {
     });
     return;
   }
-  if (estQuestionEtatAgents(t)) {
+  if (!wsId && estQuestionEtatAgents(t)) {
     const lignes = lignesEtatsCourantes();
     if (lignes.length) sup.ajouterEntree({ genre: "superviseur", parties: [{ type: "etats", lignes }] });
   }
-  void superviseurApi.signaler({ genre: "message", texte: t }).catch(() => {});
+  void superviseurApi.signaler({ genre: "message", texte: t, ...apropos }).catch(() => {});
 }

@@ -149,18 +149,13 @@
   --dock-bas: 18px; /* distance du dock au bas de la fenêtre */
   /* Marge basse de la zone terminal : la dernière ligne ne passe jamais sous le dock. */
   --reserve-dock: 130px;
-  /* Même marge quand une bulle d'agent est posée au-dessus du dock. */
-  --reserve-dock-bulle: 260px;
   /* Dock masqué (Ctrl+Maj+B) : simple respiration. */
   --reserve-sans-dock: 22px;
-  /* Marge droite de la zone terminal quand le panneau du superviseur est ouvert. */
-  --reserve-panneau: min(460px, 50vw);
   /* Diamètre des avatars du dock, selon la densité réglée (32, 40 ou 48 px). */
   --dock-avatar: 40px;
 
   /* --- Calques (z-index, tous dans le même contexte d'empilement : .app) --- */
   --z-vue: 2; /* Accueil, Mosaïque, Fichiers modifiés, Récap */
-  --z-panneau: 4; /* panneau latéral du superviseur (sous le dock et les bulles) */
   --z-dock: 5;
   --z-bulle: 6; /* bulle d'agent ou du superviseur, posée au-dessus du dock */
   --z-voile: 11; /* fond transparent qui ferme popover et menu au clic */

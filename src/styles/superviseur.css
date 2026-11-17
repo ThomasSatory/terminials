@@ -1,27 +1,7 @@
-/* Superviseur : marque du dock, panneau latéral, bulle (maquette Superviseur).
+/* Superviseur : marque du dock, bulle, cartes et saisie (maquette Superviseur) ; le poste de suivi est dans poste.css.
    Classes préfixées `sup-`, valeurs des maquettes posées sur les jetons (tokens.css).
    Les keyframes partagés (spin, halo…) ne sont pas redéfinis ; ceux d'ici sont préfixés. */
 
-@keyframes sup-panIn {
-  from {
-    opacity: 0;
-    transform: translateX(16px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes sup-panOut {
-  from {
-    opacity: 1;
-    transform: none;
-  }
-  to {
-    opacity: 0;
-    transform: translateX(16px);
-  }
-}
 @keyframes sup-bubIn {
   from {
     opacity: 0;
@@ -56,16 +36,6 @@
   from {
     opacity: 0;
     transform: scale(0.3);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-@keyframes sup-card {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
   }
   to {
     opacity: 1;
@@ -355,6 +325,10 @@
     box-shadow 0.2s,
     color 0.3s;
 }
+/* Désactivé : présent mais en retrait, pleinement lisible au survol et poste de suivi ouvert. */
+.sup-marque[data-inactif]:not(:hover, :focus-visible, [data-ouvert="true"]) .sup-marque-carre {
+  opacity: 0.5;
+}
 .sup-marque[data-ouvert="true"] .sup-marque-carre {
   background: rgba(255, 255, 255, 0.1);
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.24);
@@ -397,32 +371,6 @@
 }
 .sup-marque[data-ouvert="true"] .sup-marque-souligne {
   transform: scaleX(1);
-}
-
-/* ---------- Panneau ---------- */
-
-.sup-panneau {
-  position: absolute;
-  top: 58px;
-  right: 14px;
-  bottom: 96px;
-  z-index: var(--z-panneau);
-  width: min(420px, calc(100% - 28px));
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--rayon-panneau);
-  background: var(--fond-panneau);
-  box-shadow:
-    inset 0 0 0 1px var(--filet-4),
-    var(--ombre-panneau);
-  overflow: hidden;
-  outline: none;
-  animation: sup-panIn 0.3s var(--courbe-glisse) both;
-}
-.sup-panneau[data-sortant="true"] {
-  animation: sup-panOut 0.2s ease-in both;
-  pointer-events: none;
 }
 
 /* En-tête */
@@ -1065,27 +1013,14 @@
   font-weight: var(--graisse-mono-normale-fort);
 }
 
-/* ---------- Pile « À valider » ---------- */
-
-.sup-pile {
-  flex-shrink: 0;
-  padding: 4px 12px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
 .sup-carte {
   border-radius: var(--rayon-panneau-petit);
-  background: #101116;
-  box-shadow:
-    inset 0 0 0 1.5px var(--accent),
-    0 0 0 4px rgba(var(--accent-rgb), 0.12),
-    0 0 30px rgba(var(--accent-rgb), 0.17);
+  background: var(--fond-app);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 9px;
-  animation: sup-card 0.36s var(--courbe-glisse) both;
 }
 .sup-carte-tete {
   display: flex;
@@ -1153,14 +1088,6 @@
   text-overflow: ellipsis;
   font-weight: var(--graisse-mono-normale-discret);
 }
-.sup-carte-compte {
-  flex-shrink: 0;
-  align-self: flex-start;
-  font-family: var(--police-mono);
-  font-size: var(--taille-mono-petit);
-  color: var(--texte-discret);
-  font-weight: var(--graisse-mono-normale-discret);
-}
 .sup-carte-boite {
   max-height: 168px;
   overflow: auto;
@@ -1224,10 +1151,21 @@
   font-weight: var(--graisse-mono-normale-discret);
 }
 .sup-carte-pourquoi {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   font-size: 12px;
   line-height: 1.45;
   color: var(--texte-discret);
   font-weight: var(--graisse-normale-discret);
+}
+.sup-carte-avis {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--accent);
+}
+.sup-carte-pourquoi .sup-carte-label {
+  display: block;
 }
 .sup-toujours {
   align-self: flex-start;
@@ -1263,7 +1201,7 @@
   box-shadow: none;
 }
 /* Écart de 6 et non 8 px : avec « Aller voir » et son raccourci, la rangée tient sur une
-   ligne dans les 420 px du panneau. */
+   ligne dans une carte étroite du poste de suivi. */
 .sup-carte-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1278,43 +1216,7 @@
   font-size: 12px;
   color: var(--suppression);
 }
-.sup-ensuite {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.sup-ensuite-ligne {
-  min-height: 32px;
-  padding: 0 8px;
-  border-radius: var(--rayon-controle-grand);
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: var(--texte-discret);
-  box-shadow: inset 0 0 0 1px var(--filet-2);
-  font-weight: var(--graisse-normale-discret);
-}
-.sup-ensuite-titre {
-  flex: 1;
-  min-width: 0;
-  color: var(--texte-fort);
-  font-size: 12.5px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-weight: var(--graisse-normale-fort);
-}
-.sup-ensuite-depuis {
-  flex-shrink: 0;
-  font-family: var(--police-mono);
-  font-size: var(--taille-mono-petit);
-}
-
 /* Écritures masquées (niveau trop bas, pause) */
-.sup-masque-hote {
-  flex-shrink: 0;
-  padding: 4px 12px 0;
-}
 .sup-masque {
   display: flex;
   align-items: center;
@@ -1404,13 +1306,6 @@
   color: var(--texte-discret);
   font-weight: var(--graisse-normale-discret);
 }
-.sup-champ-touche {
-  font-family: var(--police-mono);
-  font-size: 10px;
-  color: var(--texte-discret);
-  white-space: nowrap;
-  font-weight: var(--graisse-mono-normale-discret);
-}
 .sup-envoyer {
   width: 30px;
   height: 30px;
@@ -1480,7 +1375,7 @@
   padding: 0 14px;
 }
 
-/* ---------- Bulle (panneau fermé) ---------- */
+/* ---------- Bulle (poste de suivi fermé) ---------- */
 
 .sup-bulle {
   position: fixed;

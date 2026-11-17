@@ -18,7 +18,7 @@ export type ShortcutAction =
   | { type: "toggle-mosaique" }
   | { type: "toggle-dashboard" }
   | { type: "toggle-parametres" } // Ctrl+Maj+, : vue Paramètres
-  | { type: "toggle-superviseur" } // Ctrl+Maj+Espace : panneau du superviseur
+  | { type: "toggle-superviseur" } // Ctrl+Maj+Espace : poste de suivi du superviseur
   | { type: "new-group" }
   | { type: "toggle-group" } // replie/déplie le groupe du workspace actif
   | { type: "prev-workspace" }
@@ -44,7 +44,7 @@ export interface KeyLike {
  *  du terminal. Les flèches verticales déplacent le workspace actif dans son
  *  appartenance ; PageUp/PageDown déplacent l'onglet actif dans sa barre.
  *  KeyB masque/affiche le dock, KeyM bascule la mosaïque des agents. Comma ouvre les
- *  Paramètres, Space le panneau du superviseur (Ctrl+Maj+Espace n'a pas d'usage shell :
+ *  Paramètres, Space le poste de suivi du superviseur (Ctrl+Maj+Espace n'a pas d'usage shell :
  *  readline ne lie que Ctrl+Espace, laissé au shell). */
 const CTRL_SHIFT: Record<string, ShortcutAction> = {
   KeyO: { type: "open-folder" },

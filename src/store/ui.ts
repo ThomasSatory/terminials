@@ -53,8 +53,8 @@ export interface UiState {
   menuAjout: boolean;
   /** Dock affiché (Ctrl+Maj+B le masque). */
   dockVisible: boolean;
-  /** Espace au-dessus duquel une bulle d'agent est posée (null : aucune). La zone terminal
-      se réserve alors plus de place, et l'infobulle de cet avatar se tait sous la bulle. */
+  /** Espace au-dessus duquel une bulle d'agent est posée (null : aucune). L'infobulle de
+      cet avatar se tait sous la bulle ; la zone terminal, elle, ne bouge pas. */
   bulleEspace: string | null;
   /** Espace ouvert depuis la mosaïque : la barre du haut en montre la variante « retour »
       et Échap y ramène, jusqu'à la première saisie (lib/retourMosaique). */

@@ -46,7 +46,7 @@ const LIBELLES: { [K in ShortcutAction["type"]]: Libelle } = {
   "toggle-mosaique": { groupe: "Vues", libelle: "Mosaïque des agents" },
   "toggle-dock": { groupe: "Vues", libelle: "Masquer ou afficher le dock" },
   "toggle-parametres": { groupe: "Vues", libelle: "Paramètres", motsCles: "reglages" },
-  "toggle-superviseur": { groupe: "Vues", libelle: "Panneau du superviseur", motsCles: "superviseur" },
+  "toggle-superviseur": { groupe: "Vues", libelle: "Poste de suivi du superviseur", motsCles: "superviseur" },
 };
 
 /** Copier et coller appartiennent au terminal (xterm), pas à la table de l'app : elle les

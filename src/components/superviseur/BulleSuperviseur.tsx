@@ -3,6 +3,7 @@ import { useReglagesStore } from "../../store/reglages";
 import { useSuperviseurStore, demandesOuvertes } from "../../store/superviseur";
 import { useWorkspaceStore, hasAttention } from "../../store/workspace";
 import { useUiStore } from "../../store/ui";
+import { ouvrirPosteSuperviseur } from "../../lib/shortcutDispatch";
 import { useEspacesSuperviseur, type InfoEspaceSuperviseur } from "../../hooks/useEtatSuperviseur";
 import { usePlacementSuperviseur, type PlacementMarque } from "../../hooks/usePlacementSuperviseur";
 import { allerA } from "../../lib/executeurSuperviseur";
@@ -15,17 +16,17 @@ import "../../styles/superviseur.css";
 
 /**
  * Bulle de résumé du superviseur (maquette Superviseur), posée au-dessus de sa marque
- * dans le dock (`--z-bulle`), panneau fermé : « N agents vous attendent », une ligne par
+ * dans le dock (`--z-bulle`), poste fermé : « N agents vous attendent », une ligne par
  * espace (cliquable), « dont N écritures à valider », « Ouvrir ». Elle paraît peu après
- * qu'une situation change ou que le panneau se referme (le temps que l'on voie le dock
+ * qu'une situation change ou que le poste se referme (le temps que l'on voie le dock
  * bouger), et se retire seule au bout de DUREE_AFFICHAGE_MS : elle reviendra à la
- * prochaine fermeture du panneau. Seuls le × et le clic d'une ligne l'écartent pour la
+ * prochaine fermeture du poste. Seuls le × et le clic d'une ligne l'écartent pour la
  * situation, jusqu'à la suivante (`useSuperviseurStore.bulleEcartee`). Quand elle est
  * permise, la bulle d'agent (AgentBubble) se tait : une seule bulle à la fois.
  */
 
 const LARGEUR = 300;
-/** Délai entre le changement de situation (ou la fermeture du panneau) et la bulle. */
+/** Délai entre le changement de situation (ou la fermeture du poste) et la bulle. */
 export const DELAI_APPARITION_MS = 2000;
 /** Durée d'affichage avant retrait automatique. */
 export const DUREE_AFFICHAGE_MS = 10000;
@@ -55,7 +56,7 @@ export function BulleSuperviseur() {
 
   /** Retire la bulle ; `ecarter` (× ou ligne choisie) la fait taire pour cette situation.
       Le retrait automatique n'écarte rien : la bulle revient à la prochaine fermeture du
-      panneau (maquette : 2 s ≤ t − max(fermeture, changement) ≤ 12 s). */
+      poste (maquette : 2 s ≤ t − max(fermeture, changement) ≤ 12 s). */
   const retirer = useCallback((sig: string, ecarter: boolean) => {
     setSortant(true);
     clearTimeout(sortie.current);
@@ -209,7 +210,7 @@ export function CarteBulle({
           <span className="sup-bulle-note" data-accent={noteAccent}>
             {note}
           </span>
-          <button type="button" className="sup-prim sup-bulle-ouvrir" onClick={() => useSuperviseurStore.getState().ouvrirPanneau()}>
+          <button type="button" className="sup-prim sup-bulle-ouvrir" onClick={() => ouvrirPosteSuperviseur()}>
             Ouvrir
             <Kbd variante="sur-accent">Ctrl+Maj+Espace</Kbd>
           </button>

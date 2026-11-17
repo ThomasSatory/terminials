@@ -6,7 +6,8 @@
  * Tout est connu au pixel près sans mesurer le DOM : les boutons d'avatar font la taille
  * de l'avatar + 4 (44 px en densité normale) au pas de bouton + 8 (52), l'étiquette d'un
  * groupe reçoit une largeur explicite calculée ici (JetBrains Mono 11 px, 6,6 px par
- * signe), la pile fait trois décalages, un bouton et le compteur (88 px). La taille des
+ * signe), la pile fait trois décalages, un bouton et le compteur (88 px ; moins pour un groupe
+ * d'un ou deux membres, qui n'a pas trois avatars à empiler). La taille des
  * avatars suit le réglage « Densité du dock » (32, 40 ou 48 px) ; chaque fonction la
  * reçoit en dernier argument, 40 par défaut. Le composant n'a donc à mesurer que la place
  * disponible ; l'estimation et le rendu ne peuvent pas diverger, et le repli ne
@@ -94,11 +95,38 @@ export function largeurEtiquette(nom: string): number {
   return Math.min(LARGEUR_ETIQUETTE_MAX, 34 + Math.ceil([...nom].length * 6.6));
 }
 
+/** Avatars réellement dessinés dans la pile d'un groupe de `n` membres (trois au plus). */
+function visiblesPile(n: number): number {
+  return Math.max(1, Math.min(n, VISIBLES_PILE));
+}
+
+/**
+ * Abscisse du compteur dans la boîte d'une pile de `n` membres : collé au dernier avatar
+ * VISIBLE. Une pile d'un ou deux membres n'a pas trois avatars : le compteur posé à la place
+ * prévue pour trois (`geometrieAvatars().compteur`) laissait un trou avant lui.
+ */
+export function abscisseCompteur(n: number, taille: number = TAILLE_AVATAR_DEFAUT): number {
+  return (visiblesPile(n) - 1) * DECALAGE_PILE + geometrieAvatars(taille).bouton + 2;
+}
+
+/** Un groupe d'un seul membre se replie sans compteur : « 1 » n'apprend rien et l'élargirait. */
+export function pileAvecCompteur(n: number): boolean {
+  return n > 1;
+}
+
+/**
+ * Largeur de la pile d'un groupe replié de `n` membres : avatars visibles + compteur. Un seul
+ * membre : l'avatar seul, donc la même largeur que déplié (replier ne déplace rien).
+ */
+export function largeurPile(n: number, taille: number = TAILLE_AVATAR_DEFAUT): number {
+  const avatars = (visiblesPile(n) - 1) * DECALAGE_PILE + geometrieAvatars(taille).bouton;
+  return pileAvecCompteur(n) ? avatars + LARGEUR_COMPTEUR_PILE : avatars;
+}
+
 /** Largeur de la boîte des membres : rangée d'avatars, pile si replié, rien si vide. */
 export function largeurMembres(n: number, replie: boolean, taille: number = TAILLE_AVATAR_DEFAUT): number {
   if (n <= 0) return 0;
-  const g = geometrieAvatars(taille);
-  return replie ? g.pile : n * g.pas - ECART_BANDE;
+  return replie ? largeurPile(n, taille) : n * geometrieAvatars(taille).pas - ECART_BANDE;
 }
 
 /** Largeur d'un segment. Groupe : marge 6 + étiquette + 2 + membres + marge 4. */
@@ -239,8 +267,9 @@ export function placeMembre(
 
 /**
  * Abscisse de l'indicateur (boîte de la largeur d'un bouton, centrée sous l'avatar) dans la
- * bande, ou null si l'espace actif n'y est pas. Sous une pile, il se pose sous son
- * deuxième avatar, au centre visuel de la pile.
+ * bande, ou null si l'espace actif n'y est pas. Sous une pile, il se pose au centre visuel
+ * de ses avatars visibles : sous le deuxième d'une pile de trois, sous l'unique avatar d'une
+ * pile d'un seul membre.
  */
 export function abscisseIndicateur(
   segs: readonly SegmentDock<{ id: string }>[],
@@ -255,7 +284,9 @@ export function abscisseIndicateur(
     const i = seg.membres.findIndex((w) => w.id === activeId);
     if (i === -1) continue;
     const debut = xs[s] + (seg.id === null ? 0 : 6 + largeurEtiquette(seg.nom) + 2);
-    return seg.id !== null && replis.has(seg.id) ? debut + DECALAGE_PILE : debut + i * geometrieAvatars(taille).pas;
+    return seg.id !== null && replis.has(seg.id)
+      ? debut + ((visiblesPile(seg.membres.length) - 1) * DECALAGE_PILE) / 2
+      : debut + i * geometrieAvatars(taille).pas;
   }
   return null;
 }

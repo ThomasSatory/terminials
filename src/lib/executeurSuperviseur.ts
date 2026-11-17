@@ -20,7 +20,8 @@ import { lireDernieresLignes } from "./terminalRegistry";
 import { focusTab } from "./tabFocus";
 import { fermerEspace } from "./shortcutDispatch";
 import { etatEspace } from "./etatAgent";
-import { nomInterlocuteur, relaisVers, sourcesEtat } from "./etatEspacesSuperviseur";
+import { groupeCourant, nomInterlocuteur, relaisVers, sourcesEtat } from "./etatEspacesSuperviseur";
+import { nettoyerResume } from "./posteSuperviseur";
 import { couleurHex, paireAutorisee, PAIRE_SUPERVISEUR } from "./reglages";
 import type { ReponseEnAttente, ReponseOutil, RequeteOutil } from "./outilsProtocole";
 import {
@@ -53,7 +54,7 @@ import { texteTransmis } from "./superviseurLibelles";
  * ceux des agents des espaces n'y laissent que ce qui compte pour l'utilisateur (une
  * question routée, une notification).
  *
- * Également ici : ce que font les boutons du panneau sur une carte (Autoriser, Refuser),
+ * Également ici : ce que font les boutons du poste de suivi sur une carte (Autoriser, Refuser),
  * aller à un espace, et les actions posées dans le fil.
  */
 
@@ -305,6 +306,16 @@ export async function executer(req: RequeteOutil): Promise<ReponseOutil> {
       await superviseurApi.notifierSysteme(titre, texte).catch(() => {});
       journal.fin("fait");
       return ok({ statut: "fait" });
+    }
+
+    case "espace.resumer": {
+      const texte = nettoyerResume(chaine(args.texte));
+      if (!texte) return journal.echec(affiche(), "erreur", "Résumé vide.");
+      const r = designer();
+      if (!r.ok) return journal.echec(affiche(), "erreur", r.erreur);
+      // Silencieux, sans journal.ouvrir : un résumé par espace à chaque réveil noierait le fil.
+      useSuperviseurStore.getState().poserResume(r.valeur.id, texte, groupeCourant(r.valeur.id));
+      return ok({ statut: "fait", espace: { id: r.valeur.id, nom: r.valeur.name } });
     }
 
     case "demander": {
@@ -726,6 +737,10 @@ export function allerA(wsId: string, tabId?: string, focus = true): void {
   const s = useWorkspaceStore.getState();
   const ws = s.workspaces.find((w) => w.id === wsId);
   if (!ws) return;
+  // « Aller au terminal » doit révéler le terminal : le poste de suivi se referme. Quand
+  // le superviseur agit seul (`focus` faux), il reste ouvert : le démonter ferait perdre
+  // le focus du prompt que l'utilisateur est peut-être en train de remplir.
+  if (focus) useSuperviseurStore.getState().fermerPanneau();
   useDashboardStore.getState().close();
   const ui = useUiStore.getState();
   ui.fermerCalques();

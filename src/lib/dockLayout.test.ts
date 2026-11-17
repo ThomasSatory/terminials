@@ -10,6 +10,9 @@ import {
   pileGroupe,
   placeMembre,
   abscisseIndicateur,
+  abscisseCompteur,
+  pileAvecCompteur,
+  largeurPile,
   melangeOpaque,
   pasDefilementBord,
   geometrieAvatars,
@@ -65,6 +68,25 @@ describe("largeurs", () => {
     expect(largeurMembres(5, false)).toBe(252);
     expect(largeurMembres(5, true)).toBe(88);
     expect(largeurMembres(0, true)).toBe(0);
+  });
+
+  it("pile d'un ou deux membres : le compteur colle au dernier avatar visible, sans trou", () => {
+    // Trois membres ou plus : la pile complète de la maquette (avatars à 0, 10, 20 ; compteur à 66).
+    expect(abscisseCompteur(3)).toBe(66);
+    expect(abscisseCompteur(7)).toBe(66);
+    expect(largeurPile(3)).toBe(LARGEUR_PILE);
+    // Deux membres : avatars à 0 et 10 (bord droit 54), compteur à 56.
+    expect(abscisseCompteur(2)).toBe(56);
+    expect(largeurMembres(2, true)).toBe(78);
+    // Un membre : l'avatar seul, sans compteur. Replié, le groupe garde sa largeur de déplié.
+    expect(pileAvecCompteur(1)).toBe(false);
+    expect(pileAvecCompteur(2)).toBe(true);
+    expect(largeurMembres(1, true)).toBe(44);
+    expect(largeurMembres(1, true)).toBe(largeurMembres(1, false));
+    expect(largeurPile(1, 48)).toBe(52);
+    // Dès deux membres, le compteur (22 px + marge de 2) ferme la boîte de la pile.
+    for (const n of [2, 3, 5]) expect(largeurPile(n)).toBe(abscisseCompteur(n) - 2 + 24);
+    expect(largeurPile(2, 32)).toBe(70);
   });
 
   it("segment : le hors-groupe n'a ni étiquette ni marges, et ne se replie jamais", () => {
@@ -222,6 +244,22 @@ describe("abscisseIndicateur", () => {
 
   it("sous la pile d'un groupe replié : au deuxième avatar", () => {
     expect(abscisseIndicateur(segs, new Set(["produit"]), "docs")).toBe(113 + 89 + 10);
+  });
+
+  it("sous la pile d'un groupe replié d'un ou deux membres : au centre de ses avatars", () => {
+    const petits = segmentsDock(
+      [ws("seul", "un"), ws("a", "deux"), ws("b", "deux")],
+      [
+        { id: "un", name: "un" },
+        { id: "deux", name: "deux" },
+      ],
+    );
+    const replis = new Set(["un", "deux"]);
+    // « un » : marge 6 + étiquette (34 + 14) + 2 ; son unique avatar est à 0.
+    expect(abscisseIndicateur(petits, replis, "seul")).toBe(56);
+    // « deux » commence après « un » (56 + pile 44, sans compteur + marge 4) + écart 8, puis marge 6 +
+    // étiquette (34 + 27) + 2 ; avatars à 0 et 10, centre à 5.
+    expect(abscisseIndicateur(petits, replis, "b")).toBe(112 + 69 + 5);
   });
 
   it("null sans espace actif ou s'il n'est pas dans la bande", () => {

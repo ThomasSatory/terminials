@@ -24,7 +24,7 @@ import { useSuperviseurStore, SUPERVISEUR } from "../store/superviseur";
 import { useReglagesStore } from "../store/reglages";
 import { REGLAGES_DEFAUT, type ReglagesApp } from "./reglages";
 import type { Origine, OutilId, RequeteOutil } from "./outilsProtocole";
-import { autoriserDemande, executer, refuserDemande, traiterRequete } from "./executeurSuperviseur";
+import { allerA, autoriserDemande, executer, refuserDemande, traiterRequete } from "./executeurSuperviseur";
 
 const SUP: Origine = { type: "superviseur" };
 
@@ -128,6 +128,41 @@ describe("observer", () => {
     const r = await executer(req("terminal.lire", { espace: "api" }));
     expect(r).toMatchObject({ ok: true, data: { espace: { id: "e1" }, onglet: { id: "e1:t", titre: "claude" } } });
     expect(outils()[0]).toMatchObject({ args: "api-paiements › claude  --lignes 40" });
+  });
+
+  it("espace.resumer : posé dans le store avec le groupe courant, silencieux", async () => {
+    const r = await executer(req("espace.resumer", { espace: "api", texte: "Écrit les tests du calcul des avoirs." }));
+    expect(r).toEqual({ ok: true, data: { statut: "fait", espace: { id: "e1", nom: "api-paiements" } } });
+    expect(useSuperviseurStore.getState().resumes.e1).toMatchObject({ texte: "Écrit les tests du calcul des avoirs.", groupe: "repos" });
+    expect(useSuperviseurStore.getState().fil).toEqual([]);
+    expect(writePty).not.toHaveBeenCalled();
+    // Un agent qui travaille range l'espace dans « au travail ».
+    useWorkspaceStore.setState({ busyPtys: { 12: true } });
+    await executer(req("espace.resumer", { espace: "site-vitrine", texte: "Refait la page d'accueil." }));
+    expect(useSuperviseurStore.getState().resumes.e2.groupe).toBe("travail");
+  });
+
+  it("espace.resumer : espace introuvable ou texte vide, erreur au fil", async () => {
+    expect(await executer(req("espace.resumer", { espace: "infra", texte: "x" }))).toMatchObject({ ok: false });
+    expect(await executer(req("espace.resumer", { espace: "api", texte: "  " }))).toEqual({ ok: false, erreur: "Résumé vide." });
+    expect(useSuperviseurStore.getState().resumes).toEqual({});
+    expect(outils().every((o) => o.statut === "erreur")).toBe(true);
+    expect(outils()).toHaveLength(2);
+  });
+
+  it("espace.resumer : refusé depuis un espace", async () => {
+    const r = await executer(req("espace.resumer", { espace: "api", texte: "x" }, { type: "espace", workspaceId: "e2" }));
+    expect(r).toEqual({ ok: false, erreur: "Réservé au superviseur." });
+    expect(useSuperviseurStore.getState().resumes).toEqual({});
+  });
+
+  it("espace.resumer : texte nettoyé et borné", async () => {
+    await executer(req("espace.resumer", { espace: "e1", texte: `\u001b[31mRouge\u001b[0m ${"a".repeat(300)}` }));
+    const t = useSuperviseurStore.getState().resumes.e1.texte;
+    expect(t.startsWith("Rouge aaa")).toBe(true);
+    expect(t).not.toContain("\u001b");
+    expect(Array.from(t)).toHaveLength(160);
+    expect(t.endsWith("…")).toBe(true);
   });
 
   it("désignation introuvable : erreur avec les candidats", async () => {
@@ -269,5 +304,20 @@ describe("traiterRequete", () => {
     useWorkspaceStore.setState({ workspaces: null as unknown as Workspace[] });
     await traiterRequete(req("terminal.lire", { espace: "api" }));
     expect(superviseurApi.repondreOutil).toHaveBeenCalledWith(n, expect.objectContaining({ ok: false, erreur: expect.stringContaining("Erreur inattendue") }));
+  });
+});
+
+describe("allerA", () => {
+  it("« Aller au terminal » referme le poste de suivi et révèle l'espace visé", () => {
+    useSuperviseurStore.getState().ouvrirPanneau();
+    allerA("e1", "e1:t");
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(false);
+    expect(useWorkspaceStore.getState().activeId).toBe("e1");
+  });
+  it("quand le superviseur agit seul (focus faux), le poste reste ouvert", () => {
+    useSuperviseurStore.getState().ouvrirPanneau();
+    allerA("e1", "e1:t", false);
+    expect(useSuperviseurStore.getState().panneauOuvert).toBe(true);
+    expect(useWorkspaceStore.getState().activeId).toBe("e1");
   });
 });

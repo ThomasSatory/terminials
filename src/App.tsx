@@ -17,7 +17,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { MenuTerminal } from "./components/MenuTerminal";
 import { Toast } from "./components/Toast";
 import { Parametres } from "./components/parametres/Parametres";
-import { PanneauSuperviseur } from "./components/superviseur/PanneauSuperviseur";
+import { PosteSuperviseur } from "./components/superviseur/PosteSuperviseur";
 import { BulleSuperviseur } from "./components/superviseur/BulleSuperviseur";
 import { useShortcuts } from "./hooks/useShortcuts";
 import { useApparence } from "./hooks/useApparence";
@@ -37,6 +37,7 @@ import { useSuperviseurStore } from "./store/superviseur";
 import { focusTab } from "./lib/tabFocus";
 import { echeanceAnticipee, nextDelayMs, DIRTY_BUDGET, PORTS_BUDGET } from "./lib/pollSchedule";
 import { vuePleinEcran } from "./lib/vuePleinEcran";
+import { useReserveDock } from "./hooks/useReserveDock";
 import "./styles/shell.css";
 
 export default function App() {
@@ -58,13 +59,10 @@ export default function App() {
   const clearToast = useWorkspaceStore((s) => s.clearToast);
   const dashboardOpen = useDashboardStore((s) => s.open);
   const vue = useUiStore((s) => s.vue);
-  const dockVisible = useUiStore((s) => s.dockVisible);
-  const bulleVisible = useUiStore((s) => s.bulleEspace !== null);
   const paletteOuverte = useUiStore((s) => s.paletteOuverte);
   const parametresOuverts = useUiStore((s) => s.parametres !== null);
-  // Panneau du superviseur ouvert : la zone terminal lui laisse la droite (maquette).
-  // Actif ou non : désactivé pendant qu'il est ouvert, le panneau montre de quoi le
-  // réactiver, et ne doit pas pour autant couvrir la fin des lignes du terminal.
+  // Poste de suivi du superviseur ouvert : vue plein écran (vuePleinEcran), actif ou non :
+  // désactivé, il montre de quoi le réactiver.
   const panneauOuvert = useSuperviseurStore((s) => s.panneauOuvert);
 
   // true tant que la restauration n'a pas statué : évite le flash de l'état
@@ -366,25 +364,19 @@ export default function App() {
     diffOuvert: active?.diffOpen ?? false,
     vue,
     parametresOuverts,
+    superviseurOuvert: panneauOuvert,
   });
   // Réserve basse de la pile de terminaux : la dernière ligne ne passe jamais sous le
-  // dock (ni sous une bulle d'agent posée dessus). Pas de transition : chaque image
-  // intermédiaire redimensionnerait le PTY.
-  const reserve = !dockVisible
-    ? "var(--reserve-sans-dock)"
-    : bulleVisible
-      ? "var(--reserve-dock-bulle)"
-      : "var(--reserve-dock)";
+  // dock ; une bulle posée dessus flotte sans retailler la zone (lib/reserveBasse). Pas de
+  // transition : chaque image intermédiaire redimensionnerait le PTY.
+  const reserve = useReserveDock();
 
   // Vues qui couvrent aussi la barre du haut : la barre, cachée dessous, sort de l'ordre
   // de tabulation (inert) au lieu de recevoir un focus invisible.
-  const barreCouverte = plein === "recap" || plein === "accueil" || plein === "mosaique";
+  const barreCouverte = plein === "recap" || plein === "accueil" || plein === "mosaique" || plein === "superviseur";
 
   return (
-    // Panneau du superviseur ouvert : les vues sous la barre (Paramètres, fichiers
-    // modifiés) lui réservent sa place à droite, comme les terminaux, pour que leurs
-    // commandes (« Retour au terminal ») ne passent pas dessous.
-    <div className="app" data-panneau-superviseur={panneauOuvert || undefined}>
+    <div className="app">
       {/* Palette ouverte : dialogue modal (aria-modal). La coquille rend inerte TOUT ce
           qu'elle recouvre, d'un seul attribut : barre, terminaux, vues, dock, bulle,
           calques. `display: contents` : l'enveloppe ne crée aucune boîte, la mise en page
@@ -406,10 +398,7 @@ export default function App() {
             cassé), JAMAIS de démontage (le cleanup d'un TerminalPane tue son shell).
             Sous une vue plein écran, le terminal actif est masqué de la même façon : il
             ne garde pas la saisie, et retrouve focus et taille au retour. */}
-        <div
-          className="app-terminaux"
-          style={{ bottom: reserve, right: panneauOuvert ? "var(--reserve-panneau)" : undefined }}
-        >
+        <div className="app-terminaux" style={{ bottom: reserve }}>
           {workspaces.map((w) => (
             <div
               key={w.id}
@@ -430,7 +419,7 @@ export default function App() {
             pour revenir), terminaux toujours montés dessous. */}
         {plein === "parametres" && <Parametres />}
       </div>
-      {/* Récap, accueil et mosaïque couvrent aussi la barre du haut, jamais le dock : le
+      {/* Récap, accueil, mosaïque et poste de suivi couvrent aussi la barre du haut, jamais le dock : le
           récap porte sa propre barre (« Activité », onglets, Fermer), comme la maquette.
           La zone terminal ne change pas de taille pour autant (aucun refit inutile). */}
       {plein === "recap" && <DashboardOverlay />}
@@ -444,8 +433,13 @@ export default function App() {
           <Mosaique />
         </div>
       )}
-      {/* Panneau du superviseur : flottant à droite, sous le dock et les bulles. */}
-      <PanneauSuperviseur />
+      {/* Poste de suivi du superviseur : vue plein écran, barre du haut comprise, sous le
+          dock et les bulles ; les terminaux restent montés dessous, à leur taille. */}
+      {plein === "superviseur" && (
+        <div className="app-vue-totale">
+          <PosteSuperviseur />
+        </div>
+      )}
       <Dock accueil={plein === "accueil"} />
       <AgentBubble />
       <BulleSuperviseur />

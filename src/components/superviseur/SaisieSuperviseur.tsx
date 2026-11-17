@@ -1,24 +1,35 @@
-import { useState, type Ref } from "react";
+import { useId, useState, type Ref } from "react";
 import { useReglagesStore } from "../../store/reglages";
 import { useSuperviseurStore, SUPERVISEUR } from "../../store/superviseur";
 import { useWorkspaceStore, hasAttention } from "../../store/workspace";
 import { envoyerAuSuperviseur } from "../../lib/superviseurApi";
-import { suggestionsSuperviseur } from "../../lib/superviseurLibelles";
+import { suggestionsEspace, suggestionsSuperviseur } from "../../lib/superviseurLibelles";
+import { Kbd } from "../ui/Kbd";
 import { IconeEnvoyer } from "./elements";
 
 /**
- * Suggestions et champ de saisie (maquette Superviseur) : Entrée envoie au superviseur
- * (`envoyerAuSuperviseur`, même chemin que la palette), le message entre au fil avec ❯.
+ * Suggestions et champ de saisie, fixés en bas du poste de suivi : Entrée envoie au
+ * superviseur (`envoyerAuSuperviseur`, même chemin que la palette), le message entre au fil
+ * avec ❯. Avec un espace (`espace`), le message est « à propos » de lui : l'étiquette, le
+ * texte d'aide et les suggestions le disent.
  */
-export function SaisieSuperviseur({ champRef }: { champRef: Ref<HTMLInputElement> }) {
+export function SaisieSuperviseur({
+  champRef,
+  espace = null,
+}: {
+  champRef: Ref<HTMLInputElement>;
+  espace?: { id: string; nom: string } | null;
+}) {
+  const idChamp = useId();
   const nom = useReglagesStore((s) => s.reglages.superviseur.nom);
   const pause = useReglagesStore((s) => s.reglages.superviseur.pause);
   const [brouillon, setBrouillon] = useState("");
-  const suggestions = useSuggestions();
+  const generales = useSuggestions();
+  const suggestions = espace ? suggestionsEspace(espace.nom) : generales;
 
   const envoyer = (t: string) => {
     if (!t.trim()) return;
-    envoyerAuSuperviseur(t);
+    envoyerAuSuperviseur(t, espace?.id);
     setBrouillon("");
   };
   const plein = brouillon.trim().length > 0;
@@ -34,28 +45,35 @@ export function SaisieSuperviseur({ champRef }: { champRef: Ref<HTMLInputElement
           ))}
         </div>
       )}
+      <label className="sup-champ-etiquette" htmlFor={idChamp}>
+        {espace ? `À ${nom}, à propos de ${espace.nom}` : `À ${nom}, sur tous les espaces`}
+      </label>
       <div className="sup-champ">
         <span className="sup-invite" aria-hidden="true">
           ❯
         </span>
         <input
           ref={champRef}
+          id={idChamp}
           className="sup-champ-texte"
-          aria-label={`Parler à ${nom}`}
-          placeholder={pause ? `${nom} est en pause` : `Demander à ${nom}…`}
+          placeholder={
+            pause
+              ? `${nom} est en pause`
+              : espace
+                ? `Une consigne pour ${espace.nom} …`
+                : "Demandez où en sont vos agents, ou donnez une consigne…"
+          }
           value={brouillon}
           onChange={(e) => setBrouillon(e.target.value)}
           onKeyDown={(e) => {
-            // Ctrl+Entrée appartient à la carte « À valider » (géré par le panneau).
+            // Ctrl+Entrée appartient à la carte « À valider » (géré par la racine du poste).
             if (e.key === "Enter" && !e.ctrlKey && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               envoyer(brouillon);
             }
           }}
         />
-        <span className="sup-champ-touche" aria-hidden="true">
-          Entrée
-        </span>
+        <Kbd>Entrée</Kbd>
         <button
           type="button"
           className="sup-prim sup-envoyer"

@@ -22,7 +22,7 @@ import {
 import { envoyerAuSuperviseur } from "../lib/superviseurApi";
 import { ligneEtatSuperviseur } from "../lib/superviseurLibelles";
 import { reglagesCherchables } from "../lib/reglagesIndex";
-import { dispatchShortcut } from "../lib/shortcutDispatch";
+import { dispatchShortcut, ouvrirPosteSuperviseur } from "../lib/shortcutDispatch";
 import { etatEspace, etatOnglet, type EtatAgent } from "../lib/etatAgent";
 import { titreSansGlyphe } from "../lib/mosaique";
 import { cheminCourt, quandRelatif } from "../lib/espacesRecents";
@@ -82,6 +82,7 @@ function executer(cible: CiblePalette): void {
     case "reprendre": {
       const e = lireRecentsCourants().find((x) => x.cwd === cible.cwd && x.nom === cible.nom);
       if (!e) return;
+      useSuperviseurStore.getState().fermerPanneau();
       useDashboardStore.getState().close();
       useUiStore.getState().setVue("terminal");
       useUiStore.getState().fermerParametres();
@@ -89,10 +90,11 @@ function executer(cible: CiblePalette): void {
       return;
     }
     case "superviseur":
-      useSuperviseurStore.getState().ouvrirPanneau();
+      ouvrirPosteSuperviseur();
       if (cible.demande) envoyerAuSuperviseur(cible.demande);
       return;
     case "reglage":
+      useSuperviseurStore.getState().fermerPanneau();
       useDashboardStore.getState().close();
       useUiStore.getState().ouvrirParametres(cible.section, [cible.ligne]);
       return;

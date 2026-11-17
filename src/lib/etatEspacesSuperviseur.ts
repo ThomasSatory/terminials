@@ -2,6 +2,7 @@ import { useWorkspaceStore, navigableOrder, type Group, type Workspace } from ".
 import { useSuperviseurStore, SUPERVISEUR, espaceEnRelais, type LigneEtat } from "../store/superviseur";
 import { useReglagesStore } from "../store/reglages";
 import { etatEspace, etatOnglet } from "./etatAgent";
+import { cartesParEspace, groupeDuPoste, resumeAffiche, type GroupePoste } from "./posteSuperviseur";
 import { construireEtatEspaces, lignesEtats, type SourcesEtatEspaces } from "./outilsSuperviseur";
 
 /**
@@ -17,11 +18,21 @@ function ordreComplet(ws: Workspace[], groups: Group[]): string[] {
   return [...ordre, ...ws.map((w) => w.id).filter((id) => !ordre.includes(id))];
 }
 
+/** Groupe du poste de suivi où se range l'espace à cet instant (vide si l'espace n'existe plus). */
+export function groupeCourant(wsId: string): GroupePoste {
+  const w = useWorkspaceStore.getState();
+  const sup = useSuperviseurStore.getState();
+  const ws = w.workspaces.find((x) => x.id === wsId);
+  const etat = ws ? etatEspace(ws, { tabPtys: w.tabPtys, busyPtys: w.busyPtys, tabsTermines: w.tabsTermines }) : "repos";
+  return groupeDuPoste(etat, espaceEnRelais(sup, wsId), cartesParEspace(sup.demandes).get(wsId)?.length ?? 0);
+}
+
 export function sourcesEtat(): SourcesEtatEspaces {
   const w = useWorkspaceStore.getState();
   const sup = useSuperviseurStore.getState();
   const travail = { tabPtys: w.tabPtys, busyPtys: w.busyPtys, tabsTermines: w.tabsTermines };
   const parId = new Map(w.workspaces.map((x) => [x.id, x]));
+  const cartes = cartesParEspace(sup.demandes);
   return {
     espaces: w.workspaces,
     groupes: w.groups,
@@ -37,6 +48,15 @@ export function sourcesEtat(): SourcesEtatEspaces {
     },
     sessionsBloquees: sup.sessionsBloquees,
     enRelais: (id) => espaceEnRelais(sup, id),
+    // Le résumé du superviseur seulement s'il est à jour (même groupe qu'à sa pose).
+    resume: (id) => {
+      const pose = sup.resumes[id];
+      const ws = parId.get(id);
+      if (!pose || !ws) return null;
+      const groupe = groupeDuPoste(etatEspace(ws, travail), espaceEnRelais(sup, id), cartes.get(id)?.length ?? 0);
+      const r = resumeAffiche(pose, groupe, "");
+      return r.source === "superviseur" ? r.texte : null;
+    },
   };
 }
 

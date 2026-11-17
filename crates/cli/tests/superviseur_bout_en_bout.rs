@@ -304,10 +304,11 @@ fn sous_commandes_des_outils_et_arguments_envoyes() {
     let t = Temp::new("args");
     let recues = faux_serveur(&t.0.join("terminials.sock"));
     let cli = env!("CARGO_BIN_EXE_terminials");
-    let appels: [&[&str]; 8] = [
+    let appels: [&[&str]; 9] = [
         &["espaces", "api"],
         &["prevenir", "Fini", "--titre", "api", "--espace", "api"],
         &["demander", "site", "Quel format ?"],
+        &["resumer", "api", "Écrit les tests du calcul des avoirs."],
         &[
             "creer",
             "--dossier",
@@ -348,6 +349,10 @@ fn sous_commandes_des_outils_et_arguments_envoyes() {
         (
             "demander",
             json!({"espace":"site","question":"Quel format ?"}),
+        ),
+        (
+            "espace.resumer",
+            json!({"espace":"api","texte":"Écrit les tests du calcul des avoirs."}),
         ),
         (
             "espace.creer",

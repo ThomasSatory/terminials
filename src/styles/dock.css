@@ -340,7 +340,8 @@
 /* Compteur à droite de la pile : apparaît une fois les avatars rassemblés. */
 .dock-compte {
   position: absolute;
-  /* left : posé par le composant (lib/dockLayout, geometrieAvatars().compteur). */
+  /* left : posé par le composant, collé au dernier avatar visible (lib/dockLayout,
+     abscisseCompteur). */
   left: 66px;
   top: calc((var(--dock-bouton) - 20px) / 2);
   min-width: 22px;

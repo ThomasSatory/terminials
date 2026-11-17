@@ -7,6 +7,8 @@ import { nomBoutPaire } from "../../lib/outilsSuperviseur";
 import { couleurEspace } from "../../lib/couleurEspace";
 import { monogramme } from "../../lib/monogram";
 import { LIBELLES_NIVEAU, NIVEAUX, descriptionNiveau } from "../../lib/superviseurLibelles";
+import { pluriel } from "../../lib/pluriel";
+import { libellesCompteurs } from "../../lib/posteSuperviseur";
 import type { EtatAffiche } from "../../hooks/useEtatSuperviseur";
 import { Kbd } from "../ui/Kbd";
 import {
@@ -22,18 +24,21 @@ import {
 } from "./elements";
 
 /**
- * En-tête du panneau (maquette Superviseur) : viseur et nom renommable en place (≤ 16
- * caractères, Entrée valide, Échap annule), ligne d'état, échanges toujours autorisés
- * (compteur, liste dépliable), interrupteur de pause, fermer ; puis le niveau d'autonomie
- * (radiogroup Observer / Réorganiser / Agir) et ce qu'il permet.
+ * En-tête du poste de suivi : viseur et nom renommable en place (≤ 16 caractères, Entrée
+ * valide, Échap annule), sous-titre, compteurs (vous attendent / au travail / au repos),
+ * niveau d'autonomie (radiogroup Observer / Réorganiser / Agir), échanges toujours
+ * autorisés (compteur, liste dépliable), interrupteur de pause, fermer ; puis ce que le
+ * niveau permet.
  */
 export function EnTeteSuperviseur({
   etat,
   pairesOuvertes,
   basculerPaires,
   fermer,
+  compteurs,
 }: {
   etat: EtatAffiche;
+  compteurs: { attendent: number; travail: number; repos: number };
   pairesOuvertes: boolean;
   basculerPaires: () => void;
   fermer: () => void;
@@ -41,10 +46,12 @@ export function EnTeteSuperviseur({
   const nom = useReglagesStore((s) => s.reglages.superviseur.nom);
   const niveau = useReglagesStore((s) => s.reglages.superviseur.niveau);
   const pause = useReglagesStore((s) => s.reglages.superviseur.pause);
+  const nbEspaces = compteurs.attendent + compteurs.travail + compteurs.repos;
+  const libelles = libellesCompteurs(compteurs);
   const nbPaires = useReglagesStore((s) => s.reglages.superviseur.paires.length);
   const [brouillon, setBrouillon] = useState<string | null>(null);
   // Fin du renommage (Entrée, Échap, coche, croix) : le champ disparaît avec le focus, qui
-  // tombait sur <body> — hors du panneau, Échap ne le fermait plus. Il revient au nom.
+  // tombait sur <body> — hors du poste de suivi, Échap ne le fermait plus. Il revient au nom.
   const nomRef = useRef<HTMLButtonElement>(null);
   const editait = useRef(false);
   useEffect(() => {
@@ -67,7 +74,7 @@ export function EnTeteSuperviseur({
       e.preventDefault();
       valider();
     } else if (e.key === "Escape") {
-      // Échap annule le renommage, sans fermer le panneau.
+      // Échap annule le renommage, sans fermer le poste de suivi.
       e.preventDefault();
       e.stopPropagation();
       setBrouillon(null);
@@ -115,10 +122,26 @@ export function EnTeteSuperviseur({
               </button>
             </span>
           )}
-          <span className="sup-ligne-etat sup-tronque" data-ton={etat.ton}>
-            {etat.ligne}
+          <span className="sup-ligne-etat sup-tronque" data-ton={pause ? "discret" : etat.ton}>
+            {pause ? "en pause, aucun jeton consommé" : `veille sur ${pluriel(nbEspaces, "espace", "espaces")}`}
           </span>
         </span>
+      </div>
+      <div className="sup-poste-compteurs" role="group" aria-label="Espaces par état">
+        <span className="sup-poste-compteur" data-genre="attente">
+          <span className="sup-poste-point" aria-hidden="true" />
+          {libelles.attendent}
+        </span>
+        <span className="sup-poste-compteur" data-genre="travail">
+          <span className="sup-poste-arc" aria-hidden="true" />
+          {libelles.travail}
+        </span>
+        <span className="sup-poste-compteur" data-genre="repos">
+          {libelles.repos}
+        </span>
+      </div>
+      <Niveaux niveau={niveau} />
+      <div className="sup-tete-actions">
         <button
           type="button"
           className="hov sup-tete-reglage"
@@ -144,11 +167,16 @@ export function EnTeteSuperviseur({
           </span>
           En pause
         </button>
-        <button type="button" className="hov sup-tete-fermer" aria-label="Fermer le superviseur (Échap)" title="Fermer (Échap)" onClick={fermer}>
-          <IconeCroix taille={12} />
+        <button
+          type="button"
+          className="hov sup-tete-fermer sup-poste-fermer"
+          aria-label="Fermer le poste de suivi (Échap)"
+          title="Fermer (Échap)"
+          onClick={fermer}
+        >
+          <Kbd variante="puce">Échap</Kbd>
         </button>
       </div>
-      <Niveaux niveau={niveau} />
       <div className="sup-niveau-phrase">
         <IconeBouclier />
         <span>{descriptionNiveau(niveau, nom)}</span>

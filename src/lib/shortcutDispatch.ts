@@ -7,7 +7,6 @@ import type { ShortcutAction } from "./shortcuts";
 import { useWorkspaceStore, navigableOrder, type Workspace } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
 import { useUiStore } from "../store/ui";
-import { useReglagesStore } from "../store/reglages";
 import { useSuperviseurStore } from "../store/superviseur";
 
 /** Ferme les PTYs backend de tous les onglets d'un workspace (avant de le retirer du store). */
@@ -70,6 +69,7 @@ export function fermerTousLesEspaces(): number {
  * suit (TabbedTerminals le rend au terminal qui redevient visible).
  */
 function allerAEspace(wsId: string): void {
+  useSuperviseurStore.getState().fermerPanneau();
   useDashboardStore.getState().close();
   const ui = useUiStore.getState();
   ui.fermerCalques();
@@ -79,11 +79,27 @@ function allerAEspace(wsId: string): void {
 }
 
 /**
- * Ferme le panneau du superviseur (Échap, croix, Ctrl+Maj+Espace) et rend la saisie à ce
- * qui est affiché dessous : la vue Paramètres si elle est ouverte, sinon le terminal
- * actif. Sans cela, le focus restait dans un panneau qui disparaît et retombait sur
- * <body> : la frappe suivante n'allait nulle part. Une vue plein écran (récap, diff,
- * mosaïque, accueil) garde son propre focus : rien n'est déplacé.
+ * Ouvre le poste de suivi du superviseur (Ctrl+Maj+Espace, marque du dock, « Ouvrir » de
+ * la bulle, palette) : les calques légers et la palette se referment pour qu'il se voie
+ * seul. Désactivé, il s'ouvre quand même : il présente le superviseur et propose de
+ * l'activer.
+ */
+export function ouvrirPosteSuperviseur(): void {
+  const ui = useUiStore.getState();
+  ui.fermerCalques();
+  ui.fermerPalette();
+  // Le récap et les Paramètres priment sur le poste dans vuePleinEcran : ils se ferment.
+  useDashboardStore.getState().close();
+  ui.fermerParametres();
+  useSuperviseurStore.getState().ouvrirPanneau();
+}
+
+/**
+ * Ferme le poste de suivi (Échap, croix, Ctrl+Maj+Espace) et rend la saisie à ce qui
+ * réapparaît dessous : les Paramètres s'ils sont ouverts, le terminal actif si c'est lui
+ * qui revient. Sans cela, le focus restait dans une vue qui disparaît et retombait sur
+ * <body> : la frappe suivante n'allait nulle part. La mosaïque, les fichiers modifiés et
+ * le récap se remontent et prennent leur propre focus : rien n'est déplacé.
  */
 export function fermerPanneauSuperviseur(): void {
   useSuperviseurStore.getState().fermerPanneau();
@@ -95,8 +111,14 @@ export function fermerPanneauSuperviseur(): void {
   }
   const s = useWorkspaceStore.getState();
   const w = s.workspaces.find((x) => x.id === s.activeId);
-  if (ui.vue !== "terminal" || useDashboardStore.getState().open || !w?.activeTabId || w.diffOpen) return;
-  focusTab(w.activeTabId);
+  const tab = w?.activeTabId;
+  if (ui.vue !== "terminal" || useDashboardStore.getState().open || !tab || w.diffOpen) return;
+  // Le terminal redevient visible au rendu suivant : le focus après (comme `allerA`).
+  if (typeof requestAnimationFrame !== "function") {
+    focusTab(tab);
+    return;
+  }
+  requestAnimationFrame(() => requestAnimationFrame(() => focusTab(tab)));
 }
 
 /**
@@ -166,9 +188,16 @@ export function dispatchShortcut(action: ShortcutAction): void {
       // Sans espace, l'accueil prime : basculer la vue n'afficherait rien et la mosaïque
       // surgirait au lieu du terminal de l'espace rouvert ensuite.
       if (s.workspaces.length === 0 && ui.vue !== "mosaique") return;
+      // Poste ouvert par-dessus la mosaïque : le raccourci ferme le poste et la montre,
+      // au lieu de la quitter cachée dessous.
+      if (useSuperviseurStore.getState().panneauOuvert && ui.vue === "mosaique") {
+        useSuperviseurStore.getState().fermerPanneau();
+        return;
+      }
       // Entrer en mosaïque referme les vues plein écran qui la masqueraient (récap,
       // fichiers modifiés) : sinon le raccourci n'aurait aucun effet visible.
       if (ui.vue !== "mosaique") {
+        useSuperviseurStore.getState().fermerPanneau();
         useDashboardStore.getState().close();
         ui.fermerParametres();
         if (active?.diffOpen) s.toggleDiff(active.id);
@@ -178,6 +207,7 @@ export function dispatchShortcut(action: ShortcutAction): void {
     case "toggle-dashboard":
       // Une vue plein écran s'ouvre : les calques légers ne restent pas suspendus devant.
       ui.fermerCalques();
+      if (!useDashboardStore.getState().open) useSuperviseurStore.getState().fermerPanneau();
       ui.fermerParametres();
       // Autre vue : le retour vers la mosaïque ne survit pas au récap.
       ui.desarmerRetourMosaique();
@@ -186,17 +216,19 @@ export function dispatchShortcut(action: ShortcutAction): void {
     case "toggle-parametres":
       // Vue plein écran sous la barre du haut : le récap, qui la couvrirait, se ferme.
       useDashboardStore.getState().close();
+      // Ouvrir les Paramètres referme le poste, qui les masquerait.
+      if (useSuperviseurStore.getState().panneauOuvert) {
+        useSuperviseurStore.getState().fermerPanneau();
+        if (ui.parametres === null) ui.basculerParametres();
+        return;
+      }
       ui.basculerParametres();
       return;
     case "toggle-superviseur":
-      // Désactivé, le superviseur n'a pas de panneau : on mène à son réglage.
-      if (!useReglagesStore.getState().reglages.superviseur.actif) {
-        useDashboardStore.getState().close();
-        ui.ouvrirParametres("superviseur");
-        return;
-      }
+      // Désactivé, le poste s'ouvre quand même : il présente le superviseur et propose
+      // de l'activer (ou d'aller à ses réglages).
       if (useSuperviseurStore.getState().panneauOuvert) fermerPanneauSuperviseur();
-      else useSuperviseurStore.getState().ouvrirPanneau();
+      else ouvrirPosteSuperviseur();
       return;
     case "prev-workspace":
     case "next-workspace": {

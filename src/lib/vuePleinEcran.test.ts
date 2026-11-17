@@ -36,3 +36,27 @@ describe("vuePleinEcran", () => {
     expect(vuePleinEcran({ ...base, parametresOuverts: true, recapOuvert: true })).toBe("recap");
   });
 });
+
+describe("vuePleinEcran — poste de suivi du superviseur", () => {
+  const sup = { ...base, superviseurOuvert: true };
+
+  it("passe devant les Paramètres, l'accueil, le diff et la mosaïque", () => {
+    expect(vuePleinEcran(sup)).toBe("superviseur");
+    expect(vuePleinEcran({ ...sup, parametresOuverts: true })).toBe("superviseur");
+    expect(vuePleinEcran({ ...sup, nbEspaces: 0 })).toBe("superviseur");
+    expect(vuePleinEcran({ ...sup, diffOuvert: true })).toBe("superviseur");
+    expect(vuePleinEcran({ ...sup, vue: "mosaique" })).toBe("superviseur");
+  });
+
+  it("le récap passe devant lui", () => {
+    expect(vuePleinEcran({ ...sup, recapOuvert: true })).toBe("recap");
+  });
+
+  it("pendant le démarrage : aucune vue", () => {
+    expect(vuePleinEcran({ ...sup, demarrage: true })).toBeNull();
+  });
+
+  it("fermé, il révèle ce qui était dessous", () => {
+    expect(vuePleinEcran({ ...base, vue: "mosaique", superviseurOuvert: false })).toBe("mosaique");
+  });
+});

@@ -86,6 +86,10 @@ pub enum Outil {
     Notifier,
     #[serde(rename = "demander")]
     Demander,
+    /// Pose le résumé d'une phrase d'un espace (poste de suivi). Réservé au superviseur :
+    /// le front le refuse depuis un espace ou l'extérieur.
+    #[serde(rename = "espace.resumer")]
+    EspaceResumer,
     #[serde(rename = "espace.creer")]
     EspaceCreer,
     #[serde(rename = "espace.renommer")]
@@ -109,11 +113,12 @@ pub enum Outil {
 }
 
 impl Outil {
-    pub const TOUS: [Outil; 14] = [
+    pub const TOUS: [Outil; 15] = [
         Outil::EspacesEtat,
         Outil::TerminalLire,
         Outil::Notifier,
         Outil::Demander,
+        Outil::EspaceResumer,
         Outil::EspaceCreer,
         Outil::EspaceRenommer,
         Outil::EspaceDeplacer,
@@ -133,6 +138,7 @@ impl Outil {
             Outil::TerminalLire => "terminal.lire",
             Outil::Notifier => "notifier",
             Outil::Demander => "demander",
+            Outil::EspaceResumer => "espace.resumer",
             Outil::EspaceCreer => "espace.creer",
             Outil::EspaceRenommer => "espace.renommer",
             Outil::EspaceDeplacer => "espace.deplacer",
@@ -154,9 +160,11 @@ impl Outil {
     /// (vérifié de part et d'autre par un test sur la même table).
     pub fn classe(self) -> ClasseOutil {
         match self {
-            Outil::EspacesEtat | Outil::TerminalLire | Outil::Notifier | Outil::Demander => {
-                ClasseOutil::Observer
-            }
+            Outil::EspacesEtat
+            | Outil::TerminalLire
+            | Outil::Notifier
+            | Outil::Demander
+            | Outil::EspaceResumer => ClasseOutil::Observer,
             Outil::EspaceCreer
             | Outil::EspaceRenommer
             | Outil::EspaceDeplacer
@@ -261,6 +269,13 @@ pub mod args {
         /// Espace concerné (la bulle propose d'y aller).
         #[serde(skip_serializing_if = "Option::is_none")]
         pub espace: Option<String>,
+    }
+
+    #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+    #[serde(rename_all = "camelCase", default)]
+    pub struct EspaceResumer {
+        pub espace: String,
+        pub texte: String,
     }
 
     #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -414,6 +429,7 @@ mod tests {
             ("terminal.lire", ClasseOutil::Observer),
             ("notifier", ClasseOutil::Observer),
             ("demander", ClasseOutil::Observer),
+            ("espace.resumer", ClasseOutil::Observer),
             ("espace.creer", ClasseOutil::Reorganiser),
             ("espace.renommer", ClasseOutil::Reorganiser),
             ("espace.deplacer", ClasseOutil::Reorganiser),

@@ -24,7 +24,7 @@ import { oublierWebgl, reserverWebgl } from "../lib/webglPool";
 import { ouvrirMenuTerminal } from "./MenuTerminal";
 
 /** Calme exigé avant de refaire la grille après un redimensionnement : une réserve qui
-    s'anime (panneau du superviseur, dock) ou une fenêtre qu'on tire changent la taille à
+    s’anime (dock) ou une fenêtre qu'on tire changent la taille à
     chaque image. Refaire la grille à chaque fois, c'est un resize du PTY et un SIGWINCH par
     image, que les agents en plein écran (TUI) redessinent en entier ; on attend que la
     taille se pose (une image dure ~16 ms, l'attente la dépasse largement). */

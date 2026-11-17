@@ -44,6 +44,7 @@ Observer (toujours permis) :
 - terminials lire <espace> [--onglet O] [--lignes N] : dernières lignes d'un terminal (40 par défaut, 200 au plus).
 - terminials prevenir "<texte>" [--titre T] [--espace E] : prévient l'utilisateur.
 - terminials demander <espace> "<question>" : pose une question à la session d'un espace (ouvre un échange).
+- terminials resumer <espace> "<phrase>" : pose la phrase qui résume ce que fait l'espace, affichée sur sa carte dans le poste de suivi.
 Réorganiser (niveau Réorganiser ou Agir) :
 - terminials creer --dossier D [--nom N] [--groupe G] [--couleur C]
 - terminials renommer <espace> "<nom>"
@@ -64,9 +65,10 @@ Règles :
 4. La réponse {"statut":"en_attente"} veut dire que l'utilisateur doit valider : ne réessaie pas et ne reformule pas ; sa décision t'arrivera dans un réveil suivant (événement de validation).
 5. Un appel refusé l'est pour de bon : ne cherche pas à le contourner, dis-le en une phrase si c'est utile.
 6. Ne lis un terminal que si un événement le justifie, et ne fais rien quand rien ne le demande : un réveil sans rien à signaler se termine sans texte.
-7. Ce que tu écris s'affiche dans le panneau du superviseur : en français, en vouvoyant l'utilisateur (jamais de tutoiement : « vous », « votre demande », « à vous de valider »), court (une à trois phrases), concret, sans titres, sans longues listes, sans emoji. Nomme les espaces par leur nom, jamais par leur identifiant : aucun « ws:3 », « echange:2 » ni autre identifiant technique dans ce que lit l'utilisateur.
+7. Ce que tu écris s'affiche dans le poste de suivi : en français, en vouvoyant l'utilisateur (jamais de tutoiement : « vous », « votre demande », « à vous de valider »), court (une à trois phrases), concret, sans titres, sans longues listes, sans emoji. Nomme les espaces par leur nom, jamais par leur identifiant : aucun « ws:3 », « echange:2 » ni autre identifiant technique dans ce que lit l'utilisateur.
 8. Un message de l'utilisateur appelle toujours une réponse.
-9. Le panneau montre déjà chacun de tes appels avec ses arguments : ne répète pas ce que tu viens de signaler par prevenir. Après un prevenir, ne rien ajouter, ou une phrase courte qui dit autre chose."#
+9. Le poste de suivi montre déjà chacun de tes appels avec ses arguments : ne répète pas ce que tu viens de signaler par prevenir. Après un prevenir, ne rien ajouter, ou une phrase courte qui dit autre chose.
+10. Tiens à jour le résumé des espaces au travail ou en attente dont le champ resume est vide : une phrase courte à l'indicatif, au présent, sans identifiant technique (pas de ws:3), qui dit ce que fait l'agent (« Écrit les tests du calcul des avoirs. »). Poser ou rafraîchir un résumé est silencieux : n'en parle pas, ni par texte ni par prevenir ; un réveil qui ne fait que résumer se termine sans texte."#
         .to_string()
 }
 
@@ -92,6 +94,11 @@ fn libelle_bout(b: &str) -> &str {
 
 fn ligne_evenement(e: &EvenementSuperviseur) -> String {
     let texte = e.texte.trim();
+    let ws = e.ws_id.as_deref().filter(|w| !w.is_empty());
+    // Un message sur un espace le nomme dans la phrase (pas de suffixe [ws]).
+    if let (GenreEvenement::Message, Some(ws)) = (&e.genre, ws) {
+        return format!("- Message de l'utilisateur, à propos de l'espace {ws} : « {texte} »");
+    }
     let corps = match e.genre {
         GenreEvenement::Message => format!("Message de l'utilisateur : « {texte} »"),
         GenreEvenement::Attente => format!("Attente : {texte}"),
@@ -100,9 +107,9 @@ fn ligne_evenement(e: &EvenementSuperviseur) -> String {
         GenreEvenement::Validation => format!("Validation : {texte}"),
         GenreEvenement::Reprise => format!("Fin de la pause : {texte}"),
     };
-    match &e.ws_id {
-        Some(ws) if !ws.is_empty() => format!("- {corps} [{ws}]"),
-        _ => format!("- {corps}"),
+    match ws {
+        Some(ws) => format!("- {corps} [{ws}]"),
+        None => format!("- {corps}"),
     }
 }
 
@@ -113,6 +120,9 @@ fn tronquer(s: &str, max: usize) -> (&str, bool) {
         None => (s, false),
     }
 }
+
+/// Rappel ajouté à l'invite quand l'état des espaces est connu.
+const RAPPEL_RESUMES: &str = "Résumés : pour chaque espace au travail ou en attente dont « resume » est null, pose une phrase avec terminials resumer, sans l'annoncer.";
 
 /// Invite d'un réveil : contexte + événements regroupés.
 pub fn invite_reveil(contexte: &ContexteReveil, evenements: &[EvenementSuperviseur]) -> String {
@@ -162,6 +172,10 @@ pub fn invite_reveil(contexte: &ContexteReveil, evenements: &[EvenementSupervise
             if coupe {
                 s.push_str("\n(tronqué : détaille un espace avec « terminials espaces <espace> »)");
             }
+            s.push('\n');
+            // Rappel hors de la consigne système : celle-ci est rejouée telle quelle par
+            // les sessions déjà ouvertes.
+            s.push_str(RAPPEL_RESUMES);
             s.push('\n');
         }
         Err(e) => {
@@ -246,6 +260,7 @@ mod tests {
             "terminials lire",
             "terminials prevenir",
             "terminials demander",
+            "terminials resumer",
             "terminials creer",
             "terminials renommer",
             "terminials deplacer",
@@ -289,6 +304,36 @@ mod tests {
         assert!(i.contains("- Attente : api attend une autorisation : npm run migrate. [ws:3]"));
         assert!(i.contains("- Message de l'utilisateur : « Où en sont mes agents ? »"));
         assert!(i.contains(r#"{"espaces":[{"id":"ws:3","nom":"api"}],"groupes":[]}"#));
+    }
+
+    #[test]
+    fn message_a_propos_d_un_espace_le_nomme() {
+        let e = EvenementSuperviseur {
+            genre: GenreEvenement::Message,
+            texte: " Où en est api ? ".into(),
+            ws_id: Some("ws:3".into()),
+        };
+        assert_eq!(
+            ligne_evenement(&e),
+            "- Message de l'utilisateur, à propos de l'espace ws:3 : « Où en est api ? »"
+        );
+        let vide = EvenementSuperviseur {
+            ws_id: Some(String::new()),
+            ..e
+        };
+        assert_eq!(
+            ligne_evenement(&vide),
+            "- Message de l'utilisateur : « Où en est api ? »"
+        );
+    }
+
+    #[test]
+    fn rappel_des_resumes_seulement_si_l_etat_est_connu() {
+        let i = invite_reveil(&ctx(), &[]);
+        assert!(i.contains("terminials resumer, sans l'annoncer"), "{i}");
+        let mut c = ctx();
+        c.etat_espaces = Err("indisponible".into());
+        assert!(!invite_reveil(&c, &[]).contains("Résumés :"));
     }
 
     #[test]

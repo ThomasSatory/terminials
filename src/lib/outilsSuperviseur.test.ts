@@ -120,6 +120,9 @@ describe("libellés", () => {
       "api › claude  « 1 » + Entrée",
     );
     expect(argsAffiches("espace.deplacer", { espace: "infra", groupe: "" }, {})).toBe("infra → hors groupe");
+    expect(argsAffiches("espace.resumer", { espace: "api", texte: "Écrit les tests." }, { nomEspace: "api-paiements" })).toBe(
+      "api-paiements  « Écrit les tests. »",
+    );
     expect(argsAffiches("groupe.creer", { nom: "ops", espaces: ["infra"] }, {})).toBe("ops ← infra");
     expect(argsAffiches("session.demander", { texte: "Quel format ?" }, { cible: "api › claude" })).toBe(
       "api › claude  « Quel format ? »",
@@ -185,6 +188,7 @@ describe("espaces.etat", () => {
     etatOnglet: (id) => etats[id],
     sessionsBloquees: { "a:t": "Claude demande l'autorisation d'utiliser Bash" },
     enRelais: (id) => id === "b",
+    resume: (id) => (id === "a" ? "Écrit les tests." : null),
   };
 
   it("forme du contrat, dans l'ordre du dock", () => {
@@ -197,7 +201,8 @@ describe("espaces.etat", () => {
       notification: "Autoriser npm run migrate ?",
       onglets: [{ rang: 1, titre: "claude", claude: true, bloque: "Claude demande l'autorisation d'utiliser Bash" }],
     });
-    expect(d.espaces[1]).toMatchObject({ actif: true, relais: true, notification: null });
+    expect(d.espaces[0].resume).toBe("Écrit les tests.");
+    expect(d.espaces[1]).toMatchObject({ actif: true, relais: true, notification: null, resume: null });
     expect(d.espaces[2]).toMatchObject({ groupe: "perso", branche: "main" });
     expect(d.groupes).toEqual([{ id: "g", nom: "perso", couleur: "#fdba74", replie: false }]);
     expect(construireEtatEspaces(src, "c").espaces.map((e) => e.id)).toEqual(["c"]);

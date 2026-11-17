@@ -32,23 +32,21 @@ export function pasDeLigneXterm(glyphePx: number, interligne: number, dpr = 1): 
 }
 
 /**
- * Interligne. La maquette écrit `font-size: 13px; line-height: 1.75` : en CSS le facteur
- * multiplie le CORPS, d'où un pas de ligne (distance entre deux lignes de base) de
- * 13 × 1,75 = 22,75 px. Le `lineHeight` de xterm multiplie, lui, la hauteur MESURÉE du
- * glyphe (17 px ici, cf. GLYPHE_TERMINAL_PX), puis arrondit la cellule au pixel physique
- * inférieur (cf. pasDeLigneXterm) : recopier 1.75 donnerait floor(17 × 1,75) = 29 px.
+ * Interligne. Le `lineHeight` de xterm multiplie la hauteur MESURÉE du glyphe (17 px ici,
+ * cf. GLYPHE_TERMINAL_PX), pas le corps comme en CSS, puis arrondit la cellule au pixel
+ * physique inférieur (cf. pasDeLigneXterm). Le pas naturel de JetBrains Mono à 13 px est
+ * donc déjà de 17 px au facteur 1.
  *
- * À densité 1, un pas est forcément entier : 22,75 px est hors d'atteinte, et le plus
- * proche est 23 px (écart 0,25 px, contre 0,75 px pour 22). Il faut floor(17 × f) = 23,
- * soit 23/17 ≤ f < 24/17 (1,3530 ≤ f < 1,4118) ; 1.36 y tombe avec de la marge
- * (17 × 1,36 = 23,12). Mesuré dans l'app réelle (Xvfb, 1440 × 900, densité 1) : lignes
- * de base espacées de 23 px — l'ancien 1.34 donnait 22 px (floor(22,78)). Le glyphe reste
- * centré dans la cellule (xterm), comme le texte dans sa boîte de ligne CSS de la
- * maquette ; les caractères de cadre restent jointifs (customGlyphs, toute la cellule).
+ * La maquette écrit `line-height: 1.75` (22,75 px) : fidèle au pixel, ce pas de 23 px
+ * étirait le terminal à l'usage — un tiers de lignes en moins à l'écran, et les interfaces
+ * plein écran (Claude Code, vim, htop), dessinées pour des cellules serrées, paraissaient
+ * distendues. On garde un peu d'air seulement : 19 px, soit floor(17 × f) = 19, donc
+ * 19/17 ≤ f < 20/17 (1,1177 ≤ f < 1,1765) ; 1.15 y tombe avec de la marge. Le glyphe
+ * reste centré dans la cellule ; les caractères de cadre restent jointifs (customGlyphs).
  * Les marges internes (22 px en haut, 26 px sur les côtés, réserve basse du dock) sont
  * celles de la maquette, portées par `.app-terminaux` (styles/shell.css).
  */
-export const INTERLIGNE_TERMINAL = 1.36;
+export const INTERLIGNE_TERMINAL = 1.15;
 
 /**
  * Palette. Choix par rapport à la maquette :

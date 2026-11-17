@@ -133,6 +133,8 @@ export interface SourcesEtatEspaces {
   etatOnglet: (wsId: string, tabId: string) => EtatAgent;
   sessionsBloquees: Readonly<Record<string, string>>;
   enRelais: (wsId: string) => boolean;
+  /** Résumé posé par le superviseur et encore à jour, sinon null. */
+  resume: (wsId: string) => string | null;
 }
 
 export interface OngletEtat {
@@ -156,6 +158,8 @@ export interface EspaceEtatTransmis {
   relais: boolean;
   raccourci: string | null;
   notification: string | null;
+  /** Résumé d'une phrase posé par le superviseur (espace.resumer), null si absent ou périmé. */
+  resume: string | null;
   onglets: OngletEtat[];
 }
 
@@ -185,6 +189,7 @@ export function construireEtatEspaces(
         relais: src.enRelais(w.id),
         raccourci: rang !== -1 && rang < 9 ? `Ctrl ${rang + 1}` : null,
         notification: etat === "attente" ? texteNotification(w.lastNotification) || null : null,
+        resume: src.resume(w.id),
         onglets: w.tabs.map((t, i) => ({
           id: t.id,
           rang: i + 1,
@@ -309,6 +314,8 @@ export function argsAffiches(
     case "notifier":
       // En entier : c'est le seul endroit du fil où le message apparaît.
       return `« ${extrait(s("texte"), 600)} »`;
+    case "espace.resumer":
+      return `${nom}  « ${extrait(s("texte"))} »`;
     case "demander":
       return `${nom ? `${nom}  ` : ""}« ${extrait(s("question"))} »`;
     case "espace.creer":

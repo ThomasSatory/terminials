@@ -222,6 +222,9 @@ fn formater_espaces(data: &Value) -> String {
         if let Some(n) = s(e, "notification") {
             out.push(format!("  notification : {n}"));
         }
+        if let Some(r) = s(e, "resume") {
+            out.push(format!("  résumé : {r}"));
+        }
         for o in e.get("onglets").and_then(Value::as_array).unwrap_or(&vide) {
             let rang = o
                 .get("rang")
@@ -349,6 +352,7 @@ mod tests {
                 "id":"ws:3","nom":"api","dossier":"/srv/api","groupe":"services","branche":"fix/x",
                 "actif":true,"etat":"attente","relais":false,"raccourci":"Ctrl 3",
                 "notification":"Autoriser npm run migrate ?",
+                "resume":"Écrit les tests du calcul des avoirs.",
                 "onglets":[{"id":"tab:4","rang":1,"titre":"claude","actif":true,"etat":"attente","claude":true,
                             "bloque":"Claude demande l'autorisation d'utiliser Bash"}]
             }],
@@ -357,7 +361,7 @@ mod tests {
         let texte = formater_sortie(Some(Outil::EspacesEtat), &data);
         assert_eq!(
             texte,
-            "api (ws:3) · attente · branche fix/x · groupe services · Ctrl 3 · affiché\n  /srv/api\n  notification : Autoriser npm run migrate ?\n  1. claude (tab:4) · attente · session claude · actif · bloqué : Claude demande l'autorisation d'utiliser Bash\nGroupes : services (grp:1, replié)"
+            "api (ws:3) · attente · branche fix/x · groupe services · Ctrl 3 · affiché\n  /srv/api\n  notification : Autoriser npm run migrate ?\n  résumé : Écrit les tests du calcul des avoirs.\n  1. claude (tab:4) · attente · session claude · actif · bloqué : Claude demande l'autorisation d'utiliser Bash\nGroupes : services (grp:1, replié)"
         );
         assert_eq!(
             formater_sortie(

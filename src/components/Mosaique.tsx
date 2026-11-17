@@ -32,6 +32,7 @@ import { EnTeteMosaique } from "./mosaique/EnTeteMosaique";
 import { Tuile } from "./mosaique/Tuile";
 import { zoomerVersTerminal } from "./mosaique/ZoomTerminal";
 import { demarrerSuiviEtats } from "./mosaique/suivi";
+import { useReserveDock } from "../hooks/useReserveDock";
 import "../styles/mosaique.css";
 
 // Le suivi « depuis quand » démarre avec l'app (App importe ce module au lancement) :
@@ -69,14 +70,8 @@ export function Mosaique() {
   const setActive = useWorkspaceStore((s) => s.setActive);
   const setVue = useUiStore((s) => s.setVue);
   // Réserve basse identique à celle des terminaux (App) : rien de mort quand le dock est
-  // masqué, et la dernière rangée ne passe pas sous une bulle d'agent posée sur le dock.
-  const dockVisible = useUiStore((s) => s.dockVisible);
-  const bulleVisible = useUiStore((s) => s.bulleEspace !== null);
-  const reserve = !dockVisible
-    ? "var(--reserve-sans-dock)"
-    : bulleVisible
-      ? "var(--reserve-dock-bulle)"
-      : "var(--reserve-dock)";
+  // masqué ; une bulle posée sur le dock flotte sans retailler la grille.
+  const reserve = useReserveDock();
 
   const espaces = useMemo<EspaceMosaique[]>(
     () =>

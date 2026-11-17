@@ -105,15 +105,14 @@ describe("thème du terminal", () => {
     expect(OPTIONS_TERMINAL.cursorBlink).toBe(true);
   });
 
-  it("interligne de la maquette (1.75 × corps) traduit pour xterm (× hauteur du glyphe)", () => {
+  it("interligne : un peu d'air au-dessus du pas naturel, sans étirer le terminal", () => {
     expect(OPTIONS_TERMINAL.lineHeight).toBe(INTERLIGNE_TERMINAL);
-    const cible = 13 * 1.75; // 22,75 px dans la maquette
+    const naturel = pasDeLigneXterm(GLYPHE_TERMINAL_PX, 1);
     const pas = pasDeLigneXterm(GLYPHE_TERMINAL_PX, INTERLIGNE_TERMINAL);
-    // Pas entier le plus proche de la maquette à densité 1.
-    expect(pas).toBe(23);
-    expect(Math.abs(pas - cible)).toBeLessThanOrEqual(0.25);
-    // L'ancienne valeur tombait un pixel trop court, recopier 1.75 bien trop haut.
-    expect(pasDeLigneXterm(GLYPHE_TERMINAL_PX, 1.34)).toBe(22);
+    expect(naturel).toBe(17);
+    expect(pas).toBe(19);
+    // Recopier le 1.75 de la maquette (ou viser ses 23 px) étirait le terminal.
+    expect(pasDeLigneXterm(GLYPHE_TERMINAL_PX, 1.36)).toBe(23);
     expect(pasDeLigneXterm(GLYPHE_TERMINAL_PX, 1.75)).toBe(29);
   });
 

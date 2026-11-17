@@ -115,6 +115,9 @@ enum Cmd {
         #[arg(long)]
         espace: Option<String>,
     },
+    /// Pose le résumé d'une phrase d'un espace, affiché dans le poste de suivi
+    /// (outil espace.resumer, réservé au superviseur).
+    Resumer { espace: String, texte: String },
     /// Pose une question à un autre espace, ou au superviseur sans espace (outil demander).
     /// `terminials demander api-paiements "…"` ou `terminials demander "…"`.
     Demander {
@@ -389,6 +392,9 @@ fn requete(cmd: Cmd) -> (&'static str, serde_json::Value) {
                 espace,
             },
         ),
+        Cmd::Resumer { espace, texte } => {
+            appel_outil(Outil::EspaceResumer, a::EspaceResumer { espace, texte })
+        }
         Cmd::Demander { mut mots } => {
             let question = mots.pop().unwrap_or_default();
             appel_outil(
@@ -521,6 +527,18 @@ mod tests {
         };
         assert_eq!(mots, vec!["branche ?".to_string()]);
         assert!(Cli::try_parse_from(["terminials", "demander"]).is_err());
+    }
+
+    #[test]
+    fn resumer_prend_un_espace_et_une_phrase() {
+        let cli =
+            Cli::try_parse_from(["terminials", "resumer", "api", "Écrit les tests."]).unwrap();
+        let Cmd::Resumer { espace, texte } = cli.cmd else {
+            panic!()
+        };
+        assert_eq!(espace, "api");
+        assert_eq!(texte, "Écrit les tests.");
+        assert!(Cli::try_parse_from(["terminials", "resumer", "api"]).is_err());
     }
 
     #[test]

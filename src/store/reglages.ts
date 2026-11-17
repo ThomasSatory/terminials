@@ -44,7 +44,7 @@ export interface ReglagesState {
   /** « Revenir aux réglages d'origine » (les paires autorisées sont gardées). */
   reinitialiser: () => void;
 
-  // --- Raccourcis du superviseur (panneau et Paramètres) ---
+  // --- Raccourcis du superviseur (poste de suivi et Paramètres) ---
   setNiveau: (n: NiveauAutonomie) => void;
   basculerPause: () => void;
   setPause: (pause: boolean) => void;

@@ -4,7 +4,7 @@ import type { ModeSuperviseur } from "../../store/superviseur";
 /**
  * Éléments visuels du superviseur (maquette Superviseur) : viseur au trait dont le centre
  * dit le mode, viseur pointé (le superviseur comme interlocuteur), mini-avatars d'espace,
- * icônes au trait propres au panneau. Toutes les icônes sont décoratives (`aria-hidden`) :
+ * icônes au trait propres au poste de suivi. Toutes les icônes sont décoratives (`aria-hidden`) :
  * le libellé est porté par le bouton.
  */
 
@@ -19,7 +19,7 @@ const COINS = "M3 7.5V5a2 2 0 0 1 2-2h2.5M12.5 3H15a2 2 0 0 1 2 2v2.5M17 12.5V15
 /**
  * Viseur dont le centre dit le mode : point (observe), point plus gros (a quelque chose à
  * dire), arc cyan qui tourne (agit), deux barres (en pause). `taille` : « dock » (22 px,
- * marque) ou « tete » (18 px, en-tête du panneau). Le centre rejoue son apparition
+ * marque) ou « tete » (18 px, en-tête du poste de suivi). Le centre rejoue son apparition
  * (`sup-mk`) à chaque changement de mode.
  */
 export function Viseur({ mode, taille }: { mode: ModeSuperviseur; taille: "dock" | "tete" }) {

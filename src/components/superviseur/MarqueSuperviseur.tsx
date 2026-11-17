@@ -1,6 +1,7 @@
 import { useReglagesStore } from "../../store/reglages";
 import { useSuperviseurStore } from "../../store/superviseur";
 import { useUiStore } from "../../store/ui";
+import { dispatchShortcut } from "../../lib/shortcutDispatch";
 import { useEtatAffiche } from "../../hooks/useEtatSuperviseur";
 import { Kbd } from "../ui/Kbd";
 import { CLE_BULLE_SUPERVISEUR, Viseur } from "./elements";
@@ -11,8 +12,9 @@ import "../../styles/superviseur.css";
  * coins arrondis (taille des avatars du dock, rayon 12), viseur au trait dont le centre
  * dit le mode (observe, a quelque chose à dire, agit, en pause), pastille accent quand il
  * a quelque chose à dire, infobulle avec son nom, Ctrl+Maj+Espace et sa ligne d'état,
- * soulignement quand le panneau est ouvert, puis un séparateur. Rien quand le superviseur
- * est désactivé. Pose `data-dock-superviseur` : l'ancre de la bulle du superviseur.
+ * soulignement quand le poste de suivi est ouvert, puis un séparateur. Désactivé (réglage par
+ * défaut), la marque reste là, estompée : c'est par elle qu'on le découvre, le poste de suivi
+ * qu'elle ouvre explique ce qu'il fait et propose de l'activer. Pose `data-dock-superviseur` : l'ancre de la bulle du superviseur.
  *
  * Rendue DANS le <nav> du dock (Dock.tsx), avant la bande des espaces : la largeur du
  * dock et l'indicateur d'espace actif en tiennent compte d'eux-mêmes (mesures du DOM).
@@ -23,8 +25,10 @@ export function MarqueSuperviseur() {
   const ouvert = useSuperviseurStore((s) => s.panneauOuvert);
   // Bulle posée au-dessus : l'infobulle se tait, elles se chevaucheraient.
   const bulle = useUiStore((s) => s.bulleEspace === CLE_BULLE_SUPERVISEUR);
-  const { mode, ligne, ton } = useEtatAffiche();
-  if (!actif) return null;
+  const etat = useEtatAffiche();
+  const mode = actif ? etat.mode : "pause";
+  const ligne = actif ? etat.ligne : "désactivé · cliquer pour l’activer";
+  const ton = actif ? etat.ton : "discret";
   return (
     <>
       <div className="sup-marque-hote">
@@ -33,10 +37,11 @@ export function MarqueSuperviseur() {
           className="sup-marque"
           data-dock-superviseur=""
           data-mode={mode}
+          data-inactif={!actif || undefined}
           data-ouvert={ouvert}
           aria-label={`${nom}, superviseur, ${ligne} (Ctrl+Maj+Espace)`}
           aria-expanded={ouvert}
-          onClick={() => useSuperviseurStore.getState().basculerPanneau()}
+          onClick={() => dispatchShortcut({ type: "toggle-superviseur" })}
         >
           <span className="sup-marque-carre">
             <Viseur mode={mode} taille="dock" />

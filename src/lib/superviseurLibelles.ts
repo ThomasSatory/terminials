@@ -4,7 +4,7 @@ import type { NiveauAutonomie } from "./reglages";
 import { pluriel } from "./pluriel";
 
 /**
- * Libellés du superviseur partagés par la marque du dock, l'en-tête du panneau, la bulle,
+ * Libellés du superviseur partagés par la marque du dock, l'en-tête du poste de suivi, la bulle,
  * le fil et la palette (maquette Superviseur), en logique pure.
  *
  * Propriétaire : agent (c) « front du superviseur ».
@@ -16,6 +16,7 @@ export const NOMS_OUTILS: Readonly<Record<OutilId, string>> = {
   "terminal.lire": "terminal.lire",
   notifier: "prévenir",
   demander: "demander",
+  "espace.resumer": "espace.résumer",
   "espace.creer": "espace.créer",
   "espace.renommer": "espace.renommer",
   "espace.deplacer": "espace.déplacer",
@@ -91,6 +92,12 @@ export function texteNiveau(niveau: NiveauAutonomie): string {
 export function deNom(nom: string): string {
   const premiere = nom.trim().charAt(0).normalize("NFD").charAt(0).toLowerCase();
   return "aeiouyh".includes(premiere) && premiere !== "" ? `d’${nom}` : `de ${nom}`;
+}
+
+/** Suggestions du prompt quand le poste est filtré sur un espace : le nom est écrit dans
+    la phrase pour que le fil non filtré reste lisible. */
+export function suggestionsEspace(nom: string): string[] {
+  return [`Où en est ${nom} ?`, `Résume les changements ${deNom(nom)}`, `Préviens-moi quand ${nom} a fini`];
 }
 
 /**
@@ -180,7 +187,7 @@ export function texteBulle(nbAttente: number, nbCartes: number): { titre: string
       ? "clic sur un espace pour y aller"
       : nbAttente
         ? `dont ${pluriel(nbCartes, "écriture à valider", "écritures à valider")}`
-        : "à autoriser dans le panneau",
+        : "à autoriser dans le poste de suivi",
     accent: nbCartes > 0,
   };
 }

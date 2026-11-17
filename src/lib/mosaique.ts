@@ -250,8 +250,42 @@ export function apercuParlant(lignes: readonly string[]): boolean {
   });
 }
 
-/** Invite de shell suivie d'une commande : « ❯ git status », « user@hôte:~/x$ ls ». */
-const INVITE = /(?:^|\s|[\w~/)\]])(?:❯|\$|%|#|›)\s+(\S.*)$/u;
+/** Filet horizontal pleine largeur : bord du cadre de saisie de Claude Code. */
+const FILET = /^[╭╰]?[─━]{8,}[╮╯]?$/u;
+/** Lignes du bas de l'écran où l'on cherche le cadre de saisie (cadre + barre d'état). */
+const FENETRE_CADRE = 14;
+/** Lignes à lire en plus de celles montrées, pour compenser le cadre retiré. */
+export const MARGE_CADRE_SAISIE = FENETRE_CADRE;
+
+/**
+ * Lignes sans le bas d'écran d'un agent en mode plein écran : Claude Code épingle en bas
+ * son cadre de saisie (deux filets autour de l'invite « ❯ ») puis sa barre d'état. Les
+ * dernières lignes d'un tel terminal ne montrent que ça ; on coupe au filet du haut pour
+ * laisser voir la sortie de l'agent. Sans cadre reconnu (shell ordinaire), ou s'il ne
+ * restait rien au-dessus, les lignes sont rendues telles quelles.
+ */
+export function sansCadreSaisie(lignes: readonly string[]): string[] {
+  const plancher = Math.max(0, lignes.length - FENETRE_CADRE);
+  let bas = -1;
+  for (let i = lignes.length - 1; i >= plancher; i--) {
+    if (!FILET.test(lignes[i].trim())) continue;
+    if (bas < 0) {
+      bas = i;
+      continue;
+    }
+    // Deux filets séparés par l'invite : c'est le cadre. Sinon ce filet devient le bas.
+    const invite = lignes[i + 1]?.trim() ?? "";
+    if (i + 1 < bas && /^(?:│\s*)?[❯>›]/u.test(invite)) {
+      return i > 0 ? lignes.slice(0, i) : [...lignes];
+    }
+    bas = i;
+  }
+  return [...lignes];
+}
+
+/** Invite de shell suivie d'une commande : « ❯ git status », « user@hôte:~/x$ ls ».
+    Un « % » collé à un chiffre est un pourcentage (« 50% ↻ 5h »), pas une invite. */
+const INVITE = /(?:^|\s|[\w~/)\]])(?:❯|\$|(?<!\d)%|#|›)\s+(\S.*)$/u;
 
 /**
  * Dernière commande tapée, lue en remontant les lignes (pied d'une tuile au repos,

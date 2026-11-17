@@ -26,6 +26,9 @@ const ws: Workspace = {
   diffOpen: false,
 };
 
+/** Laisse passer les deux requestAnimationFrame du retour de focus. */
+const imageSuivante = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+
 beforeEach(() => {
   vi.clearAllMocks();
   document.body.replaceChildren();
@@ -39,14 +42,26 @@ beforeEach(() => {
   });
 });
 
-describe("fermeture du panneau du superviseur", () => {
-  it("Ctrl+Maj+Espace qui ferme rend la saisie au terminal affiché", () => {
+describe("fermeture du poste de suivi du superviseur", () => {
+  it("Ctrl+Maj+Espace qui ferme rend la saisie au terminal qui réapparaît (deux images plus tard)", async () => {
     dispatchShortcut({ type: "toggle-superviseur" });
     expect(useSuperviseurStore.getState().panneauOuvert).toBe(true);
     expect(focusTab).not.toHaveBeenCalled();
     dispatchShortcut({ type: "toggle-superviseur" });
     expect(useSuperviseurStore.getState().panneauOuvert).toBe(false);
+    expect(focusTab).not.toHaveBeenCalled();
+    await imageSuivante();
+    await imageSuivante();
     expect(focusTab).toHaveBeenCalledWith("t1");
+  });
+
+  it("mosaïque dessous : son focus n'est pas déplacé", async () => {
+    useUiStore.getState().setVue("mosaique");
+    useSuperviseurStore.getState().ouvrirPanneau();
+    fermerPanneauSuperviseur();
+    await imageSuivante();
+    await imageSuivante();
+    expect(focusTab).not.toHaveBeenCalled();
   });
 
   it("Paramètres ouverts dessous : la saisie va à la vue, pas au terminal masqué", () => {

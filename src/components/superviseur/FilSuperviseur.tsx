@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import { useReglagesStore } from "../../store/reglages";
 import { useSuperviseurStore, SUPERVISEUR, type EntreeFil, type PartieFil } from "../../store/superviseur";
 import { allerA, executerActionFil } from "../../lib/executeurSuperviseur";
 import { nomOutil } from "../../lib/outilsSuperviseur";
+import { filtrerFil } from "../../lib/posteSuperviseur";
 import { LIBELLES_ETAT_LIGNE, comptesEtats, heureFil } from "../../lib/superviseurLibelles";
 import type { InfoEspaceSuperviseur } from "../../hooks/useEtatSuperviseur";
 import { Kbd } from "../ui/Kbd";
@@ -18,19 +20,27 @@ import { IconeCoche, IconeCroix, IconeRoute, MiniAvatar, Viseur, ViseurPoint } f
 export function FilSuperviseur({
   espaces,
   ouvrirPaires,
+  wsId,
 }: {
   espaces: Map<string, InfoEspaceSuperviseur>;
   ouvrirPaires: () => void;
+  /** Espace sur lequel le fil est filtré (poste de suivi) ; null ou absent : tout. */
+  wsId?: string | null;
 }) {
   const fil = useSuperviseurStore((s) => s.fil);
   const nom = useReglagesStore((s) => s.reglages.superviseur.nom);
+  // Filtré AVANT le map : l'heure n'est répétée que d'une entrée visible à l'autre.
+  const visibles = useMemo(() => filtrerFil(fil, wsId ?? null), [fil, wsId]);
 
   let heurePrecedente = "";
   return (
     <div className="sup-fil" role="log" aria-live="polite" aria-label={`Fil de ${nom}`}>
       <div className="sup-fil-pile">
         {fil.length === 0 && <FilVide nom={nom} nbEspaces={espaces.size} />}
-        {fil.map((e, i) => {
+        {fil.length > 0 && visibles.length === 0 && wsId && (
+          <p className="sup-fil-rien">Rien au fil pour {espaces.get(wsId)?.nom ?? "cet espace"} pour l’instant.</p>
+        )}
+        {visibles.map((e, i) => {
           const heure = heureFil(e.a);
           const montrer = heure !== heurePrecedente;
           heurePrecedente = heure;

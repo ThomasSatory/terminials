@@ -1,11 +1,12 @@
 import { create } from "zustand";
 import type { FluxSuperviseur, OutilId } from "../lib/outilsProtocole";
 import type { NiveauAutonomie } from "../lib/reglages";
+import { nettoyerResume, type GroupePoste } from "../lib/posteSuperviseur";
 
 /**
  * État du superviseur côté interface (maquette Superviseur) : fil horodaté, appels
  * d'outils, demandes « À valider », échanges routés entre sessions, sessions bloquées sur
- * une demande d'autorisation, état du moteur, panneau et bulle. Jamais persisté : un
+ * une demande d'autorisation, état du moteur, poste de suivi et bulle. Jamais persisté : un
  * relancement repart d'un fil vide (le moteur, lui, garde sa conversation côté claude).
  *
  * Ses réglages (actif, nom, niveau, pause, paires) sont dans `store/reglages`. Le
@@ -138,19 +139,29 @@ export type NouvelleEntree = Omit<EntreeFil, "id" | "a"> & { a?: number };
 export type NouvelleDemande = Omit<DemandeValidation, "id" | "statut" | "toujours" | "depuis"> & { depuis?: number };
 export type NouvelEchange = Omit<Echange, "id" | "etat" | "reponse" | "versTabId" | "depuis"> & { depuis?: number };
 
+/** Résumé d'une phrase posé par le superviseur (outil `espace.resumer`) ; `groupe` est le
+    groupe du poste de l'espace quand il l'a posé. */
+export interface ResumeEspace {
+  texte: string;
+  a: number;
+  groupe: GroupePoste;
+}
+
 export interface SuperviseurState {
   fil: EntreeFil[];
   demandes: DemandeValidation[];
-  /** Carte affichée en tête de pile (null : la plus ancienne ouverte). */
-  demandeFocus: string | null;
   echanges: Echange[];
   /** tabId → message de la demande d'autorisation en cours. */
   sessionsBloquees: Record<string, string>;
   moteur: EtatMoteurFront;
   /** Entrée du tour en cours, qui reçoit les textes du moteur. */
   entreeTour: string | null;
+  /** Poste de suivi ouvert (vue plein écran). */
   panneauOuvert: boolean;
-  /** Entrées arrivées panneau fermé. */
+  /** Résumés par espace, posés par l'outil `espace.resumer`, jamais persistés ; affichés
+      seulement tant que l'espace est resté dans le même groupe du poste. */
+  resumes: Record<string, ResumeEspace>;
+  /** Entrées arrivées poste fermé. */
   nonLus: number;
   /** Signature de la situation dont la bulle a été écartée (elle ne revient qu'à la suivante). */
   bulleEcartee: string | null;
@@ -169,7 +180,6 @@ export interface SuperviseurState {
   ajouterDemande: (d: NouvelleDemande) => string;
   deciderDemande: (id: string, statut: Exclude<StatutDemande, "ouverte">) => void;
   basculerToujours: (id: string) => void;
-  focaliserDemande: (id: string | null) => void;
 
   ouvrirEchange: (e: NouvelEchange) => string;
   majEchange: (id: string, patch: Partial<Omit<Echange, "id">>) => void;
@@ -188,6 +198,11 @@ export interface SuperviseurState {
   viderManques: () => string[];
   ecarterBulle: (signature: string | null) => void;
 
+  /** Pose le résumé de l'espace (texte nettoyé et borné ; vide : retire l'entrée). */
+  poserResume: (wsId: string, texte: string, groupe: GroupePoste, a?: number) => void;
+  /** Oublie les résumés des espaces disparus ; même référence si rien n'est retiré. */
+  oublierResumes: (idsVivants: readonly string[]) => void;
+
   reset: () => void;
 }
 
@@ -197,12 +212,12 @@ const nouvelId = (prefixe: string) => `${prefixe}:${++compteur}`;
 const ETAT_INITIAL = {
   fil: [] as EntreeFil[],
   demandes: [] as DemandeValidation[],
-  demandeFocus: null as string | null,
   echanges: [] as Echange[],
   sessionsBloquees: {} as Record<string, string>,
   moteur: { enCours: false, dernierTour: null, derniereErreur: null } as EtatMoteurFront,
   entreeTour: null as string | null,
   panneauOuvert: false,
+  resumes: {} as Record<string, ResumeEspace>,
   nonLus: 0,
   bulleEcartee: null as string | null,
   manques: [] as string[],
@@ -256,11 +271,9 @@ export const useSuperviseurStore = create<SuperviseurState>((set, get) => {
     deciderDemande: (id, statut) =>
       set((s) => ({
         demandes: s.demandes.map((d) => (d.id === id && d.statut === "ouverte" ? { ...d, statut } : d)),
-        demandeFocus: s.demandeFocus === id ? null : s.demandeFocus,
       })),
     basculerToujours: (id) =>
       set((s) => ({ demandes: s.demandes.map((d) => (d.id === id ? { ...d, toujours: !d.toujours } : d)) })),
-    focaliserDemande: (id) => set({ demandeFocus: id }),
 
     ouvrirEchange: (e) => {
       const id = nouvelId("echange");
@@ -307,7 +320,7 @@ export const useSuperviseurStore = create<SuperviseurState>((set, get) => {
           const tour = get().entreeTour;
           if (tour && get().fil.some((e) => e.id === tour)) {
             get().ajouterPartie(tour, { type: "texte", texte });
-            // Un nouveau texte du même tour, panneau fermé, est une nouvelle chose à lire.
+            // Un nouveau texte du même tour, poste fermé, est une nouvelle chose à lire.
             if (!get().panneauOuvert) set((s) => ({ nonLus: s.nonLus + 1 }));
             return;
           }
@@ -335,26 +348,38 @@ export const useSuperviseurStore = create<SuperviseurState>((set, get) => {
     },
     ecarterBulle: (signature) => set({ bulleEcartee: signature }),
 
+    poserResume: (wsId, texte, groupe, a) =>
+      set((s) => {
+        const propre = nettoyerResume(texte);
+        if (!propre) {
+          if (!(wsId in s.resumes)) return s;
+          const { [wsId]: _retire, ...reste } = s.resumes;
+          return { resumes: reste };
+        }
+        return { resumes: { ...s.resumes, [wsId]: { texte: propre, a: a ?? Date.now(), groupe } } };
+      }),
+    oublierResumes: (idsVivants) =>
+      set((s) => {
+        const vivants = new Set(idsVivants);
+        const cles = Object.keys(s.resumes);
+        if (cles.every((k) => vivants.has(k))) return s;
+        return { resumes: Object.fromEntries(Object.entries(s.resumes).filter(([k]) => vivants.has(k))) };
+      }),
+
     reset: () => {
       compteur = 0;
-      set({ ...ETAT_INITIAL, sessionsBloquees: {}, fil: [], demandes: [], echanges: [], manques: [] });
+      set({ ...ETAT_INITIAL, sessionsBloquees: {}, resumes: {}, fil: [], demandes: [], echanges: [], manques: [] });
     },
   };
 });
 
 // --- Lectures pures ---
 
-type Lisible = Pick<SuperviseurState, "demandes" | "echanges" | "moteur" | "fil" | "nonLus" | "demandeFocus">;
+type Lisible = Pick<SuperviseurState, "demandes" | "echanges" | "moteur" | "fil" | "nonLus">;
 
 /** Demandes encore ouvertes, de la plus ancienne à la plus récente. */
 export function demandesOuvertes(s: Pick<SuperviseurState, "demandes">): DemandeValidation[] {
   return s.demandes.filter((d) => d.statut === "ouverte");
-}
-
-/** Carte en tête de pile : celle qu'on a choisie, sinon la plus ancienne ouverte. */
-export function demandeEnTete(s: Pick<SuperviseurState, "demandes" | "demandeFocus">): DemandeValidation | null {
-  const ouvertes = demandesOuvertes(s);
-  return ouvertes.find((d) => d.id === s.demandeFocus) ?? ouvertes[0] ?? null;
 }
 
 /** L'espace attend la réponse à une question qu'il a posée (anneau pointillé du dock). */
@@ -381,7 +406,7 @@ export function outilEnCours(s: Pick<SuperviseurState, "fil">): OutilId | null {
 }
 
 /**
- * Mode affiché par la marque du dock et l'en-tête du panneau : en pause ; agit (un tour
+ * Mode affiché par la marque du dock et l'en-tête du poste de suivi : en pause ; agit (un tour
  * ou un outil en cours) ; parle (quelque chose vous attend : carte ouverte, agent en
  * attente, message non lu) ; observe sinon.
  */

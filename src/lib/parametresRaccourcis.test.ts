@@ -11,7 +11,7 @@ describe("rangeesRaccourcis (déduites de lib/shortcuts)", () => {
     expect(combos("Ouvrir un dossier")).toEqual([["Ctrl", "Maj", "O"]]);
     expect(combos("Palette de commandes")).toEqual([["Ctrl", "K"]]);
     expect(combos("Paramètres")).toEqual([["Ctrl", "Maj", ","]]);
-    expect(combos("Panneau du superviseur")).toEqual([["Ctrl", "Maj", "Espace"]]);
+    expect(combos("Poste de suivi du superviseur")).toEqual([["Ctrl", "Maj", "Espace"]]);
     expect(combos("Fichiers modifiés")).toEqual([["Ctrl", "Maj", "D"]]);
   });
 

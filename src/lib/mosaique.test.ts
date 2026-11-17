@@ -19,6 +19,7 @@ import {
   ligneBranche,
   majSuivi,
   messageTermine,
+  sansCadreSaisie,
   sujetTermine,
   partiesSection,
   resumeMosaique,
@@ -199,6 +200,24 @@ describe("lignes de terminal", () => {
     expect(derniereCommande(["❯ git status", "Sur la branche main"])).toBe("❯ git status");
     expect(derniereCommande(["moi@poste:~/dev/x$ npm test", "ok"])).toBe("❯ npm test");
     expect(derniereCommande(["sortie", "autre sortie"])).toBeNull();
+    // Un pourcentage n'est pas une invite zsh.
+    expect(derniereCommande(["Session ██ 10% ↻ 2h10 7j ███ 50% ↻ 5j01h"])).toBeNull();
+  });
+
+  it("cadre de saisie : le bas d'écran de Claude Code est retiré, la sortie reste", () => {
+    const filet = "─".repeat(40);
+    const ecran = ["● Je lis le fichier", "  ⎿ 120 lignes", "✻ Réflexion… (12s)", filet, "❯ ", filet, "  projet | main | Opus", "  ⏵⏵ auto mode on"];
+    expect(sansCadreSaisie(ecran)).toEqual(ecran.slice(0, 3));
+    // Saisie sur plusieurs lignes, cadre à coins.
+    const coins = ["sortie", "╭" + filet + "╮", "│ > une question", "│   sur deux lignes", "╰" + filet + "╯", "  ? for shortcuts"];
+    expect(sansCadreSaisie(coins)).toEqual(["sortie"]);
+    // Shell ordinaire, filet isolé (règle Markdown), cadre sans rien au-dessus : inchangé.
+    expect(sansCadreSaisie(["$ ls", "a  b"])).toEqual(["$ ls", "a  b"]);
+    expect(sansCadreSaisie(["titre", filet, "texte", "suite"])).toEqual(["titre", filet, "texte", "suite"]);
+    expect(sansCadreSaisie([filet, "❯ ", filet, "état"])).toEqual([filet, "❯ ", filet, "état"]);
+    // Une règle Markdown dans la sortie ne passe pas pour le haut du cadre.
+    const regle = ["avant", filet, "après la règle", filet, "❯ ", filet, "état"];
+    expect(sansCadreSaisie(regle)).toEqual(regle.slice(0, 3));
   });
 
   it("clés : une ligne qui remonte garde sa clé, la nouvelle en reçoit une neuve", () => {

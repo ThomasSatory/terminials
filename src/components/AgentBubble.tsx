@@ -22,9 +22,9 @@ import "../styles/accueil.css";
  * Bulle « un agent vous attend », posée au-dessus de l'avatar [data-ws-id] de l'espace
  * concerné : nom, onglet, dernier message de l'agent, bouton « Aller ». Une seule à la
  * fois, la plus récente ; elle disparaît quand l'espace est consulté ou qu'on la ferme.
- * Tant qu'elle est affichée, elle le signale par `useUiStore.setBulleEspace(wsId)` (la
- * zone terminal se réserve alors plus de place, le dock tait l'infobulle de cet avatar)
- * et repasse à null en disparaissant.
+ * Tant qu'elle est affichée, elle le signale par `useUiStore.setBulleEspace(wsId)` (le
+ * dock tait l'infobulle de cet avatar) et repasse à null en disparaissant. Elle flotte
+ * par-dessus la zone terminal sans la retailler (lib/reserveBasse).
  *
  * Les styles sont dans accueil.css (préfixe `bul-`), la logique de choix dans
  * lib/agentBubble. Toujours monté par App.
@@ -95,8 +95,7 @@ export function AgentBubble() {
     wsId ? raccourciEspace(navigableOrder(s.workspaces, s.groups).findIndex((w) => w.id === wsId)) : null,
   );
 
-  // Pas d'avatar à montrer (dock masqué, espace dans un groupe replié) : pas de bulle, donc
-  // pas de place réservée au terminal non plus.
+  // Pas d'avatar à montrer (dock masqué, espace dans un groupe replié) : pas de bulle.
   const posee = permise && !enMosaique && rendu !== null && place !== null ? rendu.bulle.wsId : null;
   useEffect(() => {
     useUiStore.getState().setBulleEspace(posee);

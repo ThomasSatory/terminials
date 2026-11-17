@@ -9,13 +9,15 @@ import {
   outilEnCours,
   type ModeSuperviseur,
 } from "../store/superviseur";
+import { etatEspace } from "../lib/etatAgent";
+import { cartesParEspace, groupeDuPoste, type GroupePoste } from "../lib/posteSuperviseur";
 import { couleurEspace } from "../lib/couleurEspace";
 import { monogramme } from "../lib/monogram";
 import { raccourciEspace } from "../lib/dockInfo";
 import { ligneEtatSuperviseur, tonLigneEtat } from "../lib/superviseurLibelles";
 
 /**
- * Lectures partagées par la marque, le panneau et la bulle du superviseur, en sélecteurs
+ * Lectures partagées par la marque, le poste de suivi et la bulle du superviseur, en sélecteurs
  * ciblés (des nombres et des références stables, jamais le store entier).
  */
 
@@ -89,4 +91,47 @@ export function useMaintenantSuperviseur(pasMs: number): number {
     return () => clearInterval(t);
   }, [pasMs]);
   return maintenant;
+}
+
+const SEP = "\u001f";
+const LIGNE = "\u001e";
+
+export interface GroupesPoste {
+  attendent: string[];
+  travail: string[];
+  repos: string[];
+}
+
+/**
+ * Ids des espaces rangés par groupe du poste de suivi, dans l'ordre du dock (celui de
+ * Ctrl 1…9, puis les espaces des groupes repliés). Trois sélecteurs rendent des CHAÎNES :
+ * le poste ne se recompose que si un espace change de groupe, pas à chaque tour des
+ * sondes (branche, ports) qui réallouent `workspaces`.
+ */
+export function useGroupesPoste(): GroupesPoste {
+  const etats = useWorkspaceStore((s) => {
+    const ordre = navigableOrder(s.workspaces, s.groups);
+    const vus = new Set(ordre.map((w) => w.id));
+    return [...ordre, ...s.workspaces.filter((w) => !vus.has(w.id))]
+      .map((w) => `${w.id}${SEP}${etatEspace(w, s)}`)
+      .join(LIGNE);
+  });
+  const cartes = useSuperviseurStore((s) => [...cartesParEspace(s.demandes).keys()].join(SEP));
+  const relais = useSuperviseurStore((s) =>
+    s.echanges
+      .filter((e) => e.etat === "ouvert" || e.etat === "transmis")
+      .map((e) => e.de)
+      .join(SEP),
+  );
+  return useMemo(() => {
+    const avecCarte = new Set(cartes ? cartes.split(SEP) : []);
+    const enRelais = new Set(relais ? relais.split(SEP) : []);
+    const groupes: Record<GroupePoste, string[]> = { attendent: [], travail: [], repos: [] };
+    if (!etats) return groupes;
+    for (const l of etats.split(LIGNE)) {
+      const [id, etat] = l.split(SEP);
+      groupes[groupeDuPoste(etat as Parameters<typeof groupeDuPoste>[0], enRelais.has(id), avecCarte.has(id) ? 1 : 0)].push(id);
+    }
+    return groupes;
+  }, [etats, cartes, relais]);
 }

@@ -211,6 +211,16 @@ describe("garde-fou incontournable", () => {
     expect(outilsAuFil()).toHaveLength(0);
   });
 
+  it("depuis un espace ou l'extérieur, espace.resumer est refusé même au niveau Agir, et le store ne change pas", async () => {
+    for (const origine of [ESPACE, EXTERNE]) {
+      expect(await appeler("espace.resumer", { espace: "api", texte: "x" }, origine)).toEqual({
+        ok: false,
+        erreur: "Réservé au superviseur.",
+      });
+    }
+    expect(useSuperviseurStore.getState().resumes).toEqual({});
+  });
+
   it("niveau baissé pendant qu'une carte attend : Autoriser n'écrit rien tant qu'on n'est pas revenu à Agir", async () => {
     const r = await appeler("terminal.ecrire", { espace: "api", texte: "oui", pourquoi: "p" });
     regler({ niveau: "reorganiser" });
@@ -260,6 +270,7 @@ describe("garde-fou incontournable", () => {
       ["terminal.ecrire", { espace: "api", texte: "oui", pourquoi: "p" }],
       ["espace.creer", { dossier: "/tmp" }],
       ["notifier", { texte: "coucou" }],
+      ["espace.resumer", { espace: "api", texte: "x" }],
     ] as const) {
       expect(await appeler(outil, args), outil).toMatchObject({ ok: false, erreur: "Le superviseur est désactivé." });
     }

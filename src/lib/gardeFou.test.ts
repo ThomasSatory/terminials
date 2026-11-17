@@ -44,6 +44,7 @@ describe("classes des outils", () => {
       "terminal.lire": "observer",
       notifier: "observer",
       demander: "observer",
+      "espace.resumer": "observer",
       "espace.creer": "reorganiser",
       "espace.renommer": "reorganiser",
       "espace.deplacer": "reorganiser",
@@ -60,7 +61,7 @@ describe("classes des outils", () => {
 
 describe("garde-fou — superviseur", () => {
   it("désactivé ou en pause : tout est refusé", () => {
-    for (const o of [...OBSERVER, ...REORGANISER, ...ECRIRE]) {
+    for (const o of [...OBSERVER, "espace.resumer" as OutilId, ...REORGANISER, ...ECRIRE]) {
       expect(type(appel(o), ctx({ actif: false }))).toBe("refuser");
       expect(type(appel(o), ctx({ pause: true }))).toBe("refuser");
     }
@@ -103,6 +104,18 @@ describe("garde-fou — superviseur", () => {
   it("ne ferme pas un espace où un agent travaille ou attend", () => {
     expect(type(appel("espace.fermer", { cibleOccupee: true }), ctx())).toBe("refuser");
     expect(type(appel("espace.fermer"), ctx({ niveau: "reorganiser" }))).toBe("executer");
+  });
+
+  it("espace.resumer : réservé au superviseur, exécuté à tous les niveaux", () => {
+    for (const niveau of ["observer", "reorganiser", "agir"] as const) {
+      expect(type(appel("espace.resumer"), ctx({ niveau }))).toBe("executer");
+    }
+    for (const origine of [ESPACE, EXTERNE]) {
+      expect(decider(appel("espace.resumer", { origine }), ctx({ niveau: "agir" }))).toEqual({
+        type: "refuser",
+        raison: "Réservé au superviseur.",
+      });
+    }
   });
 
   it("le superviseur ne se sert pas de « demander »", () => {

@@ -86,6 +86,7 @@ export function useReveilSuperviseur(): void {
       if (actif) for (const r of reveilsEntre(reference, maintenant)) annoncer(r);
       reference = indexer(maintenant);
       annulerDemandesOrphelines();
+      useSuperviseurStore.getState().oublierResumes(useWorkspaceStore.getState().workspaces.map((w) => w.id));
     };
     const planifier = () => {
       const w = useWorkspaceStore.getState();
@@ -108,7 +109,7 @@ export function useReveilSuperviseur(): void {
     };
   }, []);
 
-  // Réglages : niveau, pause, nom (d'où qu'ils changent : panneau, Paramètres).
+  // Réglages : niveau, pause, nom (d'où qu'ils changent : poste de suivi, Paramètres).
   useEffect(() => {
     let avant = useReglagesStore.getState().reglages.superviseur;
     let nomAnnonce = avant.nom;

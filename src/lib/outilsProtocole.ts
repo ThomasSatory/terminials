@@ -13,6 +13,7 @@ export type OutilId =
   | "terminal.lire"
   | "notifier"
   | "demander"
+  | "espace.resumer"
   | "espace.creer"
   | "espace.renommer"
   | "espace.deplacer"
@@ -52,6 +53,7 @@ export interface ArgsOutils {
   "terminal.lire": { espace: string; onglet?: string; lignes?: number };
   notifier: { texte: string; titre?: string; espace?: string };
   demander: { espace?: string; question: string };
+  "espace.resumer": { espace: string; texte: string };
   "espace.creer": { dossier: string; nom?: string; groupe?: string; couleur?: string };
   "espace.renommer": { espace: string; nom: string };
   /** `groupe: ""` : hors groupe ; absent : groupe inchangé. */

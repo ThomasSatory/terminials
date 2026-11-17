@@ -22,7 +22,7 @@ export function SuperviseurDesactive({ fermer }: { fermer: () => void }) {
             désactivé · rien ne tourne
           </span>
         </span>
-        <button type="button" className="hov sup-tete-fermer" aria-label="Fermer le superviseur (Échap)" title="Fermer (Échap)" onClick={fermer}>
+        <button type="button" className="hov sup-tete-fermer" aria-label="Fermer le poste de suivi (Échap)" title="Fermer (Échap)" onClick={fermer}>
           <IconeCroix taille={12} />
         </button>
       </div>

@@ -30,6 +30,7 @@ export const CLASSES: Readonly<Record<OutilId, ClasseOutil>> = {
   "terminal.lire": "observer",
   notifier: "observer",
   demander: "observer",
+  "espace.resumer": "observer",
   "espace.creer": "reorganiser",
   "espace.renommer": "reorganiser",
   "espace.deplacer": "reorganiser",
@@ -94,6 +95,8 @@ export function decider(appel: AppelGarde, ctx: ContexteGardeFou): Decision {
       if (ctx.pause) return { type: "refuser", raison: "Le superviseur est en pause : la question n'est pas transmise." };
       return { type: "executer" };
     }
+    // Un agent ne réécrit pas ce que l'interface dit de lui : observer, mais réservé à son origine.
+    if (appel.outil === "espace.resumer") return { type: "refuser", raison: "Réservé au superviseur." };
     if (classe === "observer") return { type: "executer" };
     return { type: "refuser", raison: "Réservé au superviseur." };
   }

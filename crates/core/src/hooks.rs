@@ -83,6 +83,12 @@ case "$TYPE" in
     terminials idle >/dev/null 2>&1
     MSG=$(echo "$EVENT" | jq -r '.message // empty' 2>/dev/null)
     KIND=$(echo "$EVENT" | jq -r '.notification_type // empty' 2>/dev/null)
+    # Invite restée 60 s sans saisie : Claude n'attend rien de précis, la fin du tour a
+    # déjà été signalée par Stop — et ce rappel part aussi après un /clear, sur une
+    # session vide. Connexion réussie : rien à faire non plus. Ni l'un ni l'autre ne
+    # mérite une notification « a besoin de toi ».
+    case "$KIND" in idle_prompt|auth_success) exit 0 ;; esac
+    [ "$MSG" = "Claude is waiting for your input" ] && exit 0
     # Une demande d'autorisation bloque la session jusqu'à la réponse de l'utilisateur :
     # le superviseur ne doit rien y écrire sans validation explicite.
     ATTENTE=question
@@ -90,10 +96,10 @@ case "$TYPE" in
       "Claude needs your permission to use "*) ATTENTE=autorisation ;;
     esac
     [ "$KIND" = "permission_prompt" ] && ATTENTE=autorisation
-    # Claude Code écrit en anglais : on traduit les deux messages connus.
+    # Claude Code écrit en anglais : on traduit le message connu.
     case "$MSG" in
       "Claude needs your permission to use "*) MSG="Claude demande l'autorisation d'utiliser ${MSG#Claude needs your permission to use }" ;;
-      "Claude is waiting for your input"|"") MSG="Claude attend ta réponse" ;;
+      "") MSG="Claude attend ta réponse" ;;
     esac
     notifier "$ATTENTE" "$TITLE" "$MSG" ;;
   SessionStart|SessionEnd)
@@ -645,11 +651,20 @@ mod tests {
             appels[1],
             "notify --attente autorisation --title Claude · api --body Claude demande l'autorisation d'utiliser Bash"
         );
-        let question = r#"{"hook_event_name":"Notification","cwd":"/srv/api","message":"Claude is waiting for your input"}"#;
+        let question = r#"{"hook_event_name":"Notification","cwd":"/srv/api","notification_type":"elicitation_dialog","message":"Choisis une option"}"#;
         assert_eq!(
             executer_script(question, false)[1],
-            "notify --attente question --title Claude · api --body Claude attend ta réponse"
+            "notify --attente question --title Claude · api --body Choisis une option"
         );
+        // Invite restée sans saisie (y compris après /clear) ou connexion réussie : l'onglet
+        // repasse au repos, mais personne n'est notifié.
+        for muet in [
+            r#"{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"Claude is waiting for your input"}"#,
+            r#"{"hook_event_name":"Notification","message":"Claude is waiting for your input"}"#,
+            r#"{"hook_event_name":"Notification","notification_type":"auth_success","message":"ok"}"#,
+        ] {
+            assert_eq!(executer_script(muet, false), vec!["idle"], "{muet}");
+        }
         let typee = r#"{"hook_event_name":"Notification","notification_type":"permission_prompt","message":"x"}"#;
         assert!(executer_script(typee, false)[1]
             .starts_with("notify --attente autorisation --title Claude --body x"));
