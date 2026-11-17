@@ -1,6 +1,6 @@
 [package]
 name = "terminials"
-version = "0.1.0"
+version = "0.2.0"
 description = "Terminal Linux pour agents de code en parallèle (clone homemade de cmux)"
 authors = ["ThomasSatory"]
 edition = "2021"

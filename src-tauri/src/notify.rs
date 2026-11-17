@@ -26,10 +26,11 @@ pub fn fire(app: &AppHandle, title: &str, body: &str) {
     }
 
     let mut notif = notify_rust::Notification::new();
+    notif.summary(title).body(body).appname("terminials");
+    // Hints et urgence n'existent que côté D-Bus (notify-rust ne les expose ni sous macOS
+    // ni sous Windows).
+    #[cfg(all(unix, not(target_os = "macos")))]
     notif
-        .summary(title)
-        .body(body)
-        .appname("terminials")
         // GNOME rattache la notif à terminials.desktop (nom + icône d'en-tête).
         .hint(notify_rust::Hint::DesktopEntry("terminials".into()))
         .urgency(notify_rust::Urgency::Critical);
