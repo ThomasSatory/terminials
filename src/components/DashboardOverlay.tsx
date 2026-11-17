@@ -1,143 +1,146 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useDashboardStore } from "../store/dashboard";
 import { useWorkspaceStore } from "../store/workspace";
+import { useUiStore } from "../store/ui";
 import { focusTab } from "../lib/tabFocus";
+import { dispatchShortcut } from "../lib/shortcutDispatch";
 import { useActivityData, useSummary } from "../hooks/useActivityData";
 import { useSaisieTemps } from "../hooks/useSaisieTemps";
 import { activityApi, clickupActif, type ActivitySettings } from "../lib/activityApi";
-import {
-  formatDayTitle,
-  formatWeekLabel,
-  collectedAgoLabel,
-  weekRange,
-  todayString,
-} from "../lib/dashboardDay";
-import { assignWorkspaceColors } from "../lib/workspacePalette";
-import { buildWeekDays } from "../lib/weekDays";
+import { collectedAgoLabel, dayRange, formatWeekLabel, shiftDay, todayString, weekRange } from "../lib/dashboardDay";
+import { couleurAuto, couleurEspace } from "../lib/couleurEspace";
+import { monogramme } from "../lib/monogram";
 import { buildFrise } from "../lib/frise";
+import { buildWeekDays } from "../lib/weekDays";
 import { splitTitle } from "../lib/summaryTitle";
 import { attacherPuces } from "../lib/friseBilan";
-import { SAISIE_PAR_DEFAUT, tempsParUs } from "../lib/tempsSaisie";
-import { Frise } from "./dashboard/Frise";
-import { Timeline } from "./dashboard/Timeline";
-import { WeekDays } from "./dashboard/WeekDays";
-import { SummaryPanel, summaryFooter } from "./dashboard/SummaryPanel";
-import { OpenTasks } from "./dashboard/OpenTasks";
+import { SAISIE_PAR_DEFAUT, cibleDuJour, tempsParUs } from "../lib/tempsSaisie";
+import { IconeRafraichir } from "./ui/icons";
+import { BarreRecap } from "./dashboard/BarreRecap";
+import { SelecteurJours } from "./dashboard/SelecteurJours";
+import { Chiffres, type Chiffre } from "./dashboard/Chiffres";
+import { Rythme } from "./dashboard/Rythme";
+import { BilanProjets, type EtatBilan, type SectionVue } from "./dashboard/BilanProjets";
 import { TempsSaisie } from "./dashboard/TempsSaisie";
-import { SettingsPanel } from "./dashboard/SettingsPanel";
+import { Reunions } from "./dashboard/Reunions";
+import { OpenTasks } from "./dashboard/OpenTasks";
+import { Chronologie } from "./dashboard/Chronologie";
+import { useSemaine } from "./dashboard/useSemaine";
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  CloseIcon,
-  GearIcon,
-  RefreshIcon,
-} from "./dashboard/icons";
-import "./dashboard/dashboard.css";
+  activite,
+  chronologie,
+  colonnesRythme,
+  commitsFrise,
+  compte,
+  derniereBranche,
+  duree,
+  heure,
+  jourLong,
+  joursSelecteur,
+  jourVoisin,
+  libelleBilan as libelleBilanRedige,
+  lignesSaisies,
+  nomsTickets,
+  numeroSemaine,
+  phraseHoraire,
+  position,
+  pucesDe,
+  reperes,
+  texteDaily,
+} from "../lib/recapModele";
+import "../styles/recap.css";
 
-/** Ouvre un lien externe (ticket ClickUp, lien markdown du résumé) via le plugin opener,
-    plutôt que la navigation par défaut du webview. */
+/** Ouvre un lien externe (ticket, lien du bilan) par le plugin opener, jamais par
+    la navigation du webview. */
 function openLink(href: string): void {
   void openUrl(href);
 }
 
+/** Horloge à la minute : le trait « maintenant » et la cible du jour avancent seuls. */
+function useMaintenant(): number {
+  const [t, setT] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const h = setInterval(() => setT(Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(h);
+  }, []);
+  return t;
+}
+
 /**
- * Overlay global du dashboard d'activité, sur le même modèle que `DiffOverlay` :
- * conteneur focusable superposé à la grille, raccourcis clavier propres au
- * conteneur (aucun listener `window`). N'est jamais lié à un workspace.
+ * Couleur d'affichage d'un dossier d'espace, la même que dans le dock : la couleur
+ * propre de l'espace ouvert sur ce dossier, sinon sa teinte automatique (stable par
+ * dossier, donc aussi pour un espace fermé depuis). Le sélecteur rend une chaîne :
+ * les sondes branche / dirty, qui recréent la liste d'espaces, ne re-rendent rien.
+ */
+function useCouleurDossier(): (dir: string) => string {
+  const cle = useWorkspaceStore((s) => s.workspaces.map((w) => `${w.cwd}\t${w.color ?? ""}`).join("\n"));
+  return useMemo(() => {
+    const parDir = new Map<string, string>();
+    for (const ligne of cle ? cle.split("\n") : []) {
+      const [cwd, color] = ligne.split("\t");
+      if (!parDir.has(cwd)) parDir.set(cwd, couleurEspace({ cwd, color: color || undefined }));
+    }
+    return (dir: string) => parDir.get(dir) ?? couleurAuto(dir);
+  }, [cle]);
+}
+
+/**
+ * Récap de la journée (Ctrl+Maj+H), d'après la maquette Recap : barre propre
+ * (onglets Récap / Chronologie), en-tête avec le titre du bilan et le sélecteur de
+ * jours, bandeau de chiffres, rythme au quart d'heure empilé par espace, bilan par
+ * projet, temps à saisir, réunions et tâches ouvertes. Le mode semaine et les
+ * réglages, que la maquette ne dessine pas, sont rhabillés dans le même langage.
  *
- * Mise en page « un écran » (2026-09-22) : barre du haut, en-tête (date, titre
- * de journée écrit par le LLM), frise d'activité par projet — chaque ligne
- * porte la phrase du bilan LLM pour ce projet —, puis deux colonnes courtes :
- * le reste du bilan (ou sa mention de génération), et à droite le temps à
- * saisir par US puis les tickets du sprint. La chronologie détaillée et le jour par jour vivent dans un
- * volet à droite (touche `d`), les réglages dans le même volet (⚙).
+ * Conteneur focusable posé sur la zone des terminaux (qui restent montés dessous) :
+ * clavier sur le conteneur seulement (aucun listener `window`, Échap appartient au
+ * terminal sinon), focus rendu au terminal actif à la fermeture.
  */
 export function DashboardOverlay() {
+  const dockVisible = useUiStore((s) => s.dockVisible);
   const day = useDashboardStore((s) => s.day);
   const mode = useDashboardStore((s) => s.mode);
+  const onglet = useDashboardStore((s) => s.onglet);
   const filterDir = useDashboardStore((s) => s.filterDir);
   const filterText = useDashboardStore((s) => s.filterText);
-  const settingsOpen = useDashboardStore((s) => s.settingsOpen);
-  const detailsOpen = useDashboardStore((s) => s.detailsOpen);
   const refreshTick = useDashboardStore((s) => s.refreshTick);
-  const close = useDashboardStore((s) => s.close);
-  const shiftDay = useDashboardStore((s) => s.shiftDay);
-  const today = useDashboardStore((s) => s.today);
   const setDay = useDashboardStore((s) => s.setDay);
+  const allerAujourdhui = useDashboardStore((s) => s.today);
   const setMode = useDashboardStore((s) => s.setMode);
+  const setOnglet = useDashboardStore((s) => s.setOnglet);
+  const setFilterDir = useDashboardStore((s) => s.setFilterDir);
+  const clearFilterDir = useDashboardStore((s) => s.clearFilterDir);
   const setFilterText = useDashboardStore((s) => s.setFilterText);
-  const setSettingsOpen = useDashboardStore((s) => s.setSettingsOpen);
-  const setDetailsOpen = useDashboardStore((s) => s.setDetailsOpen);
-  const bumpGenerate = useDashboardStore((s) => s.bumpGenerate);
 
-  const { loading, events, stats, openTasks, reunionUs, status, error, reload } = useActivityData();
+  const { loading, events, stats, openTasks, reunionUs, reunions, status, error, reload } = useActivityData();
+  const evenementsSemaine = useSemaine();
   const semaine = mode === "week";
-  // Un seul bilan : son kind suit le mode. Le « reste à faire » du LLM n'est
-  // plus affiché : les tickets du sprint suffisent.
   const bilan = useSummary(semaine ? "semaine" : "bilan");
+  const saisieTemps = useSaisieTemps(day);
+  const maintenant = useMaintenant();
+  const couleur = useCouleurDossier();
+  const today = todayString(new Date(maintenant * 1000));
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const filterRef = useRef<HTMLInputElement>(null);
+  const filtreRef = useRef<HTMLInputElement>(null);
 
-  const byWorkspace = stats?.byWorkspace ?? [];
-  // Une teinte par workspace pour toute la plage affichée : frise, glyphes de la
-  // chronologie et barres du jour par jour partagent la même affectation.
-  const colors = useMemo(() => assignWorkspaceColors(byWorkspace), [byWorkspace]);
-  const frise = useMemo(
-    () => buildFrise(mode, day, events, byWorkspace, colors),
-    [mode, day, events, byWorkspace, colors],
-  );
-  // Lignes du « jour par jour » : calculées même en mode jour (coût négligeable,
-  // et le hook `useMemo` doit rester inconditionnel).
-  const weekRows = useMemo(
-    () => buildWeekDays(weekRange(day).days, events, colors, todayString()),
-    [day, events, colors],
-  );
-  // Boutons de saisie ClickUp : vue Jour seulement (une entrée porte une date).
-  const saisieTemps = useSaisieTemps(day);
-  // Titre de journée et puces : séparés une fois par synthèse.
-  const synthese = useMemo(
-    () => (bilan.ui.status === "ok" ? splitTitle(bilan.ui.summary.text) : { title: "", body: "" }),
-    [bilan.ui],
-  );
-  // Puces par projet → lignes de la frise ; le reste va au panneau Bilan.
-  const attache = useMemo(
-    () => attacherPuces(synthese.body, frise.rows.map((r) => r.name)),
-    [synthese.body, frise.rows],
-  );
-
-  // Réglages (jeton ClickUp des tickets, horaire rappelé par l'état « aucune
-  // synthèse ») : lus une fois au montage puis à chaque bumpRefresh.
+  // Réglages (suivi des tâches, cibles de saisie, horaire du bilan) : relus à chaque collecte.
   const [settings, setSettings] = useState<ActivitySettings | null>(null);
   useEffect(() => {
-    let cancelled = false;
+    let annule = false;
     activityApi
       .getSettings()
       .then((s) => {
-        if (!cancelled) setSettings(s);
+        if (!annule) setSettings(s);
       })
       .catch(() => {});
     return () => {
-      cancelled = true;
+      annule = true;
     };
   }, [refreshTick]);
 
-  // Temps à saisir : la plage affichée (jour ou semaine), répartie par US.
-  const saisie = settings?.saisie ?? SAISIE_PAR_DEFAUT;
-  const temps = useMemo(
-    () =>
-      tempsParUs(
-        events,
-        new Map(byWorkspace.map((w) => [w.dir, w.name])),
-        saisie,
-        reunionUs,
-        Math.floor(Date.now() / 1000),
-      ),
-    [events, byWorkspace, saisie, reunionUs],
-  );
-  // Focus au montage (blur implicite du textarea xterm) ; au démontage, le
-  // focus revient au terminal actif — même contrat que DiffOverlay.
+  // Focus au montage (le textarea xterm perd la saisie) ; au démontage, le focus
+  // revient au terminal actif, même contrat que les autres vues.
   useEffect(() => {
     containerRef.current?.focus();
     return () => {
@@ -147,223 +150,449 @@ export function DashboardOverlay() {
     };
   }, []);
 
-  // Clavier de l'overlay — uniquement sur le conteneur focusé. Un champ de
-  // formulaire garde toutes ses touches ; Échap y rend seulement le focus au
-  // conteneur (fermer détruirait une saisie en cours, un jeton par exemple).
-  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLElement;
-    const isFormField =
-      target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT";
-    if (isFormField) {
-      if (e.key === "Escape") containerRef.current?.focus();
+  // Sens de la dernière navigation : la journée entre par la droite en avançant,
+  // par la gauche en reculant. Calculé au rendu (idempotent) pour animer dès l'image.
+  const sens = useRef({ cle: `${mode}:${day}`, avant: true });
+  if (sens.current.cle !== `${mode}:${day}`) {
+    sens.current = { cle: `${mode}:${day}`, avant: day >= sens.current.cle.slice(sens.current.cle.indexOf(":") + 1) };
+  }
+
+  // Créneau épinglé et sections repliées : propres à la période affichée. Le créneau
+  // est retenu par son début (t0), pas par son rang : une collecte ou minuit peuvent
+  // déplacer les bornes de la frise, et un rang désignerait alors un autre quart d'heure.
+  const cle = `${mode}:${day}`;
+  const [epingle, setEpingle] = useState<{ cle: string; t0: number } | null>(null);
+  const [fermes, setFermes] = useState<Record<string, boolean>>({});
+  useEffect(() => setEpingle(null), [cle]);
+
+  // ---------------------------------------------------------------- Données dérivées
+  const byWorkspace = useMemo(() => stats?.byWorkspace ?? [], [stats]);
+  const plage = useMemo(() => (semaine ? weekRange(day) : dayRange(day)), [semaine, day]);
+  const colors = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const w of byWorkspace) m.set(w.dir, couleur(w.dir));
+    for (const ev of events) if (ev.workspaceDir && !m.has(ev.workspaceDir)) m.set(ev.workspaceDir, couleur(ev.workspaceDir));
+    return m;
+  }, [byWorkspace, events, couleur]);
+  // Quart d'heure courant : la frise du jour en cours s'étend jusqu'à l'instant présent
+  // (bornes à l'heure pleine locale), recalculée au quart d'heure et non à chaque minute.
+  // Un quart d'heure et non une heure UTC : certains fuseaux sont décalés d'une demi-heure.
+  const heureCourante = Math.floor(maintenant / 900) * 900;
+  const frise = useMemo(
+    () => buildFrise(mode, day, events, byWorkspace, colors, heureCourante),
+    [mode, day, events, byWorkspace, colors, heureCourante],
+  );
+  const nomDe = useMemo(() => {
+    const noms = new Map<string, string>([...byWorkspace.map((w) => [w.dir, w.name] as const), ...frise.rows.map((r) => [r.dir, r.name] as const)]);
+    return (dir: string) => noms.get(dir) ?? dir.split("/").filter(Boolean).pop() ?? dir;
+  }, [byWorkspace, frise]);
+  const act = useMemo(() => activite(events, plage.from, plage.to), [events, plage]);
+
+  // Mise en avant au changement de période : gardée si l'espace a de l'activité sur
+  // la nouvelle période, levée sinon. Les données arrivent après le changement de
+  // jour (et le premier rendu porte encore celles de l'ancien) : on attend un cycle
+  // de chargement complet de la nouvelle période avant de trancher.
+  const reconciliation = useRef<{ cle: string; chargementVu: boolean } | null>(null);
+  useEffect(() => {
+    reconciliation.current = { cle, chargementVu: false };
+  }, [cle]);
+  useEffect(() => {
+    const r = reconciliation.current;
+    if (r === null || r.cle !== cle) return;
+    if (loading) {
+      r.chargementVu = true;
       return;
     }
+    if (!r.chargementVu) return;
+    reconciliation.current = null;
+    // Échec de lecture : les événements sont ceux d'avant, rien à trancher.
+    if (error === null && filterDir !== null && !act.parDir.has(filterDir)) clearFilterDir();
+  }, [cle, loading, error, act, filterDir, clearFilterDir]);
+  const colonnes = useMemo(() => colonnesRythme(frise, reunions, maintenant), [frise, reunions, maintenant]);
+  const epingleRang = epingle?.cle === cle ? colonnes.findIndex((c) => c.t0 === epingle.t0) : -1;
+  const epingleIndex = epingleRang >= 0 ? epingleRang : null;
+  const tickets = useMemo(() => nomsTickets(events, openTasks), [events, openTasks]);
+
+  const synthese = useMemo(
+    () => (bilan.ui.status === "ok" ? splitTitle(bilan.ui.summary.text) : { title: "", body: "" }),
+    [bilan.ui],
+  );
+  const attache = useMemo(() => attacherPuces(synthese.body, frise.rows.map((r) => r.name)), [synthese.body, frise.rows]);
+
+  const saisieReglages = settings?.saisie ?? SAISIE_PAR_DEFAUT;
+  const temps = useMemo(
+    () =>
+      tempsParUs(
+        events,
+        new Map(byWorkspace.map((w) => [w.dir, w.name])),
+        saisieReglages,
+        reunionUs,
+        maintenant,
+        reunions,
+        openTasks,
+      ),
+    [events, byWorkspace, saisieReglages, reunionUs, maintenant, reunions, openTasks],
+  );
+  const suiviActif = settings !== null && clickupActif(settings.clickup);
+  const saisieActive = !semaine && suiviActif;
+
+  // ---------------------------------------------------------------- En-tête
+  const estAujourdhui = semaine ? weekRange(today).days[0] === weekRange(day).days[0] : day === today;
+  const titre = synthese.title !== "" ? synthese.title : semaine ? "La semaine" : "La journée";
+  const surtitre = semaine ? formatWeekLabel(day) : jourLong(day);
+  const etatBilan: EtatBilan =
+    bilan.ui.status === "ok" ? "ok" : bilan.ui.status === "absent" ? "absent" : bilan.ui.status === "error" ? "erreur" : "chargement";
+  const libelleBilan =
+    bilan.ui.status === "ok"
+      ? libelleBilanRedige(bilan.ui.summary, bilan.ui.reecrit === true, maintenant)
+      : bilan.ui.status === "absent"
+        ? `${semaine ? "Aucun bilan pour cette semaine." : "Aucun bilan pour cette journée."}${settings ? ` ${phraseHoraire(settings.schedule)}` : ""}`
+        : bilan.ui.status === "error"
+          ? "Le bilan n’a pas pu être lu"
+          : "Lecture du bilan…";
+  const erreurBilan = bilan.ui.status === "error" ? bilan.ui.message : bilan.ui.status === "ok" ? bilan.ui.lastError : undefined;
+  // « Rédaction… » et l'icône qui tourne : seulement pour une rédaction (appel LLM), jamais
+  // pour une simple lecture du cache (le hook distingue les deux, lib/summaryState).
+  const enCoursDeRedaction = bilan.redaction;
+  const regenerer = () => {
+    if (enCoursDeRedaction) return;
+    bilan.generate(bilan.ui.status === "ok");
+  };
+
+  // ---------------------------------------------------------------- Sélecteur
+  const jours = useMemo(() => joursSelecteur(day, today, evenementsSemaine, couleur), [day, today, evenementsSemaine, couleur]);
+  const precedent = semaine ? shiftDay(day, -7) : jourVoisin(day, -1, today);
+  const suivant = semaine
+    ? weekRange(shiftDay(day, 7)).days[0] <= today
+      ? shiftDay(day, 7)
+      : null
+    : jourVoisin(day, 1, today);
+  const ouvrirJour = (d: string) => {
+    setDay(d);
+    setMode("day");
+  };
+
+  // ---------------------------------------------------------------- Chiffres
+  const commits = events.filter((e) => e.kind === "commit" && e.ts >= plage.from && e.ts < plage.to);
+  const espacesCommits = new Set(commits.map((c) => c.workspaceDir ?? "")).size;
+  const prompts = events.filter((e) => e.kind === "claude_prompt" && e.ts >= plage.from && e.ts < plage.to).length;
+  const minutesReunion = reunions.reduce((s, r) => s + (r.fin - r.debut) / 60, 0);
+  const lignes = [
+    ...temps.us.map((l) => ({ id: l.ticket.id, propose: l.saisie })),
+    ...(temps.reunion.saisie > 0 && temps.reunion.ticket ? [{ id: temps.reunion.ticket.id, propose: temps.reunion.saisie }] : []),
+  ];
+  const faites = lignes.filter((l) => (saisieTemps.saisies[l.id] ?? 0) >= l.propose).length;
+  const toutSaisi = saisieActive && lignes.length > 0 && faites === lignes.length;
+  const chiffres: Chiffre[] = [
+    {
+      label: "Temps actif",
+      valeur: duree(act.minutes),
+      sous:
+        act.premier === null
+          ? "aucune activité"
+          : semaine
+            ? `sur ${compte(new Set(events.filter((e) => e.workspaceDir).map((e) => new Date(e.ts * 1000).toDateString())).size, "jour", "jours")}`
+            : estAujourdhui
+              ? `depuis ${heure(act.premier)}, en cours`
+              : `de ${heure(act.premier)} à ${heure(act.dernier ?? act.premier)}`,
+    },
+    { label: "Commits", valeur: String(commits.length), sous: commits.length ? `sur ${compte(espacesCommits, "espace", "espaces")}` : "aucun commit" },
+    { label: "Prompts", valeur: String(prompts), sous: "envoyés aux agents" },
+    { label: "Réunions", valeur: duree(minutesReunion), sous: reunions.length ? compte(reunions.length, "réunion", "réunions") : "aucune réunion" },
+    {
+      label: "Temps à saisir",
+      valeur: duree(temps.total),
+      succes: toutSaisi,
+      sous: !saisieActive
+        ? semaine
+          ? `sur ${compte(temps.jours, "jour", "jours")}`
+          : "saisie non configurée"
+        : toutSaisi
+          ? "tout est saisi"
+          : lignesSaisies(faites, lignes.length),
+    },
+  ];
+
+  // ---------------------------------------------------------------- Légende et bilan
+  const legende = [...act.parDir].map(([dir, minutes]) => ({ dir, name: nomDe(dir), couleur: couleur(dir), minutes }));
+  const sections: SectionVue[] = useMemo(() => {
+    const parProjet = [...act.parDir].map(([dir, minutes]) => {
+      const name = nomDe(dir);
+      const ligne = frise.rows.find((r) => r.dir === dir);
+      return {
+        dir,
+        name,
+        couleur: couleur(dir),
+        monogramme: monogramme(name),
+        branche: derniereBranche(events, dir) ?? "hors dépôt",
+        minutes,
+        commits: ligne?.commits ?? 0,
+        puces: pucesDe(attache.phrases.get(name) ?? ""),
+      };
+    });
+    const autres = pucesDe(attache.autres);
+    if (autres.length > 0) {
+      parProjet.push({
+        dir: "",
+        name: "Hors projet",
+        couleur: "#9296a0",
+        monogramme: "··",
+        branche: "ce que le bilan ne rattache à aucun espace",
+        minutes: 0,
+        commits: 0,
+        puces: autres,
+      });
+    }
+    return parProjet;
+  }, [act, nomDe, frise, couleur, events, attache]);
+  const daily = texteDaily(`${surtitre} : ${titre}`, sections);
+
+  const mettreEnAvant = (dir: string | null) => {
+    setFilterDir(dir);
+    // Mettre un espace en avant déplie sa section du bilan.
+    if (dir) setFermes((f) => ({ ...f, [dir]: false }));
+  };
+
+  // ---------------------------------------------------------------- Temps à saisir
+  const jourSemaine = new Date(dayRange(day).from * 1000).getDay();
+  const cible = cibleDuJour(jourSemaine, saisieReglages);
+  const noteSaisie = semaine
+    ? `Total sur ${compte(temps.jours, "jour travaillé", "jours travaillés")}, réparti au prorata du temps mesuré.`
+    : cible === 0
+      ? "Week-end : seul le temps mesuré est proposé."
+      : day === today
+        ? `Cible : le temps écoulé jusqu’à ${heure(maintenant)}, réparti au prorata du temps mesuré.`
+        : `Cible ${duree(cible)}, répartie au prorata du temps mesuré, au quart d’heure.`;
+
+  // ---------------------------------------------------------------- Chronologie
+  const heures = useMemo(
+    () => (onglet === "chrono" && !semaine ? chronologie(events, reunions, nomDe, filterText) : []),
+    [onglet, semaine, events, reunions, nomDe, filterText],
+  );
+  const joursSemaine = useMemo(
+    () => (semaine ? buildWeekDays(weekRange(day).days, events, colors, today) : null),
+    [semaine, day, events, colors, today],
+  );
+
+  // ---------------------------------------------------------------- Clavier
+  const fermer = () => dispatchShortcut({ type: "toggle-dashboard" });
+  // Un seul écran pour les réglages d'activité : Paramètres › Activité. Le récap n'a
+  // plus son volet (la maquette n'en dessine pas) ; deux écrans qui écrivaient les mêmes
+  // réglages pouvaient s'écraser l'un l'autre.
+  const ouvrirReglagesActivite = () => {
+    useDashboardStore.getState().close();
+    useUiStore.getState().ouvrirParametres("activite");
+  };
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const cible = e.target as HTMLElement;
+    const champ = cible.tagName === "INPUT" || cible.tagName === "TEXTAREA" || cible.tagName === "SELECT";
+    if (champ) {
+      // Un champ garde ses touches ; Échap rend seulement le focus au récap (fermer
+      // perdrait une saisie en cours, un réglage par exemple).
+      if (e.key === "Escape") {
+        e.preventDefault();
+        containerRef.current?.focus();
+      }
+      return;
+    }
+    // AltGr (qui donne [ et ] en AZERTY) peut remonter en Ctrl+Alt selon le moteur :
+    // il ne doit pas neutraliser les raccourcis.
+    if (!e.getModifierState("AltGraph") && (e.ctrlKey || e.altKey || e.metaKey)) return;
     switch (e.key) {
       case "Escape":
-        // Échap referme d'abord un volet ouvert, puis l'overlay.
-        if (detailsOpen) setDetailsOpen(false);
-        else if (settingsOpen) setSettingsOpen(false);
-        else close();
+        e.preventDefault();
+        fermer();
         break;
       case "[":
-        shiftDay(-1);
+        if (precedent) setDay(precedent);
         break;
       case "]":
-        shiftDay(1);
+        if (suivant) setDay(suivant);
         break;
       case "d":
-        setDetailsOpen(!detailsOpen);
+        setOnglet(onglet === "chrono" ? "recap" : "chrono");
         break;
       case "/":
         e.preventDefault();
-        if (!detailsOpen) setDetailsOpen(true);
-        // Le champ n'existe qu'une fois le volet monté : focus au tick suivant.
-        setTimeout(() => filterRef.current?.focus(), 0);
+        setOnglet("chrono");
+        // Le champ n'existe qu'une fois l'onglet rendu : focus au tick suivant.
+        setTimeout(() => filtreRef.current?.focus(), 0);
         break;
     }
   };
 
-  /** Clic sur une ligne du « jour par jour » : on ouvre la journée en mode jour. */
-  const ouvrirJour = (jour: string) => {
-    setDay(jour);
-    setMode("day");
-    setDetailsOpen(false);
-  };
+  const collecte = collectedAgoLabel(status?.lastCollect ?? {}, maintenant);
+  const erreursCollecte = status?.errors ?? [];
+  const premierChargement = loading && stats === null;
+  const animation = sens.current.avant ? "rc-entree-avant" : "rc-entree-arriere";
 
-  const saisieActive = !semaine && settings !== null && clickupActif(settings.clickup);
-  const agoLabel = collectedAgoLabel(status?.lastCollect ?? {}, Math.floor(Date.now() / 1000));
-  const errors = status?.errors ?? [];
-  const gearTitle = [agoLabel, ...errors].join("\n");
-  // Les chevrons déplacent d'un jour ou d'une semaine selon le mode ; les
-  // raccourcis [ et ] restent, eux, au pas d'un jour.
-  const pas = semaine ? 7 : 1;
-  const regenTitle =
-    bilan.ui.status === "ok" ? `${summaryFooter(bilan.ui.summary)} — régénérer` : "Régénérer la synthèse";
+  // Le panneau est remonté (clé) à chaque changement de période ou d'onglet, et le
+  // volet comme le bandeau d'erreur disparaissent : si l'élément focalisé s'y
+  // trouvait (journée de la vue semaine, « Réessayer », « Fermer »), le focus
+  // tomberait sur <body> et le clavier du récap (Échap, [, ], d, /) serait perdu.
+  // On le rend alors au conteneur. `focusDedans` n'est levé que par un départ
+  // explicite vers un autre élément : un élément retiré du DOM n'a pas de cible.
+  const focusDedans = useRef(false);
+  // Changer d'onglet (Récap ⇄ Chronologie) repart du haut : titre, sélecteur de jours,
+  // puis le contenu. La zone défilante est commune aux deux onglets, et la chronologie
+  // s'ouvrait sinon au défilement du récap, en plein milieu de la liste.
+  const mainRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [onglet]);
+  useLayoutEffect(() => {
+    const actif = document.activeElement;
+    if (focusDedans.current && (actif === null || actif === document.body)) containerRef.current?.focus();
+  }, [cle, onglet, error, premierChargement]);
 
   return (
-    <div ref={containerRef} tabIndex={-1} className="dash-overlay" onKeyDown={onKeyDown}>
-      <div className="dash-toolbar">
-        <span className="dash-toolbar-left">
-          <button
-            className="dash-icon-btn"
-            aria-label={semaine ? "Semaine précédente" : "Jour précédent"}
-            title={semaine ? "Semaine précédente" : "Jour précédent ( [ )"}
-            onClick={() => shiftDay(-pas)}
-          >
-            <ChevronLeftIcon />
-          </button>
-          <button
-            className="dash-icon-btn"
-            aria-label={semaine ? "Semaine suivante" : "Jour suivant"}
-            title={semaine ? "Semaine suivante" : "Jour suivant ( ] )"}
-            onClick={() => shiftDay(pas)}
-          >
-            <ChevronRightIcon />
-          </button>
-          <button type="button" className="dash-text-btn" onClick={today}>
-            {semaine ? "Cette semaine" : "Aujourd'hui"}
-          </button>
-          <span className="dash-sep" />
-          <button
-            type="button"
-            className="dash-text-btn"
-            aria-pressed={!semaine}
-            onClick={() => setMode("day")}
-          >
-            Jour
-          </button>
-          <button
-            type="button"
-            className="dash-text-btn"
-            aria-pressed={semaine}
-            onClick={() => setMode("week")}
-          >
-            Semaine
-          </button>
-        </span>
-        <span className="dash-toolbar-right">
-          <button
-            type="button"
-            className="dash-text-btn"
-            aria-pressed={detailsOpen}
-            title="Chronologie détaillée ( d )"
-            onClick={() => setDetailsOpen(!detailsOpen)}
-          >
-            Détails
-          </button>
-          <button
-            className={errors.length > 0 ? "dash-icon-btn dash-icon-btn-alerte" : "dash-icon-btn"}
-            aria-label="Réglages"
-            aria-pressed={settingsOpen}
-            title={gearTitle}
-            onClick={() => setSettingsOpen(!settingsOpen)}
-          >
-            <GearIcon />
-          </button>
-          <button className="dash-icon-btn" aria-label="Fermer" title="Fermer (Échap)" onClick={close}>
-            <CloseIcon />
-          </button>
-        </span>
-      </div>
+    <div
+      ref={containerRef}
+      tabIndex={-1}
+      className="rc"
+      // Dock affiché : la zone défilante s'arrête au-dessus de lui (recap.css).
+      data-dock={dockVisible || undefined}
+      onKeyDown={onKeyDown}
+      onFocus={() => {
+        focusDedans.current = true;
+      }}
+      onBlur={(e) => {
+        if (e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget)) focusDedans.current = false;
+      }}
+    >
+      <BarreRecap
+        semaine={numeroSemaine(day)}
+        onglet={onglet}
+        onOnglet={setOnglet}
+        mode={mode}
+        onMode={setMode}
+        onReglages={ouvrirReglagesActivite}
+        alerte={erreursCollecte.length > 0}
+        collecte={collecte}
+        erreurs={erreursCollecte}
+        onFermer={fermer}
+      />
 
-      <div className="dash-header">
-        <p className="dash-date">{semaine ? formatWeekLabel(day) : formatDayTitle(day)}</p>
-        <h1 className="dash-title">
-          {synthese.title !== "" ? synthese.title : semaine ? "La semaine" : "La journée"}
-          <button
-            type="button"
-            className="dash-icon-btn dash-regen"
-            aria-label="Régénérer la synthèse"
-            title={regenTitle}
-            onClick={() => bumpGenerate()}
-          >
-            <RefreshIcon />
-          </button>
-        </h1>
-      </div>
-
-      <div className="dash-body">
-        {loading ? (
-          <>
-            <div className="dash-skeleton" style={{ height: 90 }} />
-            <div className="dash-skeleton" style={{ height: 70 }} />
-          </>
-        ) : error ? (
-          <div className="dash-banner-error">
-            <p>{error}</p>
-            <button type="button" className="dash-pill" onClick={reload}>
-              Réessayer
-            </button>
-          </div>
-        ) : (
-          <>
-            <Frise
-              frise={frise}
-              mode={mode}
-              phrases={attache.phrases}
-              onOpenTicket={openLink}
-              onOpenLink={openLink}
-            />
-            <div className="dash-columns">
-              <SummaryPanel
-                title={semaine ? "Bilan de la semaine" : "Bilan"}
-                ui={bilan.ui}
-                body={attache.autres}
-                generate={bilan.generate}
-                onOpenLink={openLink}
-                schedule={settings?.schedule}
-              />
-              <div className="dash-section dash-section-droite">
-                <h2 className="dash-h2">{semaine ? "Temps à saisir sur la semaine" : "Temps à saisir"}</h2>
-                <TempsSaisie temps={temps} onOpen={openLink} saisie={saisieActive ? saisieTemps : null} />
-                <h2 className="dash-h2 dash-h2-suite">Reste à faire</h2>
-                <OpenTasks
-                  tasks={openTasks}
-                  active={settings !== null && clickupActif(settings.clickup)}
-                  onOpen={openLink}
-                />
+      <main ref={mainRef} aria-label="Récap de la journée" className="rc-main">
+        <div className="rc-contenu">
+          <div className="rc-entete">
+            <div key={`t-${cle}`} className={`rc-entete-texte ${animation}`}>
+              <div className="rc-surtitre">
+                {surtitre}
+                {estAujourdhui && (
+                  <span className="rc-en-cours">
+                    <span aria-hidden="true" className="rc-en-cours-arc" />
+                    en cours
+                  </span>
+                )}
+              </div>
+              <h1 className="rc-titre">{titre}</h1>
+              <div className="rc-redaction">
+                <span data-erreur={erreurBilan !== undefined}>
+                  {erreurBilan !== undefined && bilan.ui.status === "ok" ? "La dernière réécriture a échoué" : libelleBilan}
+                </span>
+                <button
+                  type="button"
+                  className="rc-regen hov"
+                  title="Réécrire le bilan à partir de l’activité"
+                  aria-busy={enCoursDeRedaction}
+                  onClick={regenerer}
+                >
+                  <IconeRafraichir taille={12} className="rc-regen-icone" data-tourne={enCoursDeRedaction} />
+                  {enCoursDeRedaction ? "Rédaction…" : bilan.ui.status === "ok" ? "Régénérer" : "Rédiger le bilan"}
+                </button>
+                {erreurBilan !== undefined && (
+                  <p role="alert" className="rc-redaction-detail" title={erreurBilan}>
+                    {erreurBilan}
+                  </p>
+                )}
               </div>
             </div>
-          </>
-        )}
+            <SelecteurJours
+              jours={jours}
+              selection={semaine ? null : day}
+              precedent={precedent}
+              suivant={suivant}
+              onJour={ouvrirJour}
+              onNaviguer={setDay}
+              onAujourdhui={jours.some((j) => j.day === today) ? null : allerAujourdhui}
+              semaine={semaine}
+            />
+          </div>
 
-        {settingsOpen && (
-          <aside className="dash-drawer">
-            <SettingsPanel onClose={() => setSettingsOpen(false)} />
-          </aside>
-        )}
-        {detailsOpen && (
-          <aside className="dash-drawer">
-            <div className="dash-tl-head">
-              <h2 className="dash-h2">{semaine ? "Jour par jour" : "Chronologie"}</h2>
-              {semaine ? (
-                <span className="dash-chips-hint">cliquer pour ouvrir la journée</span>
-              ) : (
-                <input
-                  ref={filterRef}
-                  type="text"
-                  className="dash-filter"
-                  placeholder="filtrer"
-                  aria-label="Filtrer la chronologie"
-                  value={filterText}
-                  onChange={(e) => setFilterText(e.target.value)}
-                />
-              )}
-            </div>
-            {semaine ? (
-              <WeekDays rows={weekRows} selectedDay={day} onSelect={ouvrirJour} />
-            ) : (
-              <Timeline
-                events={events}
-                filterDir={filterDir}
-                filterText={filterText}
-                colors={colors}
-                onOpenTicket={openLink}
+          <div
+            key={`${cle}:${onglet}`}
+            id="rc-panneau"
+            role="tabpanel"
+            aria-labelledby={`rc-onglet-${onglet}`}
+            className={animation}
+          >
+            {error ? (
+              <div className="rc-erreur-bandeau">
+                <p>{error}</p>
+                <button type="button" className="rc-btn hov" onClick={reload}>
+                  Réessayer
+                </button>
+              </div>
+            ) : premierChargement ? (
+              <div className="rc-chargement" aria-busy="true">
+                <div className="rc-squelette" style={{ height: 64 }} />
+                <div className="rc-squelette" style={{ height: 260 }} />
+              </div>
+            ) : onglet === "chrono" ? (
+              <Chronologie
+                heures={heures}
+                couleur={couleur}
+                filtre={filterText}
+                onFiltre={setFilterText}
+                champ={filtreRef}
+                semaine={joursSemaine}
+                onJour={ouvrirJour}
               />
+            ) : (
+              <>
+                <Chiffres chiffres={chiffres} />
+                <Rythme
+                  colonnes={colonnes}
+                  reperes={reperes(frise, mode)}
+                  commits={commitsFrise(frise)}
+                  reunions={reunions}
+                  legende={legende}
+                  position={(ts) => position(frise, ts)}
+                  maintenant={maintenant}
+                  afficherMaintenant={maintenant > frise.start && maintenant < frise.end}
+                  focus={filterDir}
+                  onFocus={mettreEnAvant}
+                  epingle={epingleIndex}
+                  onEpingle={(i) => setEpingle(i === null || !colonnes[i] ? null : { cle, t0: colonnes[i].t0 })}
+                  noms={tickets}
+                  onOpen={openLink}
+                  semaine={semaine}
+                />
+                <div className="rc-bas">
+                  <BilanProjets
+                    sections={sections}
+                    etat={etatBilan}
+                    fermes={fermes}
+                    onBasculer={(dir) => setFermes((f) => ({ ...f, [dir]: !f[dir] }))}
+                    onTout={(replier) => setFermes(Object.fromEntries(sections.map((s) => [s.dir, replier])))}
+                    focus={filterDir}
+                    noms={tickets}
+                    onOpen={openLink}
+                    texteDaily={daily}
+                  />
+                  <div className="rc-cote">
+                    <TempsSaisie temps={temps} saisie={saisieActive ? saisieTemps : null} note={noteSaisie} onOpen={openLink} />
+                    <Reunions reunions={reunions} />
+                    <OpenTasks tasks={openTasks} active={suiviActif} onOpen={openLink} />
+                  </div>
+                </div>
+              </>
             )}
-          </aside>
-        )}
-      </div>
+          </div>
+        </div>
+      </main>
+
     </div>
   );
 }

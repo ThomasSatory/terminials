@@ -1,0 +1,449 @@
+/* Calques de création et d'édition ancrés au dock : popover d'espace (créer, modifier),
+   menu d'espace, formulaire de groupe. Valeurs de Creation.dc.html, via les jetons de
+   tokens.css. Préfixe `cr-` : toutes les feuilles sont globales. */
+
+.cr-racine {
+  /* Aucune boîte propre : voile et panneau se placent en `fixed` par rapport à la fenêtre. */
+  display: contents;
+  --cr-filet: rgba(255, 255, 255, 0.07);
+}
+
+/* ---------- Voile et panneau ---------- */
+
+/* Fond transparent plein cadre : un clic dehors ferme. Le dock (z-dock-eleve) reste
+   cliquable au-dessus ; pendant la sortie le voile laisse passer les clics. */
+.cr-voile {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-voile);
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  cursor: default;
+}
+.cr-racine[data-sortie="true"] .cr-voile {
+  pointer-events: none;
+}
+
+.cr-panneau {
+  position: fixed;
+  z-index: var(--z-popover);
+  box-sizing: border-box;
+  border-radius: var(--rayon-panneau);
+  background: var(--fond-panneau);
+  box-shadow:
+    inset 0 0 0 1px var(--filet-4),
+    var(--ombre-panneau);
+  cursor: auto;
+  /* Le rebond d'entrée ne se joue qu'à l'ouverture (le panneau est remonté) ; menu ⇄
+     modification d'un espace ne fait que glisser (left) et s'élargir (width). */
+  animation: cr-haut 0.26s var(--courbe-glisse) both;
+  transition:
+    left var(--duree-glisse) var(--courbe-glisse),
+    width 0.24s var(--courbe-glisse);
+}
+/* Focalisable pour garder Échap et les flèches après un clic dans une zone vide, mais ce
+   n'est pas une commande : pas d'anneau autour du panneau entier. */
+.cr-panneau:focus,
+.cr-panneau:focus-visible {
+  outline: none;
+}
+.cr-panneau[data-sortie="true"] {
+  animation: cr-bas 0.17s cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+
+@keyframes cr-haut {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes cr-bas {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+/* Pointe : losange de 12 px dont seuls les deux bords bas portent le filet. */
+.cr-pointe {
+  position: absolute;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  background: var(--fond-panneau);
+  transform: rotate(45deg);
+  box-shadow: 1px 1px 0 0 var(--filet-4);
+  transition: left var(--duree-glisse) var(--courbe-glisse);
+}
+
+/* Contenu défilant si la fenêtre est trop basse ; la pointe, hors de ce cadre, n'est
+   jamais rognée. */
+.cr-contenu {
+  position: relative;
+  max-height: var(--cr-hauteur-max, none);
+  overflow-y: auto;
+  border-radius: inherit;
+  animation: inA 0.22s var(--courbe-glisse) both;
+}
+
+/* Enveloppe clavier du formulaire de modification : aucune boîte propre. */
+.cr-forme {
+  display: contents;
+}
+
+/* ---------- En-tête ---------- */
+
+.cr-entete {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 12px 16px;
+  border-bottom: 1px solid var(--cr-filet);
+}
+.cr-entete-texte {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.cr-titre {
+  font-weight: var(--graisse-forte-fort);
+  color: var(--texte-fort);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cr-sous-titre {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+/* Pastille carrée du formulaire de groupe (même gabarit que l'avatar de 34 px). */
+.cr-carre {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-radius: var(--rayon-controle-grand);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--police-mono);
+  font-size: 11.5px;
+  font-weight: var(--graisse-mono-moyenne-courant);
+  line-height: 1;
+}
+
+/* ---------- Corps des formulaires ---------- */
+
+.cr-corps {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px 16px 16px;
+}
+.cr-champ {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.cr-champ[data-nuancier] {
+  gap: 9px;
+}
+.cr-champ[data-puces] {
+  gap: 8px;
+}
+.cr-etiquette-ligne {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cr-etiquette {
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+.cr-indication {
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.cr-valeur {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+.cr-saisie {
+  height: 34px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--rayon-controle);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+  color: var(--texte-fort);
+  font: inherit;
+  font-weight: var(--graisse-normale-fort);
+}
+.cr-saisie[data-chemin] {
+  flex: 1;
+  width: auto;
+  font-family: var(--police-mono);
+  font-size: 12px;
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.cr-saisie[aria-invalid="true"] {
+  box-shadow: inset 0 0 0 1px var(--suppression);
+}
+.cr-saisie::placeholder {
+  color: var(--texte-discret);
+  opacity: 1;
+  font-weight: var(--graisse-normale-discret);
+}
+
+.cr-ligne-dossier {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+.cr-parcourir {
+  height: 34px;
+  flex-shrink: 0;
+  padding: 0 11px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--texte);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+}
+.cr-erreur {
+  font-size: 12px;
+  color: var(--suppression);
+  animation: inA 0.18s ease both;
+}
+
+/* ---------- Nuancier ---------- */
+
+.cr-nuancier {
+  display: grid;
+  grid-template-columns: repeat(var(--cr-colonnes, 9), 22px);
+  gap: 8px;
+  justify-content: space-between;
+}
+.cr-pastille {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--cr-fond);
+  box-shadow:
+    0 0 0 2px var(--fond-panneau),
+    0 0 0 3.5px var(--cr-anneau, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte-sur-accent);
+  font-family: var(--police-mono);
+  font-size: 10px;
+  font-weight: var(--graisse-moyenne-sur-accent);
+  text-align: center;
+  transition:
+    transform 0.14s var(--courbe-douce),
+    box-shadow 0.14s;
+}
+.cr-pastille:hover {
+  transform: scale(1.15);
+}
+.cr-pastille[aria-pressed="true"] {
+  --cr-anneau: var(--texte-fort);
+}
+
+/* ---------- Puces de groupe ---------- */
+
+.cr-puces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cr-puce {
+  height: 30px;
+  padding: 0 11px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+  font-weight: var(--graisse-moyenne-courant);
+  transition:
+    background 0.15s,
+    box-shadow 0.15s,
+    color 0.15s;
+}
+.cr-puce:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+/* Sélectionnée : accent à 14 %, en rgba (--accent-rgb suit l'accent choisi) : color-mix()
+   n'est pas garanti sur tous les webviews visés. */
+.cr-puce[aria-pressed="true"] {
+  color: var(--texte-fort);
+  background: rgba(var(--accent-rgb), 0.14);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  font-weight: var(--graisse-moyenne-fort);
+}
+.cr-puce-nombre {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-moyenne-discret);
+}
+
+/* ---------- Pied : annuler / valider ---------- */
+
+.cr-pied {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px 14px 16px;
+  border-top: 1px solid var(--cr-filet);
+}
+.cr-annuler {
+  height: 32px;
+  padding: 0 10px 0 12px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte);
+}
+.cr-annuler-touche {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--fond-survol-ligne);
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.cr-valider {
+  height: 32px;
+  padding: 0 8px 0 14px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--accent);
+  color: var(--texte-sur-accent);
+  font-weight: var(--graisse-forte-sur-accent);
+  transition: filter var(--duree-survol);
+}
+.cr-valider:hover {
+  filter: brightness(1.1);
+}
+.cr-valider[aria-busy="true"] {
+  opacity: 0.7;
+  cursor: progress;
+}
+.cr-valider-touche {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  font-weight: var(--graisse-moyenne-sur-accent);
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.14);
+}
+
+/* ---------- Menu d'espace ---------- */
+
+.cr-liste {
+  padding: 6px;
+}
+.cr-item {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: var(--rayon-controle);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+.cr-item svg {
+  flex-shrink: 0;
+  color: var(--texte-discret);
+}
+.cr-item[data-danger] {
+  color: var(--suppression);
+  font-weight: var(--graisse-normale-courant);
+}
+.cr-item[data-danger] svg {
+  color: inherit;
+}
+/* « Fermer l'espace » sur le dernier espace : grisé, icône comprise (maquette). */
+.cr-item[aria-disabled="true"] {
+  color: var(--texte-discret);
+  cursor: default;
+  font-weight: var(--graisse-normale-discret);
+}
+.cr-item[aria-disabled="true"] svg {
+  color: inherit;
+}
+.cr-item-libelle {
+  flex: 1;
+  min-width: 0;
+}
+.cr-item-indice {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.cr-separateur {
+  height: 1px;
+  margin: 0 12px;
+  background: var(--cr-filet);
+}
+.cr-separateur[data-serre] {
+  margin-top: 6px;
+}
+.cr-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 8px;
+}
+.cr-section[data-puces] {
+  gap: 8px;
+  padding: 12px 16px;
+}
+.cr-liste[data-retrait] {
+  padding: 0 6px 2px;
+  animation: inA 0.18s ease both;
+}

@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   PALETTE,
   ATTENTION_COLOR,
-  STATUS_DEFAULT_COLOR,
   SIDEBAR_COLORS,
   basename,
   defaultGroupColor,
-  identityColor,
+  libelleCouleur,
+  nomCouleur,
 } from "./palette";
 
 describe("palette", () => {
@@ -25,10 +25,6 @@ describe("palette", () => {
     expect(PALETTE).not.toContain(ATTENTION_COLOR);
   });
 
-  it("STATUS_DEFAULT_COLOR est l'ambre historique", () => {
-    expect(STATUS_DEFAULT_COLOR).toBe("#f5a623");
-  });
-
   it("basename renvoie le dernier segment non vide", () => {
     expect(basename("/home/x/dev/terminals")).toBe("terminals");
     expect(basename("/tmp")).toBe("tmp");
@@ -37,6 +33,25 @@ describe("palette", () => {
 
   it("basename gère la racine", () => {
     expect(basename("/")).toBe("/");
+  });
+});
+
+describe("noms des couleurs", () => {
+  it("nomme en français une couleur de la palette, casse ignorée, sinon rend l'hex", () => {
+    expect(nomCouleur("#C0392B")).toBe("Rouge");
+    expect(nomCouleur("#3e4b5e")).toBe("Anthracite");
+    expect(nomCouleur("#123456")).toBe("#123456");
+  });
+
+  it("donne à chaque couleur un nom français distinct", () => {
+    expect(new Set(SIDEBAR_COLORS.map((c) => c.nom)).size).toBe(SIDEBAR_COLORS.length);
+  });
+
+  it("libelleCouleur : nom et hex, « Automatique » sans couleur", () => {
+    expect(libelleCouleur("#1565c0")).toBe("Bleu · #1565C0");
+    expect(libelleCouleur(null)).toBe("Automatique");
+    expect(libelleCouleur(undefined)).toBe("Automatique");
+    expect(libelleCouleur("#abcdef")).toBe("#abcdef");
   });
 });
 
@@ -60,11 +75,5 @@ describe("couleurs de la sidebar", () => {
     expect(new Set(seq).size).toBe(16);
     expect(seq.slice(0, 3)).toEqual(["#C0392B", "#196F3D", "#283593"]); // Red, Green, Indigo
     expect(defaultGroupColor(16)).toBe(seq[0]);
-  });
-
-  it("identityColor : la couleur du workspace d'abord, puis celle du groupe", () => {
-    expect(identityColor({ color: "#111111" }, { color: "#222222" })).toBe("#111111");
-    expect(identityColor({}, { color: "#222222" })).toBe("#222222");
-    expect(identityColor({}, undefined)).toBeUndefined();
   });
 });

@@ -6,8 +6,8 @@ import { dispatchShortcut } from "../lib/shortcutDispatch";
  * Couche window des raccourcis : matche sur la table unique (lib/shortcuts)
  * et fait l'UNIQUE dispatch de l'app. Les keydown nés dans un xterm bullent
  * jusqu'ici (la couche terminal retourne false à xterm sans stopPropagation).
- * Plus aucun Ctrl+lettre nu : ^W kill-word, ^T transpose, ^N next-history
- * repartent au shell.
+ * Un seul Ctrl+lettre nu, Ctrl+K (palette) : ^W kill-word, ^T transpose, ^N
+ * next-history repartent au shell.
  */
 export function useShortcuts() {
   useEffect(() => {

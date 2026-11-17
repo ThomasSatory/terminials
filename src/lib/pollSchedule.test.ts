@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextDelayMs, DIRTY_BUDGET, PORTS_BUDGET, type PollBudget } from "./pollSchedule";
+import { echeanceAnticipee, nextDelayMs, DIRTY_BUDGET, PORTS_BUDGET, type PollBudget } from "./pollSchedule";
 
 const BUDGET: PollBudget = { dutyCycle: 0.05, minDelayMs: 2000, maxDelayMs: 120_000 };
 
@@ -55,5 +55,26 @@ describe("budgets par défaut", () => {
 
   it("garde les ports réactifs : la sonde /proc est bien moins chère", () => {
     expect(nextDelayMs(20, PORTS_BUDGET)).toBeLessThanOrEqual(5000);
+  });
+});
+
+describe("echeanceAnticipee", () => {
+  const B: PollBudget = { dutyCycle: 0.05, minDelayMs: 2000, maxDelayMs: 120_000 };
+
+  it("dépôt léger : recompté dès le plancher passé après la dernière sonde", () => {
+    // Dernière sonde de 10 ms finie à t=1000 : plancher 2 s → t=3000 au plus tôt.
+    expect(echeanceAnticipee(60_000, 1500, B, { fin: 1000, duree: 10 })).toBe(3000);
+    // Plancher déjà passé : tout de suite.
+    expect(echeanceAnticipee(60_000, 5000, B, { fin: 1000, duree: 10 })).toBe(5000);
+  });
+
+  it("dépôt géant : l'espacement reste proportionnel au coût (budget ×4)", () => {
+    // 6 s de sonde : 6000 / (0.05 × 4) = 30 s après sa fin, pas avant.
+    expect(echeanceAnticipee(120_000, 7000, B, { fin: 6000, duree: 6000 })).toBe(36_000);
+  });
+
+  it("jamais plus tard que l'échéance prévue, tout de suite sans sonde connue", () => {
+    expect(echeanceAnticipee(2500, 1500, B, { fin: 1000, duree: 6000 })).toBe(2500);
+    expect(echeanceAnticipee(90_000, 1500, B)).toBe(1500);
   });
 });

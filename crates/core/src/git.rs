@@ -51,7 +51,10 @@ pub fn is_dirty(cwd: &str) -> bool {
 /// les sondes périodiques utilisent `branch` et `is_dirty` séparément, à des
 /// cadences différentes.
 pub fn git_info(cwd: &str) -> GitInfo {
-    GitInfo { branch: branch(cwd), dirty: is_dirty(cwd) }
+    GitInfo {
+        branch: branch(cwd),
+        dirty: is_dirty(cwd),
+    }
 }
 
 /// Statut d'un fichier modifié. Un fichier à la fois staged et modifié (porcelain `MM`)
@@ -95,14 +98,10 @@ fn git_out(cwd: &str, args: &[&str]) -> Option<Vec<u8>> {
         .map(|o| o.stdout)
 }
 
-/// Fichiers modifiés du repo (index + worktree fusionnés par `status --porcelain`),
-/// enrichis des compteurs +/− de `diff --numstat` (worktree) et `diff --cached --numstat`
-/// (staged), sommés par chemin. added/deleted None = binaire (ou untracked, absent des
-/// numstat). Hors repo git → liste vide. Résultat trié par chemin.
-pub fn changed_files(cwd: &str) -> Vec<ChangedFile> {
-    let Some(raw) = git_out(cwd, &["status", "--porcelain=v1", "-z"]) else {
-        return Vec::new();
-    };
+/// Entrées de `git status --porcelain=v1 -z`, sans compteurs : une par fichier (index et
+/// worktree fusionnés par le code XY), le chemin d'origine d'un renommage rattaché à
+/// son entrée.
+fn parse_status_z(raw: &[u8]) -> Vec<ChangedFile> {
     // Format -z : `XY path\0` ; renommage/copie : `XY nouveau\0ancien\0` (ordre inversé
     // du format long, cf. doc git-status « the field order is reversed »).
     let fields: Vec<&[u8]> = raw.split(|&b| b == 0).collect();
@@ -117,7 +116,9 @@ pub fn changed_files(cwd: &str) -> Vec<ChangedFile> {
         let (x, y) = (f[0] as char, f[1] as char);
         let path = String::from_utf8_lossy(&f[3..]).into_owned();
         let orig_path = if matches!(x, 'R' | 'C') {
-            let orig = fields.get(i).map(|o| String::from_utf8_lossy(o).into_owned());
+            let orig = fields
+                .get(i)
+                .map(|o| String::from_utf8_lossy(o).into_owned());
             i += 1; // consomme le champ chemin d'origine
             orig
         } else {
@@ -130,13 +131,100 @@ pub fn changed_files(cwd: &str) -> Vec<ChangedFile> {
             ('D', _) | (_, 'D') => FileStatus::Deleted,
             _ => FileStatus::Modified,
         };
-        files.push(ChangedFile { path, status, orig_path, added: None, deleted: None });
+        files.push(ChangedFile {
+            path,
+            status,
+            orig_path,
+            added: None,
+            deleted: None,
+        });
     }
+    files
+}
+
+/// Nombre de fichiers modifiés (suivis ou non), tel que `changed_files` les liste. Hors
+/// repo git → 0.
+///
+/// Même coût que `is_dirty` (un `git status`, rien de plus) : la sonde dirty périodique
+/// l'utilise à sa place, ce qui tient le compteur du bouton ± à jour sans aucun
+/// `git status` supplémentaire. Les compteurs +/− (deux `git diff --numstat` et la
+/// lecture des fichiers non suivis) restent réservés à la vue des fichiers modifiés.
+pub fn dirty_count(cwd: &str) -> u32 {
+    git_out(cwd, STATUT_FICHIERS)
+        .map(|raw| parse_status_z(&raw).len() as u32)
+        .unwrap_or(0)
+}
+
+/// `git status` des fichiers modifiés : un dossier non suivi est détaillé fichier par
+/// fichier (`-uall`), sinon la vue des fichiers modifiés n'en montrerait qu'une ligne
+/// `dossier/` sans nom ni diff. Partagé avec `dirty_count` : le compteur du bouton ± et
+/// la liste de la vue comptent les mêmes entrées.
+const STATUT_FICHIERS: &[&str] = &["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+
+/// Lignes d'un fichier non suivi, comptées comme le ferait `git diff --numstat` pour un
+/// fichier ajouté : une par fin de ligne, plus une dernière ligne sans fin de ligne. None
+/// pour un binaire (octet nul dans les 8 000 premiers octets, l'heuristique de git), un
+/// dossier (dépôt imbriqué) ou un fichier illisible.
+/// Un lien symbolique compte une ligne (sa cible), comme dans git.
+///
+/// Lecture en flux, par blocs : un gros journal non suivi ne se charge pas en mémoire.
+fn untracked_lines(root: &std::path::Path, path: &str) -> Option<u32> {
+    use std::io::Read;
+    if path.ends_with('/') {
+        return None;
+    }
+    let full = root.join(path);
+    let meta = std::fs::symlink_metadata(&full).ok()?;
+    if meta.file_type().is_symlink() {
+        return Some(1);
+    }
+    if !meta.is_file() {
+        return None;
+    }
+    let mut file = std::fs::File::open(&full).ok()?;
+    let mut buf = [0u8; 64 * 1024];
+    let (mut lignes, mut lus, mut dernier) = (0u32, 0usize, b'\n');
+    loop {
+        let n = file.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        let bloc = &buf[..n];
+        // Binaire : un NUL dans les 8 000 premiers octets du fichier.
+        if lus < 8000 && bloc[..n.min(8000 - lus)].contains(&0) {
+            return None;
+        }
+        lignes = lignes.saturating_add(bloc.iter().filter(|&&b| b == b'\n').count() as u32);
+        dernier = bloc[n - 1];
+        lus += n;
+    }
+    if dernier != b'\n' {
+        lignes = lignes.saturating_add(1); // dernière ligne sans fin de ligne (fichier non vide)
+    }
+    Some(lignes)
+}
+
+/// Fichiers modifiés du repo (index + worktree fusionnés par `status --porcelain`),
+/// enrichis des compteurs +/− de `diff --numstat` (worktree) et `diff --cached --numstat`
+/// (staged), sommés par chemin. Un fichier non suivi, absent des numstat, compte ses
+/// lignes en ajouts (comme un fichier ajouté) ; un dossier non suivi est détaillé fichier
+/// par fichier. added/deleted None = binaire. Hors repo git → liste vide. Résultat trié
+/// par chemin.
+pub fn changed_files(cwd: &str) -> Vec<ChangedFile> {
+    let Some(raw) = git_out(cwd, STATUT_FICHIERS) else {
+        return Vec::new();
+    };
+    let mut files = parse_status_z(&raw);
 
     // Compteurs +/− : worktree + staged, sommés. Un côté binaire (None) rend le total None.
     let mut stats: HashMap<String, (Option<u32>, Option<u32>)> = HashMap::new();
-    for args in [&["diff", "--numstat", "-z"][..], &["diff", "--cached", "--numstat", "-z"][..]] {
-        let Some(out) = git_out(cwd, args) else { continue };
+    for args in [
+        &["diff", "--numstat", "-z"][..],
+        &["diff", "--cached", "--numstat", "-z"][..],
+    ] {
+        let Some(out) = git_out(cwd, args) else {
+            continue;
+        };
         for (path, add, del) in parse_numstat_z(&out) {
             let e = stats.entry(path).or_insert((Some(0), Some(0)));
             e.0 = e.0.zip(add).map(|(a, b)| a + b);
@@ -149,6 +237,21 @@ pub fn changed_files(cwd: &str) -> Vec<ChangedFile> {
             f.deleted = *d;
         }
     }
+    // Non suivis : invisibles pour numstat, on compte leurs lignes à la source. Chemins
+    // racine-relatifs (porcelain v1) : la racine n'est cherchée que s'il y en a.
+    if files.iter().any(|f| f.status == FileStatus::Untracked) {
+        let root = repo_root(cwd).unwrap_or_else(|| cwd.to_string());
+        let root = std::path::Path::new(&root);
+        for f in files
+            .iter_mut()
+            .filter(|f| f.status == FileStatus::Untracked)
+        {
+            if let Some(n) = untracked_lines(root, &f.path) {
+                f.added = Some(n);
+                f.deleted = Some(0);
+            }
+        }
+    }
     files.sort_by(|a, b| a.path.cmp(&b.path));
     files
 }
@@ -157,8 +260,10 @@ pub fn changed_files(cwd: &str) -> Vec<ChangedFile> {
 /// champ chemin est vide et suivi de `pré-image\0post-image\0` (stats affectées à la
 /// post-image). `-` (binaire) → None.
 fn parse_numstat_z(raw: &[u8]) -> Vec<(String, Option<u32>, Option<u32>)> {
-    let fields: Vec<String> =
-        raw.split(|&b| b == 0).map(|f| String::from_utf8_lossy(f).into_owned()).collect();
+    let fields: Vec<String> = raw
+        .split(|&b| b == 0)
+        .map(|f| String::from_utf8_lossy(f).into_owned())
+        .collect();
     let mut out = Vec::new();
     let mut i = 0;
     while i < fields.len() {
@@ -258,7 +363,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let run = |args: &[&str]| {
-            Command::new("git").args(args).current_dir(&dir).output().unwrap();
+            Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap();
         };
         run(&["init", "-q", "-b", "maa-branche"]);
         let info = git_info(dir.to_str().unwrap());
@@ -298,7 +407,10 @@ mod tests {
             .unwrap();
         let sha = String::from_utf8_lossy(&sha.stdout).trim().to_string();
         git(&dir, &["checkout", "-q", &sha]);
-        assert!(branch(dir.to_str().unwrap()).is_none(), "HEAD détachée → None");
+        assert!(
+            branch(dir.to_str().unwrap()).is_none(),
+            "HEAD détachée → None"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -338,7 +450,11 @@ mod tests {
 
     /// Exécute git dans `dir` et panique avec stderr si la commande échoue.
     fn git(dir: &std::path::Path, args: &[&str]) {
-        let out = Command::new("git").args(args).current_dir(dir).output().unwrap();
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
         assert!(
             out.status.success(),
             "git {args:?} a échoué: {}",
@@ -433,9 +549,82 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path, "nouveau.txt");
         assert_eq!(files[0].status, FileStatus::Untracked);
-        // Les untracked n'apparaissent pas dans numstat : pas de compteurs.
-        assert_eq!(files[0].added, None);
-        assert_eq!(files[0].deleted, None);
+        // Absent des numstat : ses lignes sont comptées en ajouts, à la source.
+        assert_eq!(files[0].added, Some(1));
+        assert_eq!(files[0].deleted, Some(0));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn changed_files_untracked_compte_ses_lignes_binaire_exclu() {
+        let dir = tmp_repo("untracked-lignes");
+        write_file(&dir, "garde.txt", b"x\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        write_file(&dir, "trois.txt", b"un\ndeux\ntrois\n");
+        // Dernière ligne sans fin de ligne : comptée, comme dans `git diff --numstat`.
+        write_file(&dir, "sans-fin.txt", b"un\ndeux");
+        write_file(&dir, "vide.txt", b"");
+        write_file(&dir, "image.bin", &[0x89, b'P', b'N', b'G', 0, 1, 2, b'\n']);
+        std::fs::create_dir_all(dir.join("sub/profond")).unwrap();
+        write_file(&dir, "sub/a.txt", b"a\n");
+        write_file(&dir, "sub/profond/b.txt", b"b\nc\n");
+        write_file(&dir, "sub/profond/c.bin", &[0, 1, 2]);
+        write_file(&dir, "sub/.gitignore", b"ignore.log\n");
+        write_file(&dir, "sub/ignore.log", b"1\n2\n3\n4\n");
+        let files = changed_files(dir.to_str().unwrap());
+        let compte = |p: &str| {
+            let f = files
+                .iter()
+                .find(|f| f.path == p)
+                .unwrap_or_else(|| panic!("{p} absent : {files:?}"));
+            assert_eq!(f.status, FileStatus::Untracked);
+            (f.added, f.deleted)
+        };
+        assert_eq!(compte("trois.txt"), (Some(3), Some(0)));
+        assert_eq!(compte("sans-fin.txt"), (Some(2), Some(0)));
+        assert_eq!(compte("vide.txt"), (Some(0), Some(0)));
+        assert_eq!(
+            compte("image.bin"),
+            (None, None),
+            "binaire : pas de compteurs"
+        );
+        // Dossier non suivi détaillé fichier par fichier, chacun avec son nom et ses
+        // lignes ; le fichier ignoré n'apparaît pas.
+        assert_eq!(compte("sub/a.txt"), (Some(1), Some(0)));
+        assert_eq!(compte("sub/profond/b.txt"), (Some(2), Some(0)));
+        assert_eq!(compte("sub/profond/c.bin"), (None, None));
+        assert_eq!(compte("sub/.gitignore"), (Some(1), Some(0)));
+        assert!(!files.iter().any(|f| f.path.ends_with('/')), "aucune entrée de dossier");
+        assert!(!files.iter().any(|f| f.path == "sub/ignore.log"), "fichier ignoré exclu");
+        assert_eq!(dirty_count(dir.to_str().unwrap()), files.len() as u32);
+        // Depuis un sous-dossier du repo, les chemins restent racine-relatifs.
+        std::fs::create_dir(dir.join("suivi")).unwrap();
+        write_file(&dir, "suivi/b.txt", b"b\n");
+        git(&dir, &["add", "suivi/b.txt"]);
+        git(&dir, &["commit", "-q", "-m", "suivi"]);
+        let depuis_sous = changed_files(dir.join("suivi").to_str().unwrap());
+        let t = depuis_sous.iter().find(|f| f.path == "trois.txt").unwrap();
+        assert_eq!(t.added, Some(3));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dirty_count_compte_comme_changed_files() {
+        let dir = tmp_repo("dirty-count");
+        assert_eq!(dirty_count(dir.to_str().unwrap()), 0, "repo vide et propre");
+        write_file(&dir, "a.txt", b"v1\n");
+        write_file(&dir, "b.txt", b"v1\n");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        assert_eq!(dirty_count(dir.to_str().unwrap()), 0);
+        write_file(&dir, "a.txt", b"v2\n");
+        git(&dir, &["mv", "b.txt", "c.txt"]);
+        write_file(&dir, "nouveau.txt", b"n\n");
+        // Modifié + renommé (deux champs -z, une entrée) + non suivi.
+        assert_eq!(dirty_count(dir.to_str().unwrap()), 3);
+        assert_eq!(changed_files(dir.to_str().unwrap()).len(), 3);
+        assert_eq!(dirty_count("/"), 0, "hors repo");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -494,7 +683,10 @@ mod tests {
             deleted: None,
         };
         let v = serde_json::to_value(&f).unwrap();
-        assert_eq!(v, serde_json::json!({"path": "a", "status": "renamed", "origPath": "b", "added": 1}));
+        assert_eq!(
+            v,
+            serde_json::json!({"path": "a", "status": "renamed", "origPath": "b", "added": 1})
+        );
     }
 
     // ---- file_diff ----

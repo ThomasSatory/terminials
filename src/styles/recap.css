@@ -1,0 +1,1888 @@
+/* Récap de la journée (DashboardOverlay + components/dashboard/) : valeurs de la
+   maquette Recap, via les jetons de tokens.css. Toutes les classes sont préfixées
+   `rc-` (les feuilles sont globales). Les keyframes propres au récap aussi ; les
+   partagés (spin, fade, inA, ln) viennent de tokens.css.
+   Les fonds adoucis de l'accent passent par --accent-doux et --accent-rgb (tokens.css) :
+   color-mix() n'est pas garanti sur tous les webviews visés. */
+
+/* ---------- Conteneur ---------- */
+
+.rc {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-vue);
+  display: flex;
+  flex-direction: column;
+  background: var(--fond-app);
+  color: var(--texte);
+  outline: none;
+}
+
+/* ---------- Barre du haut (46 px) ---------- */
+
+.rc-barre {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 0 14px 0 18px;
+  min-height: var(--hauteur-barre);
+  border-bottom: 1px solid var(--filet-1);
+}
+.rc-barre-titre {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rc-barre-pastille {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.rc-barre-nom {
+  font-weight: var(--graisse-forte-fort);
+  color: var(--texte-fort);
+  letter-spacing: -0.01em;
+}
+.rc-barre-sous {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-onglets {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+}
+.rc-onglet {
+  position: relative;
+  min-height: var(--hauteur-barre);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-moyenne-discret);
+  transition: color 0.18s;
+}
+.rc-onglet[aria-selected="true"] {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+}
+.rc-onglet-trait {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transition: transform 0.26s var(--courbe-douce);
+}
+.rc-onglet[aria-selected="true"] .rc-onglet-trait {
+  transform: scaleX(1);
+}
+.rc-mode {
+  display: flex;
+  gap: 2px;
+}
+.rc-mode-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--rayon-controle);
+  font-size: 12px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-mode-btn[aria-pressed="true"] {
+  color: var(--texte-fort);
+  background: var(--fond-survol-ligne);
+  box-shadow: inset 0 0 0 1px var(--filet-4);
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-reglages-btn {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte);
+}
+.rc-reglages-btn[aria-expanded="true"] {
+  background: var(--fond-survol);
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+/* Infobulle de la roue : sous le bouton, calée à droite (bord de la fenêtre). */
+.rc-reglages-tip {
+  top: calc(100% + 8px);
+  left: auto;
+  right: 0;
+  z-index: 5;
+  pointer-events: none;
+  transform: translateY(-4px);
+}
+.rc-reglages-btn:hover .rc-reglages-tip,
+.rc-reglages-btn:focus-visible .rc-reglages-tip {
+  opacity: 1;
+  transform: none;
+}
+.rc-reglages-tip-erreur {
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--avertissement);
+}
+/* Erreurs de collecte : un point d'avertissement sur la roue. */
+.rc-reglages-btn[data-alerte="true"]::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--avertissement);
+}
+.rc-fermer {
+  height: 28px;
+  padding: 0 6px 0 10px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte-fort);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-fermer-kbd {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte);
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--fond-survol-ligne);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+/* ---------- Zone défilante ---------- */
+
+.rc-main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 26px 32px 32px;
+  /* Seule la zone défilante entre : la barre du haut et le fond restent fixes. */
+  animation: inA 0.3s var(--courbe-glisse) both;
+}
+/* Le dock reste visible et la vue occupe la zone AU-DESSUS de lui (brief) : la zone
+   défilante s'arrête 10 px au-dessus du dock (--dock-bas + bouton d'avatar + 21 px de
+   marges du dock), sur le même fond, et le dock ne recouvre jamais de contenu. */
+.rc[data-dock] .rc-main {
+  margin-bottom: calc(var(--dock-bas) + var(--dock-avatar) + 4px + 21px + 10px);
+}
+.rc-contenu {
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+/* Entrées de la journée : par la droite en avançant, par la gauche en reculant. */
+@keyframes rc-avant {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes rc-arriere {
+  from {
+    opacity: 0;
+    transform: translateX(-18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rc-entree-avant {
+  animation: rc-avant 0.38s var(--courbe-glisse) both;
+}
+.rc-entree-arriere {
+  animation: rc-arriere 0.38s var(--courbe-glisse) both;
+}
+.rc-entete-texte.rc-entree-avant,
+.rc-entete-texte.rc-entree-arriere {
+  animation-duration: 0.34s;
+}
+
+/* ---------- Typo commune ---------- */
+
+.rc-intertitre {
+  margin: 0;
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+.rc-sous {
+  font-size: 12px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-titre-ligne {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.rc-discret {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-fort {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-forte-fort);
+}
+.rc-mono-petit {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-vide {
+  margin: 0;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-vide-carte {
+  padding: 12px 0 2px;
+}
+.rc-panneau {
+  border-radius: var(--rayon-panneau);
+  background: var(--fond-panneau);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* ---------- En-tête : surtitre, titre, rédaction, sélecteur ---------- */
+
+.rc-entete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px 32px;
+}
+.rc-entete-texte {
+  flex: 1 1 420px;
+  min-width: 0;
+}
+.rc-surtitre {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+.rc-en-cours {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(34, 211, 238, 0.1);
+  color: var(--travail);
+  letter-spacing: 0.04em;
+  font-weight: var(--graisse-forte-courant);
+}
+.rc-en-cours-arc {
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid rgba(34, 211, 238, 0.25);
+  border-top-color: var(--travail);
+  animation: spin 0.9s linear infinite;
+}
+.rc-titre {
+  margin: 8px 0 0;
+  font-size: 26px;
+  font-weight: var(--graisse-titre);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--texte-fort);
+}
+.rc-redaction {
+  margin-top: 9px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  font-size: 12px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-redaction [data-erreur="true"] {
+  color: var(--avertissement);
+}
+/* Détail de l'échec (absent de la maquette, qui ne dessine pas d'erreur) : une ligne
+   discrète, lisible au clavier et annoncée, plutôt qu'un simple `title`. */
+.rc-redaction-detail {
+  flex-basis: 100%;
+  margin: 0;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-regen {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--rayon-controle-petit);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--texte);
+  font-weight: var(--graisse-normale-courant);
+}
+.rc-regen-icone[data-tourne="true"] {
+  animation: spin 0.8s linear infinite;
+}
+
+.rc-jours {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+.rc-chevron {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte);
+}
+.rc-chevron[aria-disabled="true"] {
+  opacity: 0.35;
+  cursor: default;
+}
+.rc-chevron[aria-disabled="true"]:hover {
+  background: transparent;
+}
+.rc-aujourdhui {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--rayon-controle);
+  font-size: 12px;
+  color: var(--texte);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+}
+.rc-jours-liste {
+  position: relative;
+  display: flex;
+  padding: 4px;
+  border-radius: var(--rayon-panneau-petit);
+  background: var(--fond-panneau);
+  box-shadow: inset 0 0 0 1px var(--filet-2);
+  overflow-x: auto;
+  min-width: 0;
+}
+.rc-jours-surligneur {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  bottom: 4px;
+  width: 78px;
+  border-radius: var(--rayon-controle-grand);
+  background: var(--fond-survol-ligne);
+  box-shadow: inset 0 0 0 1px var(--filet-4);
+  transition:
+    transform var(--duree-glisse) var(--courbe-glisse),
+    opacity 0.2s;
+}
+.rc-jour {
+  position: relative;
+  width: 78px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 7px 9px 8px;
+  border-radius: var(--rayon-controle-grand);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--texte);
+  transition: color 0.2s;
+}
+.rc-jour:hover {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-jour[data-etat="choisi"] {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-jour[data-etat="futur"] {
+  color: var(--texte-discret);
+  cursor: default;
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-jour-haut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  font-weight: var(--graisse-moyenne-courant);
+  font-size: 12.5px;
+}
+.rc-jour-auj {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--travail);
+}
+.rc-jour-barre {
+  display: flex;
+  gap: 1px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--fond-discret);
+}
+.rc-jour-duree {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-jour[data-etat="choisi"] .rc-jour-duree {
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+/* ---------- Bandeau de chiffres ---------- */
+
+.rc-chiffres {
+  margin: 22px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--filet-1);
+  border-bottom: 1px solid var(--filet-1);
+}
+.rc-chiffre {
+  flex: 1 1 150px;
+  min-width: 0;
+  padding: 14px 18px 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rc-chiffre dd {
+  margin: 0;
+}
+.rc-chiffre-valeur {
+  font-family: var(--police-mono);
+  font-size: 21px;
+  font-weight: var(--graisse-mono-moyenne-fort);
+  color: var(--texte-fort);
+  letter-spacing: -0.01em;
+}
+.rc-chiffre-valeur[data-succes="true"] {
+  color: var(--succes);
+  font-weight: var(--graisse-mono-moyenne-courant);
+}
+.rc-chiffre-sous {
+  font-size: 12px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+
+/* ---------- Rythme ---------- */
+
+.rc-rythme {
+  margin-top: 20px;
+  padding: 16px 18px 0;
+}
+.rc-rythme-tete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.rc-legende {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.rc-chip {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition:
+    background var(--duree-survol),
+    box-shadow var(--duree-survol),
+    opacity 0.2s;
+}
+.rc-chip:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+.rc-chip[data-attenue="true"] {
+  opacity: 0.55;
+}
+.rc-chip-carre {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.rc-chip-nom {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+}
+.rc-chip-duree {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-tout {
+  height: 28px;
+  padding: 0 9px;
+  border-radius: var(--rayon-controle);
+  color: var(--texte);
+  font-size: 12px;
+  animation: fade 0.18s ease both;
+}
+
+/* Anneaux des commits, au-dessus de la frise. */
+@keyframes rc-point {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rc-commits {
+  position: relative;
+  margin-top: 18px;
+  height: 18px;
+}
+/* L'entrée est portée par le conteneur, pas par l'anneau : une animation en
+   remplissage `both` sur l'anneau figerait son opacité (mise en avant d'un espace)
+   et son transform (agrandissement au survol) sur la valeur finale du keyframe. */
+.rc-commit {
+  position: absolute;
+  top: 4px;
+  margin-left: -5px;
+  width: 10px;
+  height: 10px;
+  z-index: 2;
+  animation: rc-point 0.3s var(--courbe-glisse) both;
+}
+.rc-commit-anneau {
+  display: block;
+  width: 10px;
+  height: 10px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid;
+  background: var(--fond-panneau);
+  transition: transform 0.16s var(--courbe-glisse);
+}
+.rc-commit:hover .rc-commit-anneau {
+  transform: scale(1.4);
+}
+
+/* Infobulles (commit, colonne) : apparition en fondu + 6 px. */
+.rc-bulle {
+  position: absolute;
+  box-sizing: border-box;
+  border-radius: var(--rayon-infobulle);
+  background: var(--fond-infobulle);
+  box-shadow:
+    inset 0 0 0 1px var(--filet-4),
+    var(--ombre-infobulle);
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.14s,
+    transform 0.14s;
+}
+.rc-commit-bulle {
+  bottom: 18px;
+  left: -115px;
+  width: 240px;
+  padding: 8px 11px;
+  gap: 3px;
+}
+.rc-commit[data-cote="debut"] .rc-commit-bulle {
+  left: -4px;
+}
+.rc-commit[data-cote="fin"] .rc-commit-bulle {
+  left: -226px;
+}
+.rc-commit:hover .rc-commit-bulle {
+  opacity: 1;
+  transform: none;
+}
+.rc-bulle-tete {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--texte-fort);
+  font-weight: var(--graisse-forte-fort);
+}
+.rc-bulle-heure {
+  margin-left: auto;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  font-weight: var(--graisse-mono-normale-discret);
+  color: var(--texte-discret);
+}
+.rc-bulle-mono {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.rc-bulle-mono.rc-discret {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-bulle-ligne {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rc-bulle-quoi {
+  font-size: 12px;
+  color: var(--texte);
+}
+.rc-bulle-quoi.rc-discret {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-bulle-aide {
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-rond {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.rc-carre {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+/* La frise : colonnes empilées, grille horaire, trait « maintenant ». */
+@keyframes rc-pousse {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+.rc-frise {
+  position: relative;
+  height: 150px;
+}
+.rc-frise-grille {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255, 255, 255, 0.04);
+}
+.rc-colonnes {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  height: 100%;
+}
+.rc-colonnes[data-semaine="true"] {
+  gap: 1px;
+}
+.rc-col {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.rc-col-survol,
+.rc-col-fond {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+}
+.rc-col-survol {
+  background: rgba(255, 255, 255, 0.05);
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.rc-col:hover .rc-col-survol,
+.rc-col:focus-visible .rc-col-survol {
+  opacity: 1;
+}
+.rc-col-fond {
+  transition: background 0.2s;
+}
+.rc-col[data-choisie="true"] .rc-col-fond {
+  background: rgba(var(--accent-rgb), 0.11);
+  box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb), 0.6);
+}
+.rc-col-pile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-radius: 3px 3px 1px 1px;
+  overflow: hidden;
+  transform-origin: 50% 100%;
+  animation: rc-pousse 0.56s var(--courbe-glisse) both;
+}
+.rc-seg {
+  display: block;
+  transition: opacity 0.24s;
+}
+.rc-col-base {
+  position: relative;
+  height: 2px;
+  margin-top: 2px;
+  border-radius: 1px;
+  background: var(--filet-2);
+}
+.rc-col-base[data-future="true"] {
+  background: rgba(255, 255, 255, 0.03);
+}
+.rc-col-bulle {
+  bottom: calc(100% + 26px);
+  left: calc(50% - 124px);
+  z-index: 4;
+  padding: 10px 12px;
+  gap: 6px;
+}
+.rc-col-bulle[data-cote="debut"] {
+  left: 0;
+}
+.rc-col-bulle[data-cote="fin"] {
+  left: calc(100% - 248px);
+}
+.rc-col:hover .rc-col-bulle,
+.rc-col:focus-visible .rc-col-bulle {
+  opacity: 1;
+  transform: none;
+}
+.rc-maintenant {
+  position: absolute;
+  top: -18px;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed rgba(245, 246, 247, 0.45);
+  pointer-events: none;
+  z-index: 3;
+  animation: fade 0.4s ease 0.5s both;
+}
+.rc-maintenant-label {
+  position: absolute;
+  top: -2px;
+  left: 6px;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+/* Sans la place à droite (soirée) : à gauche du trait, et AU-DESSUS de la rangée des
+   commits (cercles de 4 à 14 px dans cette rangée), dans la marge qui la sépare de la
+   légende : aucun cercle du quart d'heure en cours ne peut recouvrir l'heure. */
+.rc-maintenant[data-cote="fin"] .rc-maintenant-label {
+  top: -15px;
+  left: auto;
+  right: 6px;
+}
+.rc-reunions-bande {
+  position: relative;
+  height: 22px;
+  margin-top: 6px;
+}
+.rc-reunion-bloc {
+  position: absolute;
+  top: 2px;
+  height: 18px;
+  box-sizing: border-box;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px var(--filet-4);
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--texte);
+  white-space: nowrap;
+  animation: fade 0.3s ease 0.3s both;
+}
+.rc-reperes {
+  position: relative;
+  height: 22px;
+}
+.rc-repere {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-repere[data-ancre="debut"] {
+  transform: none;
+}
+.rc-repere[data-ancre="fin"] {
+  transform: translateX(-100%);
+}
+
+/* Créneau épinglé, sous la frise. */
+.rc-creneau {
+  margin: 6px -18px 0;
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--filet-1);
+  min-height: 54px;
+}
+.rc-creneau-aide {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte-discret);
+  font-size: 12.5px;
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-creneau-aide svg {
+  flex-shrink: 0;
+}
+.rc-creneau-detail {
+  animation: inA 0.26s var(--courbe-glisse) both;
+}
+.rc-creneau-tete {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.rc-creneau-plage {
+  font-family: var(--police-mono);
+  font-size: 12px;
+  color: var(--texte-fort);
+  padding: 3px 8px;
+  border-radius: var(--rayon-controle-petit);
+  background: var(--accent-doux);
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.rc-desepingler {
+  margin-left: auto;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte);
+}
+.rc-creneau-lignes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+}
+.rc-creneau-ligne {
+  flex: 1 1 280px;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+}
+.rc-creneau-reunion {
+  flex: 1 1 200px;
+  align-items: flex-start;
+}
+.rc-mono {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  font-weight: var(--graisse-mono-moyenne-courant);
+}
+.rc-mono-grand {
+  width: 32px;
+  height: 32px;
+  font-size: var(--taille-mono);
+}
+.rc-mono-reunion {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte);
+}
+.rc-creneau-texte {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--texte);
+}
+.rc-creneau-nom {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.rc-prompt {
+  font-size: 12px;
+  color: var(--texte-discret);
+  font-style: italic;
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-creneau-commits {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+.rc-creneau-commit {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.rc-anneau {
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid;
+}
+
+/* ---------- Pastilles : ticket, état, étiquette ---------- */
+
+.rc-tk {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--accent);
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--accent-doux);
+  text-decoration: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background var(--duree-survol);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+a.rc-tk:hover {
+  background: rgba(var(--accent-rgb), 0.24);
+}
+.rc-tk-puce {
+  margin-left: 4px;
+}
+.rc-lien {
+  color: var(--accent);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-statut,
+.rc-etiquette,
+.rc-drapeau {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  white-space: nowrap;
+  color: var(--texte-discret);
+  background: var(--fond-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-drapeau {
+  font-size: 11.5px;
+  padding: 2px 8px;
+}
+.rc-etiquette {
+  margin-left: 6px;
+}
+.rc-statut[data-ton="encours"],
+.rc-etiquette[data-etiquette="en cours"],
+.rc-drapeau[data-etiquette="en cours"] {
+  color: var(--texte-fort);
+  background: var(--filet-3);
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-etiquette[data-etiquette="en cours"],
+.rc-drapeau[data-etiquette="en cours"] {
+  color: var(--texte);
+  background: var(--fond-survol-ligne);
+}
+.rc-statut[data-ton="revue"],
+.rc-statut[data-ton="test"],
+.rc-statut[data-ton="bloque"],
+.rc-etiquette[data-etiquette="bloqué"],
+.rc-drapeau[data-etiquette="bloqué"] {
+  color: var(--avertissement);
+  background: rgba(227, 179, 65, 0.12);
+}
+.rc-statut[data-ton="fini"] {
+  color: var(--succes);
+  background: rgba(126, 231, 135, 0.12);
+}
+.rc-etiquette[data-etiquette="en attente"],
+.rc-drapeau[data-etiquette="en attente"] {
+  color: var(--accent);
+  background: var(--accent-doux);
+  font-weight: var(--graisse-normale-discret);
+}
+
+/* ---------- Bas de page : bilan et colonne de droite ---------- */
+
+.rc-bas {
+  margin-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 24px;
+}
+.rc-bilan {
+  flex: 1 1 560px;
+  min-width: 0;
+}
+.rc-bilan-tete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 0 2px 12px;
+}
+.rc-bilan-titre {
+  flex: 1;
+  min-width: 0;
+}
+.rc-replier {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--rayon-controle);
+  font-size: 12px;
+  color: var(--texte);
+}
+@keyframes rc-coche {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rc-copier {
+  height: 32px;
+  padding: 0 14px 0 12px;
+  border-radius: var(--rayon-controle-grand);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent);
+  color: var(--texte-sur-accent);
+  font-weight: var(--graisse-forte-sur-accent);
+  transition:
+    background 0.25s,
+    filter var(--duree-survol),
+    transform 0.1s;
+}
+.rc-copier:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.rc-copier:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.rc-copier[data-copie="true"] {
+  background: var(--succes);
+}
+.rc-copier:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.rc-coche {
+  animation: rc-coche 0.22s var(--courbe-glisse) both;
+}
+.rc-copie-note {
+  margin: -4px 2px 12px;
+  font-size: 12px;
+  color: var(--succes);
+  animation: inA 0.22s var(--courbe-glisse) both;
+}
+.rc-copie-note[data-echec="true"] {
+  color: var(--avertissement);
+}
+.rc-bilan-liste {
+  border-radius: var(--rayon-panneau);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.rc-projet + .rc-projet {
+  border-top: 1px solid var(--filet-1);
+}
+.rc-projet-tete {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 58px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.rc-projet-tete:focus-visible {
+  outline-offset: -2px;
+}
+.rc-projet-nom {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rc-projet-titre {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-forte-fort);
+  font-size: 14px;
+}
+.rc-projet-branche {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-projet-meta {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.rc-chev {
+  flex-shrink: 0;
+  color: var(--texte-discret);
+  transition: transform 0.28s var(--courbe-glisse);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-chev[data-ouvert="true"] {
+  transform: rotate(90deg);
+}
+.rc-plier .rc-chev {
+  color: currentColor;
+}
+
+/* Pli : la hauteur s'anime par grid-template-rows (0fr → 1fr), sans mesurer. */
+.rc-pli {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.32s var(--courbe-glisse);
+}
+.rc-pli[data-ouvert="true"] {
+  grid-template-rows: 1fr;
+}
+.rc-pli > div {
+  overflow: hidden;
+  min-height: 0;
+  opacity: 0;
+  transition: opacity 0.24s;
+}
+.rc-pli[data-ouvert="true"] > div {
+  opacity: 1;
+}
+.rc-puces {
+  list-style: none;
+  margin: 0;
+  padding: 0 16px 16px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.rc-puce {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--texte);
+}
+.rc-puce-vide {
+  font-size: 12.5px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-puce-point {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  transform: translateY(-2px);
+}
+.rc-puce-texte {
+  flex: 1;
+  min-width: 0;
+}
+.rc-puce-texte strong {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-forte-fort);
+}
+.rc-puce-texte code {
+  font-family: var(--police-mono);
+  font-size: 12px;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+/* Colonne de droite : cartes. */
+.rc-cote {
+  flex: 1 1 360px;
+  max-width: 460px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.rc-carte {
+  padding: 16px;
+}
+.rc-carte-tete {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+.rc-carte-total {
+  font-family: var(--police-mono);
+  font-size: 12px;
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.rc-saisi-total {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.rc-saisi-total[data-succes="true"] {
+  color: var(--succes);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.rc-carte-note {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-progression {
+  margin-top: 10px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+.rc-progression > div {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--succes);
+  transition: width var(--duree-dock) var(--courbe-glisse);
+}
+.rc-saisie-liste {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rc-saisie-ligne {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.rc-saisie-texte {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rc-saisie-haut {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.rc-saisie-nom,
+.rc-tache-nom,
+.rc-reunion-titre {
+  color: var(--texte-fort);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-saisie-sous {
+  font-size: 11.5px;
+  color: var(--texte-discret);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-saisie-duree {
+  font-family: var(--police-mono);
+  font-size: 12.5px;
+  color: var(--texte-fort);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.rc-saisie-action {
+  width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+.rc-saisir {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: var(--texte-fort);
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-saisir[data-erreur="true"] {
+  color: var(--avertissement);
+  box-shadow: inset 0 0 0 1px rgba(227, 179, 65, 0.4);
+  font-weight: var(--graisse-normale-courant);
+}
+.rc-saisie-encours {
+  font-size: 12px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-saisi {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--succes);
+  animation: rc-coche 0.24s var(--courbe-glisse) both;
+}
+.rc-saisie-pied {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rc-saisie-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-tout-saisir {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--rayon-controle);
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+.rc-journee-saisie {
+  font-size: 12px;
+  color: var(--succes);
+  white-space: nowrap;
+  animation: fade 0.2s ease both;
+}
+.rc-reunions {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rc-reunion {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+.rc-reunion-plage {
+  width: 92px;
+  flex-shrink: 0;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-reunion-titre {
+  flex: 1;
+  min-width: 0;
+}
+.rc-reunion-duree {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.rc-taches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.rc-carte > .rc-taches {
+  margin-top: 10px;
+}
+.rc-tache {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+}
+.rc-tache-nom {
+  flex: 1;
+  min-width: 0;
+}
+.rc-tache-echeance {
+  width: 44px;
+  flex-shrink: 0;
+  text-align: right;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-plier {
+  margin-top: 6px;
+  height: 28px;
+  padding: 0 8px 0 4px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--texte);
+}
+
+/* ---------- Chronologie ---------- */
+
+.rc-chrono {
+  margin-top: 22px;
+  padding: 18px 20px;
+}
+.rc-chrono-tete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  margin-bottom: 8px;
+}
+.rc-chrono-legende {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-chrono-legende > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rc-filtre {
+  margin-left: auto;
+  height: 28px;
+  width: 180px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--rayon-controle);
+  background: var(--fond-discret);
+  box-shadow: inset 0 0 0 1px var(--filet-2);
+  color: var(--texte-fort);
+  font-size: 12.5px;
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-filtre::placeholder {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-chrono-groupe {
+  display: flex;
+  gap: 16px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.rc-chrono-heure {
+  width: 40px;
+  flex-shrink: 0;
+  font-family: var(--police-mono);
+  font-size: 12px;
+  color: var(--texte-fort);
+  padding-top: 2px;
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.rc-chrono-items {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rc-chrono-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.rc-ln {
+  animation: ln 0.28s var(--courbe-douce) both;
+}
+.rc-chrono-minute {
+  width: 44px;
+  flex-shrink: 0;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.rc-chrono-texte {
+  flex: 1;
+  min-width: 0;
+  color: var(--texte-fort);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-normale-fort);
+}
+.rc-chrono-item[data-genre="commit"] .rc-chrono-texte,
+.rc-chrono-item[data-genre="shell"] .rc-chrono-texte {
+  font-family: var(--police-mono);
+  font-size: 12px;
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.rc-chrono-item[data-genre="reunion"] .rc-chrono-texte {
+  color: var(--texte);
+  font-weight: var(--graisse-normale-courant);
+}
+.rc-chrono-espace {
+  flex-shrink: 0;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+/* Glyphes : rond plein (commit), losange (prompt), chevron (terminal), carré bordé
+   (réunion), carré plein (ticket), à la teinte de l'espace (`--rc-teinte`). */
+.rc-glyphe {
+  width: 12px;
+  flex-shrink: 0;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--rc-teinte);
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+}
+.rc-chrono-legende .rc-glyphe {
+  width: auto;
+}
+.rc-glyphe > span {
+  display: block;
+  box-sizing: border-box;
+}
+.rc-glyphe[data-genre="commit"] > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--rc-teinte);
+}
+.rc-glyphe[data-genre="prompt"] > span {
+  width: 6px;
+  height: 6px;
+  border: 1.5px solid var(--rc-teinte);
+  transform: rotate(45deg);
+}
+.rc-glyphe[data-genre="reunion"] > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  border: 1.5px solid var(--rc-teinte);
+}
+.rc-glyphe[data-genre="ticket"] > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  background: var(--rc-teinte);
+}
+.rc-semaine {
+  display: flex;
+  flex-direction: column;
+}
+.rc-semaine-jour {
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  gap: 16px;
+  padding: 10px 6px;
+  border-radius: var(--rayon-controle);
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+.rc-semaine-jour:disabled {
+  cursor: default;
+}
+.rc-semaine-jour:disabled:hover {
+  background: transparent;
+}
+.rc-semaine-jour .rc-chrono-heure {
+  width: 64px;
+}
+.rc-semaine-corps {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.rc-semaine-fait {
+  color: var(--texte-fort);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-normale-fort);
+}
+
+/* ---------- Volet des réglages ---------- */
+
+.rc-volet {
+  position: absolute;
+  top: calc(var(--hauteur-barre) + 10px);
+  right: 16px;
+  bottom: var(--reserve-dock);
+  z-index: 5;
+  width: 380px;
+  max-width: calc(100% - 32px);
+  overflow: auto;
+  border-radius: var(--rayon-panneau);
+  background: var(--fond-panneau);
+  box-shadow:
+    inset 0 0 0 1px var(--filet-4),
+    var(--ombre-panneau);
+  animation: inA var(--duree-entree) var(--courbe-glisse) both;
+}
+.rc-reglages {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.rc-reglages-tete {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rc-reglages-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.rc-reglage {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--texte);
+}
+.rc-reglage-case {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--texte);
+}
+.rc-reglage-case input {
+  accent-color: var(--accent);
+}
+.rc-champ {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--rayon-controle);
+  background: var(--fond-discret);
+  box-shadow: inset 0 0 0 1px var(--filet-2);
+  color: var(--texte-fort);
+  font-size: 12.5px;
+  font-weight: var(--graisse-normale-fort);
+}
+textarea.rc-champ {
+  min-height: 56px;
+  resize: vertical;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  font-weight: var(--graisse-mono-normale-fort);
+}
+select.rc-champ option {
+  background: var(--fond-panneau);
+}
+.rc-reglages-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+.rc-btn-prim {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--rayon-controle-grand);
+  background: var(--accent);
+  color: var(--texte-sur-accent);
+  font-weight: var(--graisse-forte-sur-accent);
+  transition:
+    filter var(--duree-survol),
+    transform 0.1s;
+}
+.rc-btn-prim:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.rc-btn-prim:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.rc-btn-prim:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.rc-btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--rayon-controle-grand);
+  color: var(--texte-fort);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+  font-weight: var(--graisse-normale-fort);
+}
+
+/* ---------- États : erreur, chargement ---------- */
+
+.rc-erreur {
+  margin: 0;
+  font-size: 12px;
+  color: var(--avertissement);
+  overflow-wrap: anywhere;
+}
+.rc-erreur-bandeau {
+  margin-top: 22px;
+  padding: 14px 16px;
+  border-radius: var(--rayon-panneau);
+  background: rgba(227, 179, 65, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(227, 179, 65, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--avertissement);
+}
+.rc-erreur-bandeau p {
+  flex: 1;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rc-chargement {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+@keyframes rc-pulse {
+  50% {
+    opacity: 0.5;
+  }
+}
+.rc-squelette {
+  display: block;
+  min-height: 16px;
+  border-radius: var(--rayon-controle);
+  background: var(--fond-discret);
+  animation: rc-pulse 1.6s ease-in-out infinite;
+  list-style: none;
+}
+
+/* Fragment insécable (identifiant de ticket dans une infobulle). */
+.rc-nowrap {
+  white-space: nowrap;
+}

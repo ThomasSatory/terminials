@@ -1,59 +1,28 @@
 import { useState } from "react";
-import { FoldButton } from "./Fold";
-import { StatutClickup } from "./StatutClickup";
 import type { OpenTask } from "../../lib/activityApi";
+import { compareTasks, foldLabel, formatTaskDue } from "../../lib/tachesOuvertes";
+import { IconeChevronDroit } from "../ui/icons";
+import { Statut, Ticket } from "./Ticket";
 
-/** Tickets visibles tant que la liste n'est pas dépliée. */
-export const TACHES_VISIBLES = 3;
+/** Tâches visibles tant que la liste n'est pas dépliée. */
+export const TACHES_VISIBLES = 4;
 
-/**
- * Rangs de priorité ClickUp (plus petit = plus urgent) pour le tri secondaire.
- * Une priorité absente ou inconnue est traitée comme la moins urgente.
- */
-const PRIORITY_RANK: Record<string, number> = {
-  urgent: 0,
-  high: 1,
-  haute: 1,
-  normal: 2,
-  normale: 2,
-  low: 3,
-  basse: 3,
-};
-
-function priorityRank(priority: string | null | undefined): number {
-  if (!priority) return 4;
-  return PRIORITY_RANK[priority.toLowerCase()] ?? 4;
-}
-
-/** Trie par échéance croissante (sans échéance en dernier), puis par priorité. */
-function compareTasks(a: OpenTask, b: OpenTask): number {
-  const dueA = a.dueDate ?? null;
-  const dueB = b.dueDate ?? null;
-  if (dueA !== dueB) {
-    if (dueA === null) return 1;
-    if (dueB === null) return -1;
-    return dueA - dueB;
-  }
-  return priorityRank(a.priority) - priorityRank(b.priority);
-}
-
-const DUE_FORMAT = new Intl.DateTimeFormat("fr-FR", { weekday: "short", day: "numeric" });
-
-/** Échéance courte d'une tâche, ex. "ven. 19". Pure, testée sans rendu. */
-export function formatTaskDue(ts: number): string {
-  return DUE_FORMAT.format(new Date(ts * 1000));
+function Ligne({ task, onOpen }: { task: OpenTask; onOpen: (url: string) => void }) {
+  return (
+    <li className="rc-tache">
+      <Ticket id={task.id} url={task.url} titre={task.name} onOpen={onOpen} />
+      <span className="rc-tache-nom">{task.name}</span>
+      <Statut status={task.status} />
+      <span className="rc-tache-echeance">{task.dueDate != null ? formatTaskDue(task.dueDate) : "—"}</span>
+    </li>
+  );
 }
 
 /**
- * Tickets ClickUp ouverts du sprint (« Reste à faire ») : une ligne
- * par ticket : identifiant complet en pastille accent, nom en serif, état
- * ClickUp en pastille teintée, échéance à droite.
- * Triés par échéance puis priorité. ClickUp inactif (source « off », ou clé API
- * sans jeton), une simple ligne atténuée renvoie aux réglages.
- *
- * Seuls les {@link TACHES_VISIBLES} premiers tickets s'affichent ; les suivants
- * se déplient sur demande. Replié à chaque montage : l'overlay se rouvre sur le
- * même premier coup d'œil, même après un sprint chargé.
+ * « Tâches ouvertes du sprint » : identifiant en pastille, nom, état teinté,
+ * échéance. Triées par échéance puis priorité ; les quatre premières visibles, les
+ * suivantes dans un pli qui s'ouvre en douceur. Suivi des tâches inactif : une
+ * ligne discrète renvoie aux réglages.
  */
 export function OpenTasks({
   tasks,
@@ -65,41 +34,52 @@ export function OpenTasks({
   onOpen: (url: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-
-  if (!active) {
-    return <p className="dash-tasks-empty">Activer ClickUp dans les réglages</p>;
-  }
-
   const sorted = [...tasks].sort(compareTasks);
-  const visibles = open ? sorted : sorted.slice(0, TACHES_VISIBLES);
-  const caches = sorted.length - visibles.length;
+  const top = sorted.slice(0, TACHES_VISIBLES);
+  const suite = sorted.slice(TACHES_VISIBLES);
 
   return (
-    <>
-      <ul className="dash-tasks">
-        {visibles.map((task) => (
-          <li key={task.id} className="dash-task">
-            <a
-              className="dash-task-id"
-              href={task.url}
-              onClick={(e) => {
-                e.preventDefault();
-                onOpen(task.url);
-              }}
-            >
-              {task.id}
-            </a>
-            <span className="dash-task-name">{task.name}</span>
-            <StatutClickup status={task.status} />
-            {task.dueDate != null && (
-              <span className="dash-task-due">{formatTaskDue(task.dueDate)}</span>
-            )}
-          </li>
-        ))}
-      </ul>
-      {(caches > 0 || open) && (
-        <FoldButton open={open} reste={caches} onToggle={() => setOpen(!open)} />
+    <section aria-label="Tâches ouvertes" className="rc-panneau rc-carte">
+      <div className="rc-carte-tete">
+        <h2 className="rc-intertitre">Tâches ouvertes du sprint</h2>
+        {active && <span className="rc-carte-total">{sorted.length}</span>}
+      </div>
+      {!active ? (
+        <p className="rc-vide rc-vide-carte">Activer le suivi des tâches dans les réglages.</p>
+      ) : sorted.length === 0 ? (
+        <p className="rc-vide rc-vide-carte">Aucune tâche ouverte.</p>
+      ) : (
+        <>
+          <ul className="rc-taches">
+            {top.map((t) => (
+              <Ligne key={t.id} task={t} onOpen={onOpen} />
+            ))}
+          </ul>
+          {suite.length > 0 && (
+            <>
+              <div id="rc-taches-suite" className="rc-pli" data-ouvert={open} inert={!open}>
+                <div>
+                  <ul className="rc-taches">
+                    {suite.map((t) => (
+                      <Ligne key={t.id} task={t} onOpen={onOpen} />
+                    ))}
+                  </ul>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="rc-plier hov"
+                aria-expanded={open}
+                aria-controls="rc-taches-suite"
+                onClick={() => setOpen(!open)}
+              >
+                <IconeChevronDroit taille={12} epaisseur={1.7} className="rc-chev" data-ouvert={open} />
+                {foldLabel(open, suite.length)}
+              </button>
+            </>
+          )}
+        </>
       )}
-    </>
+    </section>
   );
 }

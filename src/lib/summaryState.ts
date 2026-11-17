@@ -1,4 +1,4 @@
-import { isUnauthorized, type Summary } from "./activityApi";
+import type { Summary } from "./activityApi";
 
 /**
  * État UI d'un résumé LLM (§8 du design : idle → bouton, loading → squelette,
@@ -9,39 +9,50 @@ import { isUnauthorized, type Summary } from "./activityApi";
  * régénération (`generate(true)`) échoue alors qu'un résumé
  * est déjà affiché, le résumé en cache n'est jamais écrasé (§10) : `ok` gagne
  * alors `refreshing` (régénération en cours) et `lastError` (échec de la
- * dernière régénération, `"unauthorized"` pour un jeton LLM refusé, sinon
- * `String(error)`) plutôt que de basculer sur les statuts `unauthorized`/
- * `error` — ceux-ci ne servent qu'au tout premier chargement (pas de résumé
+ * dernière régénération, `String(error)`)
+ * plutôt que de basculer sur le statut `error` — celui-ci ne sert qu'au tout premier chargement (pas de résumé
  * en cache à préserver).
+ *
+ * Deux chargements très différents passent par ces états, et l'interface ne doit pas les
+ * confondre : la LECTURE du cache (ouverture, changement de jour, collecte — gratuite,
+ * quelques millisecondes) et la RÉDACTION demandée par l'utilisateur (appel LLM, des
+ * dizaines de secondes, « Rédaction… » et icône qui tourne). `phase` (en chargement) et
+ * `refreshing` (résumé déjà affiché) disent lequel est en cours ; `reecrit` marque un
+ * résumé qui vient d'une rédaction faite ici (« Bilan réécrit à l'instant »).
  */
+export type PhaseResume = "lecture" | "redaction";
+
 export type SummaryUi =
   | { status: "idle" }
-  | { status: "loading" }
+  | { status: "loading"; phase: PhaseResume }
   | { status: "absent" }
-  | { status: "ok"; summary: Summary; refreshing?: boolean; lastError?: string }
-  | { status: "unauthorized" }
+  | { status: "ok"; summary: Summary; reecrit?: boolean; refreshing?: PhaseResume; lastError?: string }
   | { status: "error"; message: string };
 
 export type SummaryEvent =
-  | { type: "start" }
-  | { type: "ok"; summary: Summary }
+  | { type: "start"; phase: PhaseResume }
+  | { type: "ok"; summary: Summary; reecrit?: boolean }
   | { type: "absent" }
   | { type: "fail"; error: unknown };
 
+/** Une rédaction (appel LLM) est en cours, résumé affiché ou non. */
+export function redactionEnCours(ui: SummaryUi): boolean {
+  return (ui.status === "loading" && ui.phase === "redaction") || (ui.status === "ok" && ui.refreshing === "redaction");
+}
+
 /**
- * Réducteur pur de l'état d'un résumé. Une erreur "unauthorized: …" (jeton LLM
- * refusé) bascule sur le bandeau ambre dédié plutôt que le bandeau d'erreur
- * générique ; le message d'erreur, lui, est toujours `String(error)`. Voir la
+ * Réducteur pur de l'état d'un résumé. Le message d'erreur est toujours
+ * `String(error)`. Voir la
  * doc de `SummaryUi` pour le cas d'une régénération qui échoue alors qu'un
  * résumé est déjà affiché.
  */
 export function reduceSummary(prev: SummaryUi, ev: SummaryEvent): SummaryUi {
   switch (ev.type) {
     case "start":
-      if (prev.status === "ok") return { ...prev, refreshing: true, lastError: undefined };
-      return { status: "loading" };
+      if (prev.status === "ok") return { ...prev, refreshing: ev.phase, lastError: undefined };
+      return { status: "loading", phase: ev.phase };
     case "ok":
-      return { status: "ok", summary: ev.summary };
+      return ev.reecrit ? { status: "ok", summary: ev.summary, reecrit: true } : { status: "ok", summary: ev.summary };
     case "absent":
       // Contrairement à `fail`, on n'a rien à préserver : un cache vide est la
       // vérité pour le jour demandé. Garder le résumé précédent afficherait
@@ -51,11 +62,10 @@ export function reduceSummary(prev: SummaryUi, ev: SummaryEvent): SummaryUi {
       if (prev.status === "ok") {
         return {
           ...prev,
-          refreshing: false,
-          lastError: isUnauthorized(ev.error) ? "unauthorized" : String(ev.error),
+          refreshing: undefined,
+          lastError: String(ev.error),
         };
       }
-      if (isUnauthorized(ev.error)) return { status: "unauthorized" };
       return { status: "error", message: String(ev.error) };
   }
 }

@@ -4,5 +4,8 @@
 pub mod activity;
 pub mod cwd;
 pub mod git;
+pub mod hooks;
 pub mod osc;
 pub mod ports;
+pub mod reglages;
+pub mod superviseur;

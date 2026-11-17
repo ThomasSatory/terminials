@@ -15,6 +15,8 @@ pub struct PtyHandle {
     pub writer: Box<dyn Write + Send>,
     pub master: Box<dyn MasterPty + Send>,
     pub pid: Option<u32>,
+    /// Espace de travail auquel le PTY appartient (identité vérifiée côté serveur).
+    pub workspace_id: String,
     /// Gardé vivant pour ne pas tuer le process enfant.
     _child: Box<dyn Child + Send + Sync>,
 }
@@ -32,6 +34,16 @@ impl PtyRegistry {
 
     pub fn next_id(&self) -> PtyId {
         self.next.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// PTY dont le shell a le PID `pid` : (espace, id du PTY). C'est le registre de l'app,
+    /// pas l'environnement d'un client, qui dit à quel espace appartient un shell.
+    pub fn espace_du_shell(&self, pid: u32) -> Option<(String, u64)> {
+        let handles = self.handles.lock().unwrap();
+        handles
+            .iter()
+            .find(|(_, h)| h.pid == Some(pid))
+            .map(|(id, h)| (h.workspace_id.clone(), u64::from(*id)))
     }
 }
 
@@ -86,7 +98,12 @@ pub fn spawn_pty(
 ) -> std::io::Result<(PtyId, Box<dyn std::io::Read + Send>)> {
     let pty_system = native_pty_system();
     let pair = pty_system
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     // L'id est réservé AVANT le spawn (simple compteur atomique) pour pouvoir
@@ -109,25 +126,40 @@ pub fn spawn_pty(
         .take_writer()
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-    reg.handles
-        .lock()
-        .unwrap()
-        .insert(id, PtyHandle { writer, master: pair.master, pid, _child: child });
+    reg.handles.lock().unwrap().insert(
+        id,
+        PtyHandle {
+            writer,
+            master: pair.master,
+            pid,
+            workspace_id: workspace_id.to_string(),
+            _child: child,
+        },
+    );
     Ok((id, reader))
 }
 
 pub fn write_pty(reg: &PtyRegistry, id: PtyId, data: &[u8]) -> std::io::Result<()> {
     let mut handles = reg.handles.lock().unwrap();
-    let h = handles.get_mut(&id).ok_or_else(|| std::io::Error::other("pty introuvable"))?;
+    let h = handles
+        .get_mut(&id)
+        .ok_or_else(|| std::io::Error::other("pty introuvable"))?;
     h.writer.write_all(data)?;
     h.writer.flush()
 }
 
 pub fn resize_pty(reg: &PtyRegistry, id: PtyId, cols: u16, rows: u16) -> std::io::Result<()> {
     let handles = reg.handles.lock().unwrap();
-    let h = handles.get(&id).ok_or_else(|| std::io::Error::other("pty introuvable"))?;
+    let h = handles
+        .get(&id)
+        .ok_or_else(|| std::io::Error::other("pty introuvable"))?;
     h.master
-        .resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .map_err(|e| std::io::Error::other(e.to_string()))
 }
 
@@ -151,6 +183,20 @@ mod tests {
     }
 
     #[test]
+    fn le_registre_retrouve_l_espace_d_un_shell() {
+        let reg = PtyRegistry::new();
+        let (id, _reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-a", 80, 24, None).unwrap();
+        let pid = reg.handles.lock().unwrap().get(&id).unwrap().pid.unwrap();
+        assert_eq!(
+            reg.espace_du_shell(pid),
+            Some(("ws-a".to_string(), u64::from(id)))
+        );
+        assert_eq!(reg.espace_du_shell(pid + 1_000_000), None);
+        close_pty(&reg, id);
+        assert_eq!(reg.espace_du_shell(pid), None);
+    }
+
+    #[test]
     fn spawn_write_resize_roundtrip() {
         let reg = PtyRegistry::new();
         let (id, _reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24, None).unwrap();
@@ -164,8 +210,12 @@ mod tests {
         use std::io::Read;
         let reg = PtyRegistry::new();
         let (id, mut reader) = spawn_pty(&reg, "/bin/sh", "/", "ws-test", 80, 24, None).unwrap();
-        write_pty(&reg, id, b"echo ID=$TERMINIALS_WORKSPACE_ID:$TERMINIALS_PTY_ID; exit\n")
-            .unwrap();
+        write_pty(
+            &reg,
+            id,
+            b"echo ID=$TERMINIALS_WORKSPACE_ID:$TERMINIALS_PTY_ID; exit\n",
+        )
+        .unwrap();
         // `exit` termine le shell → EOF : la boucle de lecture se termine toujours.
         let mut out = Vec::new();
         let mut buf = [0u8; 4096];
@@ -178,7 +228,10 @@ mod tests {
         let text = String::from_utf8_lossy(&out);
         // L'écho du terminal contient la forme littérale `$TERMINIALS_…` ; seule la
         // sortie d'echo contient la forme développée `ID=ws-test:<id>`.
-        assert!(text.contains(&format!("ID=ws-test:{id}")), "sortie du shell: {text}");
+        assert!(
+            text.contains(&format!("ID=ws-test:{id}")),
+            "sortie du shell: {text}"
+        );
     }
 
     #[test]
@@ -224,10 +277,16 @@ mod tests {
         use terminials_core::activity::shell_integration::launch_for;
         let launch = launch_for("/bin/bash", std::path::Path::new("/run/x")).unwrap();
         let cmd = build_shell_command("/bin/bash", "/", "w", 1, Some(&launch));
-        let argv: Vec<String> =
-            cmd.get_argv().iter().map(|s| s.to_string_lossy().into_owned()).collect();
+        let argv: Vec<String> = cmd
+            .get_argv()
+            .iter()
+            .map(|s| s.to_string_lossy().into_owned())
+            .collect();
         assert!(argv.iter().any(|a| a == "--init-file"), "argv: {argv:?}");
-        assert!(argv.iter().any(|a| a == "/run/x/bash-init.sh"), "argv: {argv:?}");
+        assert!(
+            argv.iter().any(|a| a == "/run/x/bash-init.sh"),
+            "argv: {argv:?}"
+        );
         // Les variables propres à terminials restent posées malgré le lancement dédié.
         assert_eq!(cmd.get_env("TERMINIALS_PTY_ID").unwrap(), "1");
     }

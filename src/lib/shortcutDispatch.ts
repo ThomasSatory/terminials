@@ -6,6 +6,9 @@ import { openTab } from "./newTab";
 import type { ShortcutAction } from "./shortcuts";
 import { useWorkspaceStore, navigableOrder, type Workspace } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
+import { useUiStore } from "../store/ui";
+import { useReglagesStore } from "../store/reglages";
+import { useSuperviseurStore } from "../store/superviseur";
 
 /** Ferme les PTYs backend de tous les onglets d'un workspace (avant de le retirer du store). */
 function closeAllPtys(ws: Workspace, tabPtys: Record<string, number>): void {
@@ -13,6 +16,87 @@ function closeAllPtys(ws: Workspace, tabPtys: Record<string, number>): void {
     const ptyId = tabPtys[t.id];
     if (ptyId !== undefined) closePty(ptyId);
   }
+}
+
+/**
+ * Ferme un espace, comme la maquette Creation (« Fermer l'espace » du menu, Ctrl+Maj+Q) :
+ * le DERNIER espace ne se ferme pas, sans autre signe que l'entrée grisée du menu
+ * (« dernier espace ») — la maquette ne montre ni toast ni retour à l'accueil ; seul
+ * « Tout fermer » (maquette Accueil) y ramène. Sinon ses PTY sont fermés sur-le-champ
+ * puis il quitte le store ; son suivant dans le dock devient actif, le dock l'efface en
+ * l'animant. Les calques qui le visaient se referment. Renvoie vrai si l'espace a été
+ * fermé.
+ */
+export function fermerEspace(wsId: string): boolean {
+  const s = useWorkspaceStore.getState();
+  const ws = s.workspaces.find((w) => w.id === wsId);
+  if (!ws) return false;
+  if (s.workspaces.length < 2) return false;
+  // PTY fermés AVANT de retirer l'espace : closeWorkspace purge tabPtys, on ne dépend pas
+  // de l'ordre de démontage React pour tuer les shells.
+  closeAllPtys(ws, s.tabPtys);
+  s.closeWorkspace(ws.id);
+  useUiStore.getState().oublierEspace(ws.id);
+  return true;
+}
+
+/**
+ * « Tout fermer » de la barre du haut (maquette Accueil) : ferme TOUS les espaces, le
+ * dernier compris, et ramène à l'accueil. Les PTY de chaque espace sont fermés avant son
+ * retrait (comme fermerEspace) ; les calques, la palette et les Paramètres se referment.
+ * Les groupes restent : ce sont des rangements, pas des sessions. Comme dans la
+ * maquette, un seul clic suffit, sans confirmation. Renvoie le nombre d'espaces fermés.
+ */
+export function fermerTousLesEspaces(): number {
+  const s = useWorkspaceStore.getState();
+  const espaces = [...s.workspaces];
+  for (const ws of espaces) {
+    closeAllPtys(ws, useWorkspaceStore.getState().tabPtys);
+    useWorkspaceStore.getState().closeWorkspace(ws.id);
+    useUiStore.getState().oublierEspace(ws.id);
+  }
+  const ui = useUiStore.getState();
+  ui.fermerCalques();
+  ui.fermerPalette();
+  ui.fermerParametres();
+  if (ui.vue !== "terminal") ui.setVue("terminal");
+  return espaces.length;
+}
+
+/**
+ * Aller à un espace au clavier (Ctrl 1…9, Ctrl PageUp/PageDown) : comme un clic sur son
+ * avatar ou le bouton « Aller » de la bulle, c'est vouloir voir son terminal. Le récap et
+ * la mosaïque qui le masqueraient s'effacent, les calques légers se referment ; le focus
+ * suit (TabbedTerminals le rend au terminal qui redevient visible).
+ */
+function allerAEspace(wsId: string): void {
+  useDashboardStore.getState().close();
+  const ui = useUiStore.getState();
+  ui.fermerCalques();
+  ui.fermerParametres();
+  if (ui.vue !== "terminal") ui.setVue("terminal");
+  useWorkspaceStore.getState().setActive(wsId);
+}
+
+/**
+ * Ferme le panneau du superviseur (Échap, croix, Ctrl+Maj+Espace) et rend la saisie à ce
+ * qui est affiché dessous : la vue Paramètres si elle est ouverte, sinon le terminal
+ * actif. Sans cela, le focus restait dans un panneau qui disparaît et retombait sur
+ * <body> : la frappe suivante n'allait nulle part. Une vue plein écran (récap, diff,
+ * mosaïque, accueil) garde son propre focus : rien n'est déplacé.
+ */
+export function fermerPanneauSuperviseur(): void {
+  useSuperviseurStore.getState().fermerPanneau();
+  if (typeof document === "undefined") return;
+  const ui = useUiStore.getState();
+  if (ui.parametres) {
+    document.querySelector<HTMLElement>(".par")?.focus();
+    return;
+  }
+  const s = useWorkspaceStore.getState();
+  const w = s.workspaces.find((x) => x.id === s.activeId);
+  if (ui.vue !== "terminal" || useDashboardStore.getState().open || !w?.activeTabId || w.diffOpen) return;
+  focusTab(w.activeTabId);
 }
 
 /**
@@ -24,28 +108,28 @@ function closeAllPtys(ws: Workspace, tabPtys: Record<string, number>): void {
  */
 export function dispatchShortcut(action: ShortcutAction): void {
   const s = useWorkspaceStore.getState();
+  const ui = useUiStore.getState();
   const active = s.workspaces.find((w) => w.id === s.activeId);
   switch (action.type) {
     case "open-folder":
       void openFolderDialog();
       return;
     case "new-workspace":
-      // Le formulaire nom+dossier vit dans la Sidebar : on la révèle si elle est
-      // masquée (Ctrl+Shift+B), sinon le raccourci n'aurait aucun effet visible.
-      if (!s.sidebarVisible) s.toggleSidebar();
-      s.requestNewWorkspace(true);
+      // Popover de création ancré au « + » du dock (le store réaffiche le dock masqué).
+      ui.ouvrirPopoverEspace({ mode: "creer" });
       return;
     case "new-home-workspace":
       void addHomeWorkspace();
       return;
     case "new-group":
-      if (!s.sidebarVisible) s.toggleSidebar();
-      s.requestNewGroup(true);
+      ui.ouvrirFormulaireGroupe({ mode: "creer" });
       return;
     case "toggle-group":
       if (active?.groupId) s.toggleGroupCollapsed(active.groupId);
       return;
     case "new-tab":
+      // Le nouvel onglet doit se voir : les Paramètres qui le couvriraient se ferment.
+      ui.fermerParametres();
       if (active) void openTab(active.id);
       return;
     case "close-tab":
@@ -56,30 +140,63 @@ export function dispatchShortcut(action: ShortcutAction): void {
       // Sinon le PTY est fermé par le cleanup du TerminalPane démonté.
       s.closeTab(active.id, active.activeTabId);
       return;
-    case "close-workspace": {
-      if (!active) return;
-      // Ferme explicitement les PTYs AVANT de retirer le workspace :
-      // closeWorkspace purge tabPtys, on ne dépend pas de l'ordre de
-      // démontage React pour tuer les shells.
-      closeAllPtys(active, s.tabPtys);
-      s.closeWorkspace(active.id);
+    case "close-workspace":
+      // Même chemin que « Fermer l'espace » du menu (maquette Creation).
+      if (active) fermerEspace(active.id);
       return;
-    }
     case "rename-workspace":
-      // Même raison que new-workspace : l'édition inline est dans la Sidebar.
+      // Popover de modification (nom, dossier, couleur, groupe) ancré à l'avatar actif.
       if (!active) return;
-      if (!s.sidebarVisible) s.toggleSidebar();
-      s.requestRename(active.id);
+      ui.ouvrirPopoverEspace({ mode: "modifier", wsId: active.id });
       return;
     case "toggle-diff":
       // Uniquement si le workspace a un dossier : le diff s'appuie sur git dans cwd.
-      if (active?.cwd) s.toggleDiff(active.id);
+      if (!active?.cwd) return;
+      // Les Paramètres passent devant le diff : on les ferme pour qu'il se voie.
+      if (!active.diffOpen) ui.fermerParametres();
+      s.toggleDiff(active.id);
       return;
-    case "toggle-sidebar":
-      s.toggleSidebar();
+    case "toggle-dock":
+      ui.basculerDock();
+      return;
+    case "toggle-palette":
+      ui.basculerPalette();
+      return;
+    case "toggle-mosaique":
+      // Sans espace, l'accueil prime : basculer la vue n'afficherait rien et la mosaïque
+      // surgirait au lieu du terminal de l'espace rouvert ensuite.
+      if (s.workspaces.length === 0 && ui.vue !== "mosaique") return;
+      // Entrer en mosaïque referme les vues plein écran qui la masqueraient (récap,
+      // fichiers modifiés) : sinon le raccourci n'aurait aucun effet visible.
+      if (ui.vue !== "mosaique") {
+        useDashboardStore.getState().close();
+        ui.fermerParametres();
+        if (active?.diffOpen) s.toggleDiff(active.id);
+      }
+      ui.basculerMosaique();
       return;
     case "toggle-dashboard":
+      // Une vue plein écran s'ouvre : les calques légers ne restent pas suspendus devant.
+      ui.fermerCalques();
+      ui.fermerParametres();
+      // Autre vue : le retour vers la mosaïque ne survit pas au récap.
+      ui.desarmerRetourMosaique();
       useDashboardStore.getState().toggle();
+      return;
+    case "toggle-parametres":
+      // Vue plein écran sous la barre du haut : le récap, qui la couvrirait, se ferme.
+      useDashboardStore.getState().close();
+      ui.basculerParametres();
+      return;
+    case "toggle-superviseur":
+      // Désactivé, le superviseur n'a pas de panneau : on mène à son réglage.
+      if (!useReglagesStore.getState().reglages.superviseur.actif) {
+        useDashboardStore.getState().close();
+        ui.ouvrirParametres("superviseur");
+        return;
+      }
+      if (useSuperviseurStore.getState().panneauOuvert) fermerPanneauSuperviseur();
+      else useSuperviseurStore.getState().ouvrirPanneau();
       return;
     case "prev-workspace":
     case "next-workspace": {
@@ -90,7 +207,7 @@ export function dispatchShortcut(action: ShortcutAction): void {
       const idx = order.findIndex((w) => w.id === s.activeId);
       const delta = action.type === "next-workspace" ? 1 : -1;
       const next = idx === -1 ? order[0] : order[(idx + delta + order.length) % order.length];
-      s.setActive(next.id);
+      allerAEspace(next.id);
       return;
     }
     case "move-workspace": {
@@ -107,7 +224,7 @@ export function dispatchShortcut(action: ShortcutAction): void {
     }
     case "select-workspace": {
       const target = navigableOrder(s.workspaces, s.groups)[action.index];
-      if (target) s.setActive(target.id);
+      if (target) allerAEspace(target.id);
       return;
     }
     case "prev-tab":

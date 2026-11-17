@@ -1,0 +1,163 @@
+/* Composants partagés de l'UI « Dock » (src/components/ui/) : avatar d'espace, touche,
+   infobulle, bouton à icône. Valeurs reprises des maquettes, via les jetons. */
+
+/* ---------- Avatar d'espace ---------- */
+
+/* Enveloppe du saut « vous attend » : séparée du disque pour que le saut et le
+   grossissement au survol (transform du disque) ne s'écrasent pas. */
+.ui-avatar-saut {
+  display: inline-flex;
+}
+.ui-avatar-saut[data-sautille="true"] {
+  animation: hop 2s ease-in-out infinite;
+}
+
+.ui-avatar {
+  position: relative;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--police-mono);
+  font-weight: var(--graisse-mono-moyenne-courant);
+  line-height: 1;
+  user-select: none;
+  transition:
+    transform 0.2s var(--courbe-douce),
+    background 0.2s,
+    box-shadow 0.2s,
+    color 0.2s;
+}
+
+/* Arc cyan « un agent travaille » : deux quarts colorés qui tournent autour du disque. */
+.ui-avatar-arc {
+  position: absolute;
+  inset: calc(var(--avatar-arc-ecart, 4px) * -1);
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--travail);
+  border-right-color: var(--travail);
+  animation: spin 1s linear infinite;
+  pointer-events: none;
+}
+
+/* Anneau « attend une réponse » (échange routé par le superviseur) : pointillé, lent. */
+.ui-avatar-relais {
+  position: absolute;
+  inset: calc(var(--avatar-arc-ecart, 4px) * -1);
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px dashed rgba(200, 202, 208, 0.6);
+  animation: spin 6s linear infinite;
+  pointer-events: none;
+}
+
+/* Pastille « vous attend » : accent, bord opaque pour la détacher, halo qui pulse. */
+.ui-avatar-pastille {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--attente);
+  color: var(--attente);
+  border: 2px solid var(--fond-dock-opaque);
+  animation: halo 1.6s ease-out infinite;
+  pointer-events: none;
+  font-weight: var(--graisse-moyenne-discret);
+}
+
+/* ---------- Touche de raccourci ---------- */
+
+.ui-kbd {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  font-weight: var(--graisse-mono-normale-discret);
+  color: var(--texte-discret);
+  white-space: nowrap;
+}
+.ui-kbd[data-variante="puce"] {
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  color: var(--texte);
+  background: var(--fond-survol-ligne);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.ui-kbd[data-variante="sur-accent"] {
+  font-size: 10px;
+  font-weight: var(--graisse-moyenne-sur-accent);
+  padding: 2px 5px;
+  border-radius: 5px;
+  color: inherit;
+  background: rgba(11, 11, 13, 0.14);
+}
+
+/* ---------- Infobulle ---------- */
+
+/* Boîte d'infobulle des maquettes ; c'est le composant hôte qui la montre au survol ET au
+   focus clavier (ex. dock.css : `.dock-btn:hover > .ui-tip`). */
+.ui-tip {
+  position: absolute;
+  left: 50%;
+  z-index: 1;
+  padding: 8px 12px;
+  border-radius: var(--rayon-infobulle);
+  background: var(--fond-infobulle);
+  box-shadow:
+    inset 0 0 0 1px var(--filet-4),
+    var(--ombre-infobulle);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  white-space: nowrap;
+  text-align: left;
+  opacity: 0;
+  /* --tip-dx : recadrage horizontal posé par l'hôte quand un bord le rognerait (dock). */
+  transform: translate(calc(-50% + var(--tip-dx, 0px)), 6px);
+  transition:
+    opacity var(--duree-infobulle),
+    transform var(--duree-infobulle);
+  pointer-events: none;
+}
+.ui-tip-titre {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--texte-fort);
+  font-weight: var(--graisse-forte-fort);
+}
+.ui-tip-detail {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+/* ---------- Bouton à icône ---------- */
+
+.ui-icone-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte);
+  border-radius: var(--rayon-controle);
+  transition:
+    background var(--duree-survol),
+    color var(--duree-survol);
+}
+.ui-icone-btn[data-forme="rond"] {
+  border-radius: 50%;
+}
+.ui-icone-btn:hover,
+.ui-icone-btn[aria-pressed="true"],
+.ui-icone-btn[aria-expanded="true"] {
+  background: var(--fond-survol);
+}

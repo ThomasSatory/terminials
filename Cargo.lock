@@ -4156,6 +4156,7 @@ dependencies = [
  "tauri-plugin-opener",
  "terminials-core",
  "tokio",
+ "webkit2gtk",
 ]
 
 [[package]]
@@ -4164,7 +4165,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "protocol",
+ "serde",
  "serde_json",
+ "terminials-core",
 ]
 
 [[package]]

@@ -105,7 +105,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("terminials-test-{}", std::process::id()));
         let path = save_image_in(&dir, b"\x89PNG-data", "png", 1_700_000_000_000).unwrap();
 
-        assert!(path.ends_with("/pasted-1700000000000.png"), "chemin: {path}");
+        assert!(
+            path.ends_with("/pasted-1700000000000.png"),
+            "chemin: {path}"
+        );
         assert_eq!(fs::read(&path).unwrap(), b"\x89PNG-data");
         fs::remove_dir_all(&dir).unwrap();
     }

@@ -4,6 +4,7 @@
 pub mod collectors;
 pub mod digest;
 pub mod providers;
+pub mod reunions;
 pub mod saisie;
 pub mod settings;
 pub mod shell_integration;

@@ -1,0 +1,368 @@
+/* Jetons de design de l'UI « Dock » : valeurs du langage visuel figé des maquettes.
+   Toute vue s'appuie sur ces variables plutôt que sur des couleurs en dur : un
+   réglage (accent, rayon, courbe) se fait ici, une seule fois, pour toute l'app.
+
+   Polices embarquées (paquets @fontsource-variable, woff2 locaux) : l'app tourne
+   hors ligne, jamais de Google Fonts. Les familles exposées s'appellent
+   « Inter Variable » et « JetBrains Mono Variable ». L'italique d'Inter est importé à
+   part (font-synthesis: none interdit au moteur de le fabriquer) : sans lui, les citations
+   en italique du récap s'affichaient en romain. */
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/inter/wght-italic.css";
+@import "@fontsource-variable/jetbrains-mono";
+
+:root {
+  /* --- Fonds --- */
+  --fond-app: #050506;
+  /* Surface flottante (dock, barres posées sur le terminal) : toujours avec le flou. */
+  --fond-flottant: rgba(22, 23, 28, 0.88);
+  --flou-flottant: blur(14px);
+  /* Panneau, popover, palette. */
+  --fond-panneau: #131417;
+  --fond-infobulle: #1b1c21;
+  /* Bord opaque de la pastille « vous attend » : détache la pastille de l'avatar. */
+  --fond-dock-opaque: #16171c;
+  /* Survols et sélections, du plus discret au plus marqué. */
+  --fond-discret: rgba(255, 255, 255, 0.06);
+  --fond-survol-ligne: rgba(255, 255, 255, 0.08);
+  --fond-survol: rgba(255, 255, 255, 0.09);
+  /* Voile sous la palette (avec un flou de 4 px). */
+  --voile: rgba(0, 0, 0, 0.55);
+
+  /* --- Filets : toujours en `box-shadow: inset 0 0 0 1px …`, jamais en border --- */
+  --filet-1: rgba(255, 255, 255, 0.06);
+  --filet-2: rgba(255, 255, 255, 0.08);
+  --filet-3: rgba(255, 255, 255, 0.1);
+  --filet-4: rgba(255, 255, 255, 0.12);
+  /* Séparateur vertical du dock (1 × 28 px). */
+  --filet-separateur: rgba(255, 255, 255, 0.14);
+
+  /* --- Texte (jamais plus sombre que le discret : contraste 4.5:1 minimum) --- */
+  --texte-fort: #f5f6f7;
+  --texte: #c8cad0;
+  --texte-discret: #9296a0;
+  --texte-terminal: #eceef1;
+  --texte-sur-accent: #0b0b0d;
+
+  /* --- Accent : sélection et « un agent vous attend » ---
+     Valeurs par défaut : le réglage « Couleur d'accent » les réécrit en direct sur :root
+     (hooks/useApparence, lib/apparence), dérivés compris. */
+  --accent: #8f9bff;
+  --accent-focus: #c3caff;
+  /* Composantes de l'accent, pour ses fonds translucides : rgba(var(--accent-rgb), .14).
+     À garder égales à --accent. */
+  --accent-rgb: 143, 155, 255;
+  /* Fond adouci de l'accent (sélection discrète, puce, jour choisi). */
+  --accent-doux: rgba(var(--accent-rgb), 0.12);
+
+  /* Gris neutre d'une pastille sans couleur (agent au repos, action de la palette). */
+  --neutre: #5d616b;
+
+  /* --- Sémantique --- */
+  --travail: #22d3ee; /* un agent travaille : arc cyan qui tourne */
+  --travail-piste: rgba(34, 211, 238, 0.2);
+  --attente: var(--accent); /* un agent vous attend : pastille + halo, avatar qui sautille */
+  --succes: #7ee787; /* succès, ajouts */
+  --avertissement: #e3b341;
+  --suppression: #ff9d94;
+
+  /* --- Typographie --- */
+  --police-ui: "Inter Variable", Inter, system-ui, sans-serif;
+  --police-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, monospace;
+  --taille-ui: 13px;
+  --interligne-ui: 1.4;
+  --taille-mono-petit: 10.5px; /* raccourcis */
+  --taille-mono: 11.5px; /* branches, chemins */
+  /* Graisses : toujours par ces jetons, jamais en chiffres (les maquettes disent 400, 500,
+     600). WebKitGTK (moteur Skia) applique au masque de chaque glyphe en niveaux de gris une
+     correction gamma sRGB à contraste renforcé (Skia compilé avec SK_GAMMA_APPLY_TO_A8 et
+     ses valeurs par défaut), que Chrome sous Linux n'applique pas à ce masque : à graisse
+     égale, le texte clair sur fond sombre sort plus encré que dans les maquettes (blanc
+     +30 %, gris courant +25 %, gris discret +10 %), le texte sombre sur l'accent 10 % plus
+     maigre. Rien ne se règle hors du moteur (ni fontconfig, ni FreeType,
+     ni -webkit-font-smoothing, ni rendu CPU/GPU) : on corrige sur l'axe wght des polices
+     variables, et comme l'écart dépend de la clarté du texte, la graisse dépend de sa
+     TEINTE : --graisse-<niveau>-<teinte>, niveau normale (400 des maquettes), moyenne
+     (500) ou forte (600), teinte fort (--texte-fort, --texte-terminal), courant (--texte et
+     couleurs sémantiques claires) ou discret (--texte-discret, accent). Une règle qui
+     change la couleur du texte (survol, sélection) change la graisse avec : la chasse ne
+     bouge pas (avances arrondies au pixel), seul l'encrage suit la teinte.
+     Valeurs relevées par balayage de l'axe wght, WebKitGTK contre Chrome, à 11–14 px :
+     encre égale à ±5 %. JetBrains Mono (fûts calés sur le pixel) a ses propres jetons
+     (--graisse-mono-*) ; son blanc à 11,5 px descend à 210, encore net à l'agrandissement. */
+  --graisse-normale-fort: 285;
+  --graisse-normale-courant: 310;
+  --graisse-normale-discret: 355;
+  --graisse-moyenne-fort: 350;
+  --graisse-moyenne-courant: 355;
+  --graisse-moyenne-discret: 440;
+  --graisse-forte-fort: 430;
+  --graisse-forte-courant: 455;
+  --graisse-forte-discret: 555;
+  /* Titres de 16 px et plus (600, blanc) : le gros corps s'épaissit moins. */
+  --graisse-titre: 500;
+  --graisse-mono-normale-fort: 210;
+  --graisse-mono-normale-courant: 215;
+  --graisse-mono-normale-discret: 355;
+  --graisse-mono-moyenne-fort: 380;
+  --graisse-mono-moyenne-courant: 305;
+  --graisse-mono-moyenne-discret: 435;
+  /* Texte sombre sur l'accent : le défaut s'inverse, +90. */
+  --graisse-moyenne-sur-accent: 590;
+  --graisse-forte-sur-accent: 690;
+  /* Sans teinte précisée : texte courant (règles qui n'ont pas encore choisi). */
+  --graisse-normale: var(--graisse-normale-courant);
+  --graisse-moyenne: var(--graisse-moyenne-courant);
+  --graisse-forte: var(--graisse-forte-courant);
+  /* Intertitres : 11 px, 600, majuscules, espacés, couleur discrète. */
+  --intertitre-taille: 11px;
+  --intertitre-graisse: var(--graisse-forte-discret);
+  --intertitre-espacement: 0.06em;
+
+  /* --- Rayons --- */
+  --rayon-controle-petit: 6px;
+  --rayon-controle: 8px;
+  --rayon-controle-grand: 9px;
+  --rayon-infobulle: 10px;
+  --rayon-panneau-petit: 12px;
+  --rayon-panneau: 14px;
+  --rayon-dock: 24px;
+
+  /* --- Ombres --- */
+  --ombre-panneau: 0 30px 80px rgba(0, 0, 0, 0.7);
+  --ombre-dock: 0 18px 50px rgba(0, 0, 0, 0.65);
+  --ombre-infobulle: 0 10px 30px rgba(0, 0, 0, 0.6);
+  --ombre-bulle: 0 18px 50px rgba(0, 0, 0, 0.7);
+
+  /* --- Mouvement --- */
+  --courbe-glisse: cubic-bezier(0.2, 0.9, 0.25, 1); /* ce qui glisse, s'ouvre, se déplace */
+  --courbe-douce: cubic-bezier(0.2, 0.8, 0.2, 1); /* survols, lignes, avatars */
+  --duree-survol: 0.15s;
+  --duree-infobulle: 0.16s;
+  --duree-entree: 0.22s; /* popover, palette */
+  --duree-vue: 0.32s; /* vue plein écran */
+  --duree-glisse: 0.36s; /* indicateur d'espace actif, déplacement de popover */
+  --duree-dock: 0.45s; /* apparition du dock */
+
+  /* --- Géométrie du chrome --- */
+  --hauteur-barre: 46px;
+  --dock-bas: 18px; /* distance du dock au bas de la fenêtre */
+  /* Marge basse de la zone terminal : la dernière ligne ne passe jamais sous le dock. */
+  --reserve-dock: 130px;
+  /* Même marge quand une bulle d'agent est posée au-dessus du dock. */
+  --reserve-dock-bulle: 260px;
+  /* Dock masqué (Ctrl+Maj+B) : simple respiration. */
+  --reserve-sans-dock: 22px;
+  /* Marge droite de la zone terminal quand le panneau du superviseur est ouvert. */
+  --reserve-panneau: min(460px, 50vw);
+  /* Diamètre des avatars du dock, selon la densité réglée (32, 40 ou 48 px). */
+  --dock-avatar: 40px;
+
+  /* --- Calques (z-index, tous dans le même contexte d'empilement : .app) --- */
+  --z-vue: 2; /* Accueil, Mosaïque, Fichiers modifiés, Récap */
+  --z-panneau: 4; /* panneau latéral du superviseur (sous le dock et les bulles) */
+  --z-dock: 5;
+  --z-bulle: 6; /* bulle d'agent ou du superviseur, posée au-dessus du dock */
+  --z-voile: 11; /* fond transparent qui ferme popover et menu au clic */
+  --z-dock-eleve: 12; /* dock pendant un popover/menu : reste cliquable au-dessus du voile */
+  --z-popover: 13; /* popover d'espace, menu d'espace, formulaire de groupe */
+  --z-palette: 20;
+  --z-toast: 30;
+
+  color-scheme: dark;
+}
+
+/* --- Bases --- */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  overflow: hidden;
+  background: var(--fond-app);
+  color: var(--texte);
+  font-family: var(--police-ui);
+  font-size: var(--taille-ui);
+  font-weight: var(--graisse-normale-courant);
+  line-height: var(--interligne-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Texte sélectionné (champ Nom présélectionné, terminal excepté : xterm dessine la sienne)
+   à l'accent, au lieu de la couleur de sélection du thème GTK. */
+::selection {
+  background: rgba(var(--accent-rgb), 0.35);
+  color: var(--texte-fort);
+}
+
+/* Boutons nus : chaque vue pose son propre style, sans hériter du bouton système. */
+button {
+  font: inherit;
+  color: inherit;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Le textarea caché de xterm reçoit le focus du terminal : pas d'anneau sur lui. */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:not(.xterm-helper-textarea):focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
+}
+
+/* Survol générique des contrôles fantômes (classe `hov` des maquettes). */
+.hov {
+  transition:
+    background var(--duree-survol),
+    color var(--duree-survol);
+}
+.hov:hover {
+  background: var(--fond-survol);
+}
+
+/* Ligne de liste (palette, menus) : `!important` comme la maquette, la ligne
+   sélectionnée au clavier pose son fond en style inline. */
+.pi {
+  transition: background 0.12s;
+}
+.pi:hover {
+  background: var(--fond-survol-ligne) !important;
+}
+
+/* --- Keyframes partagés (noms des maquettes) --- */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes halo {
+  0% {
+    box-shadow: 0 0 0 0 currentColor;
+  }
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+@keyframes hop {
+  0%,
+  40%,
+  100% {
+    transform: translateY(0);
+  }
+  12% {
+    transform: translateY(-9px);
+  }
+  24% {
+    transform: translateY(0);
+  }
+  32% {
+    transform: translateY(-4px);
+  }
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+/* inA / inB identiques : alterner le nom rejoue l'entrée sans remonter l'élément. */
+@keyframes inA {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes inB {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes ln {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes pop {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Sans mouvement : les animations se figent sur leur état final, aucune transition.
+   Les états restent lisibles (arc, pastille) : seul le mouvement disparaît. Même règle
+   pour le réglage « Réduire les animations » (data-mouvement posé par useApparence). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
+}
+:root[data-mouvement="reduit"] *,
+:root[data-mouvement="reduit"] *::before,
+:root[data-mouvement="reduit"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition: none !important;
+}
