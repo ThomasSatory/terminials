@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyClaudeSession, tabIdForPty } from "./socketEvents";
+import { applyClaudeSession, estDemandeAutorisation, tabIdForPty } from "./socketEvents";
 import { useWorkspaceStore } from "../store/workspace";
 
 describe("tabIdForPty", () => {
@@ -47,3 +47,17 @@ describe("applyClaudeSession", () => {
     expect(store().workspaces[0].tabs[0].claude).toBeUndefined();
   });
 });
+
+describe("estDemandeAutorisation", () => {
+  it("lit le paramètre attente de la CLI", () => {
+    expect(estDemandeAutorisation({ attente: "autorisation", body: "x" })).toBe(true);
+    expect(estDemandeAutorisation({ attente: "fin", body: "Claude demande l'autorisation d'utiliser Bash" })).toBe(false);
+  });
+
+  it("reconnaît, à défaut, le texte du script de hook", () => {
+    expect(estDemandeAutorisation({ body: "Claude demande l'autorisation d'utiliser Bash" })).toBe(true);
+    expect(estDemandeAutorisation({ body: "Claude attend ta réponse" })).toBe(false);
+    expect(estDemandeAutorisation({})).toBe(false);
+  });
+});
+

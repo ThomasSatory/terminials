@@ -1,37 +1,38 @@
 import { create } from "zustand";
 import { todayString, shiftDay as shiftDayString } from "../lib/dashboardDay";
 
+/** Onglet du récap : la journée résumée, ou la chronologie détaillée. */
+export type OngletRecap = "recap" | "chrono";
+
 export interface DashboardState {
-  /** Overlay du dashboard visible (toggle Ctrl+Shift+H). */
+  /** Récap de la journée visible (bascule Ctrl+Maj+H). */
   open: boolean;
   /** Jour sélectionné ("YYYY-MM-DD", heure locale). */
   day: string;
   mode: "day" | "week";
-  /** Filtre par dossier de workspace (null = tous). */
+  onglet: OngletRecap;
+  /** Espace mis en avant dans le rythme (dossier), null = tous. */
   filterDir: string | null;
+  /** Filtre texte de la chronologie. */
   filterText: string;
-  /** Un résumé LLM est prêt et n'a pas encore été vu (overlay fermé). */
+  /** Un bilan est prêt et n'a pas encore été vu (récap fermé). */
   unreadSummary: boolean;
-  settingsOpen: boolean;
-  /** Volet « détails » (chronologie ou jour par jour) ouvert, touche `d`. */
-  detailsOpen: boolean;
   /** Compteur bumpé pour invalider les hooks de données (dépendance d'effet). */
   refreshTick: number;
-  /** Compteur bumpé par « Générer maintenant » : force la régénération des résumés visibles. */
-  generateTick: number;
   toggle(): void;
   close(): void;
   setDay(d: string): void;
   shiftDay(delta: number): void;
   today(): void;
   setMode(m: "day" | "week"): void;
+  setOnglet(o: OngletRecap): void;
+  /** Mise en avant d'un espace : la même valeur deux fois la lève (bascule). */
   setFilterDir(d: string | null): void;
+  /** Lève la mise en avant sans bascule. */
+  clearFilterDir(): void;
   setFilterText(t: string): void;
   markSummaryReady(): void;
-  setSettingsOpen(b: boolean): void;
-  setDetailsOpen(b: boolean): void;
   bumpRefresh(): void;
-  bumpGenerate(): void;
 }
 
 /** État initial, exporté pour réinitialiser le store entre les tests
@@ -41,24 +42,20 @@ export const initialDashboardState: Pick<
   | "open"
   | "day"
   | "mode"
+  | "onglet"
   | "filterDir"
   | "filterText"
   | "unreadSummary"
-  | "settingsOpen"
-  | "detailsOpen"
   | "refreshTick"
-  | "generateTick"
 > = {
   open: false,
   day: todayString(),
   mode: "day",
+  onglet: "recap",
   filterDir: null,
   filterText: "",
   unreadSummary: false,
-  settingsOpen: false,
-  detailsOpen: false,
   refreshTick: 0,
-  generateTick: 0,
 };
 
 export const useDashboardStore = create<DashboardState>((set, get) => ({
@@ -69,9 +66,8 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       set({ open: false });
       return;
     }
-    // Ouverture : jour remis à aujourd'hui si `day` est dans le futur (overlay
-    // resté fermé après un changement de jour manuel qui a dérivé), sinon on
-    // garde la sélection de l'utilisateur (règle simplifiée du spec).
+    // Ouverture : jour remis à aujourd'hui si `day` est dans le futur (récap resté
+    // fermé après un changement de jour qui a dérivé), sinon on garde la sélection.
     const today = todayString();
     set({
       open: true,
@@ -80,19 +76,18 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     });
   },
   close: () => set({ open: false }),
-  setDay: (d) => set({ day: d }),
+  // Changer de jour garde la mise en avant : le récap la lève (clearFilterDir) une fois
+  // les données du jour arrivées, si l'espace n'y a aucune activité. Le store ne
+  // connaît pas l'activité, il ne peut pas en décider seul.
+  setDay: (d) => set((s) => (s.day === d ? {} : { day: d })),
   // Renommé à l'import (shiftDayString) pour ne pas masquer cette méthode du store.
   shiftDay: (delta) => set((s) => ({ day: shiftDayString(s.day, delta) })),
   today: () => set({ day: todayString() }),
   setMode: (m) => set({ mode: m }),
-  setFilterDir: (d) =>
-    set((s) => ({ filterDir: s.filterDir === d ? null : d })),
+  setOnglet: (o) => set({ onglet: o }),
+  setFilterDir: (d) => set((s) => ({ filterDir: s.filterDir === d ? null : d })),
+  clearFilterDir: () => set({ filterDir: null }),
   setFilterText: (t) => set({ filterText: t }),
-  markSummaryReady: () =>
-    set((s) => (s.open ? {} : { unreadSummary: true })),
-  // Un seul volet à la fois : ouvrir l'un ferme l'autre.
-  setSettingsOpen: (b) => set(b ? { settingsOpen: true, detailsOpen: false } : { settingsOpen: false }),
-  setDetailsOpen: (b) => set(b ? { detailsOpen: true, settingsOpen: false } : { detailsOpen: false }),
+  markSummaryReady: () => set((s) => (s.open ? {} : { unreadSummary: true })),
   bumpRefresh: () => set((s) => ({ refreshTick: s.refreshTick + 1 })),
-  bumpGenerate: () => set((s) => ({ generateTick: s.generateTick + 1 })),
 }));

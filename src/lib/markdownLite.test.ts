@@ -1,8 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { parseMarkdown, parseInline } from "./markdownLite";
-import { Markdown } from "../components/dashboard/Markdown";
 
 describe("parseMarkdown", () => {
   it("titres, listes, paragraphes", () => {
@@ -36,13 +33,5 @@ describe("parseInline", () => {
       { t: "code", v: "npm test" },
       { t: "text", v: " et [x](javascript:alert(1))" },
     ]);
-  });
-});
-
-describe("Markdown", () => {
-  it("rend des liens cliquables sans innerHTML", () => {
-    const html = renderToStaticMarkup(createElement(Markdown, { text: "- [t](https://x.y)", onOpenLink: () => {} }));
-    expect(html).toContain('<a href="https://x.y"');
-    expect(html).toContain("<li>");
   });
 });

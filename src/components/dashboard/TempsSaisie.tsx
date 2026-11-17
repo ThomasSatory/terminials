@@ -1,147 +1,157 @@
-import { formatDuration } from "../../lib/dashboardDay";
 import type { TicketRef } from "../../lib/activityApi";
-import { debutEntree, entreesRestantes, type TempsSaisie as Temps } from "../../lib/tempsSaisie";
+import { entreesRestantes, etatLigne, type TempsSaisie as Temps } from "../../lib/tempsSaisie";
 import type { SaisieTemps } from "../../hooks/useSaisieTemps";
-import { StatutClickup } from "./StatutClickup";
+import { IconeCoche } from "../ui/icons";
+import { Ticket } from "./Ticket";
+import { duree, heure } from "../../lib/recapModele";
 
-function IdUs({ ticket, onOpen }: { ticket: TicketRef; onOpen: (url: string) => void }) {
-  return (
-    <a
-      className="dash-task-id"
-      href={ticket.url}
-      onClick={(e) => {
-        e.preventDefault();
-        onOpen(ticket.url);
-      }}
-    >
-      {ticket.id}
-    </a>
-  );
+interface Ligne {
+  id: string;
+  ticket: TicketRef | null;
+  nom: string;
+  sous: string;
+  propose: number;
 }
 
 /**
- * Bouton de saisie d'une ligne : « Saisir », « +15 min » s'il en reste après une
- * première saisie, « ✓ » quand ClickUp a déjà tout. L'erreur éventuelle est
- * dans l'infobulle et le bouton reste là pour réessayer.
+ * Bouton d'une ligne (colonne de 64 px) : « Saisir », le reste après une saisie
+ * partielle, « saisi » coché quand le suivi du temps a tout. Une erreur garde le
+ * bouton pour réessayer, avec le message en infobulle.
  */
-function BoutonSaisir({
-  id,
-  propose,
-  debut,
-  saisie,
-}: {
-  id: string;
-  propose: number;
-  debut: number;
-  saisie: SaisieTemps;
-}) {
-  const deja = saisie.saisies[id] ?? 0;
-  const reste = propose - deja;
-  if (saisie.enCours.has(id)) {
-    return <span className="dash-saisir dash-saisir-encours">saisie…</span>;
-  }
-  if (reste <= 0) {
+function Action({ ligne, temps, saisie }: { ligne: Ligne; temps: Temps; saisie: SaisieTemps }) {
+  const deja = saisie.saisies[ligne.id] ?? 0;
+  const etat = etatLigne(ligne.propose, deja, saisie.enCours.has(ligne.id));
+  if (etat === "en-cours") return <span className="rc-saisie-encours">Saisie…</span>;
+  const entrees = entreesRestantes(temps, saisie.saisies, ligne.id);
+  if (etat === "saisi" || entrees.length === 0) {
     return (
-      <span className="dash-saisir dash-saisir-ok" data-tip={`${formatDuration(deja)} saisies dans ClickUp`}>
-        ✓
+      <span className="rc-saisi" title="Saisi dans le suivi du temps">
+        <IconeCoche taille={13} epaisseur={1.9} />
+        saisi
       </span>
     );
   }
-  const erreur = saisie.erreurs[id];
+  const erreur = saisie.erreurs[ligne.id];
+  const plages = entrees.map((e) => `${e.debut.slice(11)} ${duree(e.minutes)}`).join(", ");
   return (
     <button
       type="button"
-      className={erreur ? "dash-saisir dash-saisir-erreur" : "dash-saisir"}
-      data-tip={erreur ?? `saisir ${formatDuration(reste)} dans ClickUp`}
-      onClick={() => saisie.saisir([{ taskId: id, debut: debutEntree(debut), minutes: reste }])}
+      className="rc-saisir hov"
+      data-erreur={erreur !== undefined}
+      title={erreur ?? `Créer l’entrée de temps dans le suivi du temps : ${plages}`}
+      onClick={() => saisie.saisir(entrees)}
     >
-      {deja > 0 ? `+${formatDuration(reste)}` : "Saisir"}
+      {etat === "partiel" ? `+${duree(ligne.propose - deja)}` : "Saisir"}
     </button>
   );
-}
-
-/** « terminials 30 min, chat 15 min » : l'activité sans US versée à la réunion. */
-function detailHorsUs(horsUs: Temps["reunion"]["horsUs"]): string {
-  const parts = horsUs.map((h) => `${h.projet} ${formatDuration(Math.round(h.minutes))}`);
-  return parts.length > 0 ? `sans US : ${parts.join(", ")} · + temps non tracé` : "temps non tracé";
 }
 
 /**
- * « Temps à saisir » : la cible du jour (7 h 30, 7 h le vendredi) répartie par
- * US d'après l'activité mesurée, arrondie au quart d'heure ; ce que rien ne
- * rattache à une US va sur l'US de réunion du sprint. Survoler une durée donne
- * le temps mesuré.
- *
- * Avec `saisie` (vue Jour, ClickUp actif), chaque ligne a son bouton pour
- * créer l'entrée de temps dans ClickUp, et « Tout saisir » envoie le reste en
- * un seul appel. Sans (vue Semaine), la liste est en lecture seule.
+ * « Temps à saisir » : la cible de la journée répartie par tâche au prorata du temps
+ * mesuré, au quart d'heure, avec la barre de progression de ce qui est déjà saisi.
+ * Avec `saisie` (vue jour, suivi des tâches actif), chaque ligne a son bouton et
+ * « Tout saisir » envoie le reste en un seul appel ; sans, la liste est en lecture.
  */
 export function TempsSaisie({
   temps,
-  onOpen,
   saisie,
+  note,
+  onOpen,
 }: {
   temps: Temps;
+  saisie: SaisieTemps | null;
+  /** Comment la cible est calculée (sous la liste). */
+  note: string;
   onOpen: (url: string) => void;
-  saisie?: SaisieTemps | null;
 }) {
-  if (temps.jours === 0) {
-    return <p className="dash-tasks-empty">Aucune activité à saisir</p>;
-  }
+  const lignes: Ligne[] = temps.us.map((l) => ({
+    id: l.ticket.id,
+    ticket: l.ticket,
+    nom: l.ticket.name ?? "nom pas encore récupéré",
+    sous:
+      l.projets.length > 0
+        ? `${l.projets.join(", ")} · mesuré ${duree(Math.round(l.minutes / 5) * 5)}`
+        : "aucune tâche travaillée : réparti sur les tâches ouvertes",
+    propose: l.saisie,
+  }));
   const { reunion } = temps;
-  return (
-    <>
-      <ul className="dash-temps">
-        {temps.us.map((l) => (
-          <li key={l.cle} className="dash-temps-ligne">
-            <IdUs ticket={l.ticket} onOpen={onOpen} />
-            <span className="dash-temps-nom">{l.ticket.name ?? "nom pas encore récupéré de ClickUp"}</span>
-            <StatutClickup status={l.ticket.status} />
-            <span
-              className="dash-temps-duree"
-              data-tip={`mesuré : ${formatDuration(Math.round(l.minutes))} · ${l.projets.join(", ")}`}
-            >
-              {formatDuration(l.saisie)}
-            </span>
-            {saisie && <BoutonSaisir id={l.ticket.id} propose={l.saisie} debut={l.debut} saisie={saisie} />}
-          </li>
-        ))}
-        {reunion.saisie > 0 && (
-          <li className="dash-temps-ligne dash-temps-reunion">
-            {reunion.ticket ? (
-              <IdUs ticket={reunion.ticket} onOpen={onOpen} />
-            ) : (
-              <span className="dash-task-id dash-task-id-absent">?</span>
-            )}
-            <span className="dash-temps-nom">
-              {reunion.ticket
-                ? (reunion.ticket.name ?? "Réunions")
-                : "US de réunion introuvable — à renseigner dans les réglages"}
-            </span>
-            <span className="dash-temps-duree" data-tip={detailHorsUs(reunion.horsUs)}>
-              {formatDuration(reunion.saisie)}
-            </span>
-            {saisie && reunion.ticket && (
-              <BoutonSaisir id={reunion.ticket.id} propose={reunion.saisie} debut={reunion.debut} saisie={saisie} />
-            )}
-          </li>
-        )}
-      </ul>
-      <p className="dash-temps-total">
-        Total{temps.jours > 1 ? ` sur ${temps.jours} jours` : ""} <span>{formatDuration(temps.total)}</span>
-        {saisie && <ToutSaisir temps={temps} saisie={saisie} />}
-      </p>
-    </>
-  );
-}
+  if (reunion.saisie > 0) {
+    lignes.push({
+      id: reunion.ticket?.id ?? "",
+      ticket: reunion.ticket,
+      nom: reunion.ticket ? (reunion.ticket.name ?? "Réunions") : "Tâche de réunion introuvable : à renseigner dans les réglages",
+      sous:
+        reunion.reunions.length > 0
+          ? reunion.reunions.map((r) => `${r.titre} ${heure(r.debut)}–${heure(r.fin)}`).join(", ")
+          : "temps sans tâche",
+      propose: reunion.saisie,
+    });
+  }
 
-/** « Tout saisir » : le reste de chaque ligne, en un seul appel. */
-function ToutSaisir({ temps, saisie }: { temps: Temps; saisie: SaisieTemps }) {
-  const entrees = entreesRestantes(temps, saisie.saisies).filter((e) => !saisie.enCours.has(e.taskId));
-  if (entrees.length === 0) return <span className="dash-saisir dash-saisir-place" />;
+  const deja = (l: Ligne) => Math.min(l.propose, saisie?.saisies[l.id] ?? 0);
+  const saisi = lignes.reduce((s, l) => s + deja(l), 0);
+  const toutSaisi = saisie !== null && lignes.length > 0 && lignes.every((l) => deja(l) >= l.propose);
+  const restantes = saisie ? entreesRestantes(temps, saisie.saisies).filter((e) => !saisie.enCours.has(e.taskId)) : [];
+  const pourcent = temps.total > 0 ? Math.min(100, (saisi / temps.total) * 100) : 0;
+
   return (
-    <button type="button" className="dash-saisir" onClick={() => saisie.saisir(entrees)}>
-      Tout saisir
-    </button>
+    <section aria-label="Temps à saisir" className="rc-panneau rc-carte">
+      <div className="rc-carte-tete">
+        <h2 className="rc-intertitre">Temps à saisir</h2>
+        <span className="rc-carte-total">
+          {saisie ? (
+            <>
+              <span data-succes={toutSaisi} className="rc-saisi-total">
+                {duree(saisi)}
+              </span>{" "}
+              / {duree(temps.total)}
+            </>
+          ) : (
+            duree(temps.total)
+          )}
+        </span>
+      </div>
+      {saisie && (
+        <div aria-hidden="true" className="rc-progression">
+          <div style={{ width: `${pourcent.toFixed(1)}%` }} />
+        </div>
+      )}
+      {temps.jours === 0 ? (
+        <p className="rc-vide rc-vide-carte">Aucune activité à saisir.</p>
+      ) : (
+        <ul className="rc-saisie-liste">
+          {lignes.map((l) => (
+            <li key={l.id || "reunion"} className="rc-saisie-ligne">
+              <div className="rc-saisie-texte">
+                <div className="rc-saisie-haut">
+                  {l.ticket ? (
+                    <Ticket id={l.ticket.id} url={l.ticket.url} titre={l.ticket.name} onOpen={onOpen} />
+                  ) : (
+                    <span className="rc-tk">?</span>
+                  )}
+                  <span className="rc-saisie-nom">{l.nom}</span>
+                </div>
+                <span className="rc-saisie-sous">{l.sous}</span>
+              </div>
+              <span className="rc-saisie-duree">{duree(l.propose)}</span>
+              {saisie && (
+                <span className="rc-saisie-action">
+                  {l.ticket && <Action ligne={l} temps={temps} saisie={saisie} />}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="rc-saisie-pied">
+        <span className="rc-saisie-note">{note}</span>
+        {saisie && !toutSaisi && restantes.length > 0 && (
+          <button type="button" className="rc-tout-saisir hov" onClick={() => saisie.saisir(restantes)}>
+            Tout saisir
+          </button>
+        )}
+        {toutSaisi && <span className="rc-journee-saisie">Journée saisie</span>}
+      </div>
+    </section>
   );
 }

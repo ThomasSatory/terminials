@@ -4,16 +4,25 @@ import { basename, defaultGroupColor } from "../lib/palette";
 import { stripTrailingSlash } from "../lib/paths";
 import { moveItem } from "../lib/reorder";
 import { parseClaudeSession, type ClaudeSession } from "../lib/claudeResume";
+import { DUREE_TERMINE_MS } from "../lib/etatAgent";
 
 export interface Notification {
   title: string;
   body: string;
+  /** Raison donnée par le hook (`notify --attente`) : « fin » pour une fin de tour, dont
+      le corps fait le pied « Terminé : … » de la tuile de la mosaïque. */
+  attente?: string;
 }
 
 /** Onglet terminal d'un workspace. `title` est poussé par xterm (OSC 0/2), jamais persisté. */
 export interface Tab {
   id: string;
   title?: string;
+  /** Rang de création dans l'espace (1, 2…), pour le nom par défaut « Terminal N » : il
+      suit l'onglet quand on le déplace, au lieu de suivre sa position (après un glisser,
+      on croirait sinon que rien n'a bougé). Non persisté : la restauration renumérote dans
+      l'ordre sauvegardé. Absent (onglet construit à la main) : le rang tient lieu. */
+  numero?: number;
   /** Dossier de départ, absent : celui du workspace. Persisté seulement via `claude`. */
   cwd?: string;
   /** Session Claude Code en cours dans l'onglet (hook SessionStart), persistée : elle est
@@ -43,7 +52,13 @@ export interface Workspace {
   /** Couleur propre ; absente, la ligne prend celle du groupe. */
   color?: string;
   branch?: string;
+  /** La sonde branche a répondu au moins une fois : sans branche, l'espace est alors
+      vraiment « hors dépôt » (avant, on ne sait pas encore : rien n'est affiché). */
+  gitConnu?: boolean;
   dirty?: boolean;
+  /** Nombre de fichiers modifiés lu par la dernière sonde dirty (ou la vue des fichiers
+      modifiés) : le compteur du bouton ± sans `git status` supplémentaire. */
+  nbModifies?: number;
   ports: number[];
   /** Fallback niveau workspace : notification sans onglet identifiable. */
   unread: boolean;
@@ -79,15 +94,14 @@ interface WorkspaceState {
   activeId: string | null;
   /** tabId -> id du PTY backend (pour interroger les ports, cibler un terminal). */
   tabPtys: Record<string, number>;
+  /** PTY où un agent travaille (hooks Claude Code UserPromptSubmit/PostToolUse), jamais
+      persisté. Clé PTY et non onglet : un onglet respawné repart idle de lui-même. */
+  busyPtys: Record<number, true>;
+  /** Onglets dont l'agent vient de finir son tour (fin de travail signalée par un hook, sans
+      demande en attente) : état « terminé » de la mosaïque, du dock et de la palette. Jamais
+      persisté ; s'efface quand on consulte l'espace ou l'onglet, ou quand l'agent repart. */
+  tabsTermines: Record<string, true>;
   toast: string | null;
-  /** Sidebar visible (toggle Ctrl+Shift+B). */
-  sidebarVisible: boolean;
-  /** Workspace dont la Sidebar doit ouvrir l'édition inline nom+dossier (null = aucune demande). */
-  renameRequestId: string | null;
-  /** Demande d'ouverture du formulaire de création dans la Sidebar (consommée par elle). */
-  newWorkspaceRequested: boolean;
-  /** Demande d'ouverture du formulaire de création de groupe (consommée par la Sidebar). */
-  newGroupRequested: boolean;
   /** `name` explicite (sinon basename(cwd)) : « ~ » pour un espace sur $HOME.
       `groupId` explicite (création depuis l'en-tête d'un groupe) ; omis, le
       workspace naît dans le groupe du workspace actif. */
@@ -96,6 +110,12 @@ interface WorkspaceState {
       incrémenté, placée juste sous l'original et activée. Les PTY ne se clonent
       pas : la copie démarre des shells neufs. null si `wsId` est inconnu. */
   duplicateWorkspace: (wsId: string) => string | null;
+  /** Rouvre un espace fermé (liste « Reprendre » de l'accueil) avec ses onglets et la
+      session Claude de chacun, reprise au lancement du shell comme au démarrage de l'app.
+      Rangé comme un nouvel espace (groupe de l'espace actif) ; renvoie son id. */
+  /** Rouvre un espace fermé. `groupe` : son groupe à la fermeture (retrouvé par son nom,
+      recréé s'il a disparu) ; null : hors groupe ; absent : le groupe de l'espace actif. */
+  restaurerEspace: (e: Omit<SavedWorkspace, "groupIndex"> & { groupe?: { name: string; color: string } | null }) => string;
   /** Nouvel onglet, rendu actif. Jamais refusé. */
   addTab: (wsId: string, cwd?: string) => string;
   /** Ferme un onglet ; fermer le DERNIER ferme le workspace (comme closeWorkspace). */
@@ -122,21 +142,27 @@ interface WorkspaceState {
   /** Change le dossier d'un workspace : ses onglets respawnent (TerminalPane dépend de cwd). */
   setCwd: (wsId: string, cwd: string) => void;
   setNotification: (wsId: string, n: Notification, tabId?: string) => void;
-  setActive: (wsId: string) => void;
-  /** Sonde branche (gratuite, cadence fixe) — indépendante de `setDirty`. */
-  setBranch: (wsId: string, branch: string) => void;
-  /** Sonde dirty (chère, cadence adaptative) — indépendante de `setBranch`. */
-  setDirty: (wsId: string, dirty: boolean) => void;
+  /** Rend l'espace actif. `garderDiff` : la vue des fichiers modifiés, ouverte sur
+      l'espace quitté, passe à l'espace choisi (clic d'avatar pendant la relecture,
+      maquette Diff/09) au lieu de céder la place à son terminal. */
+  setActive: (wsId: string, opts?: { garderDiff?: boolean }) => void;
+  /** Sonde branche (gratuite, cadence fixe) — indépendante de `setDirty`. null : hors
+      dépôt ou HEAD détachée, la dernière branche connue est gardée. */
+  setBranch: (wsId: string, branch: string | null) => void;
+  /** Sonde dirty (chère, cadence adaptative) — indépendante de `setBranch`. `nbModifies`
+      (facultatif) : nombre de fichiers modifiés lu par la même sonde. */
+  setDirty: (wsId: string, dirty: boolean, nbModifies?: number) => void;
   setPorts: (wsId: string, ports: number[]) => void;
   setStatus: (wsId: string, status: { label: string; color?: string }) => void;
   setProgress: (wsId: string, progress: { value: number; label?: string }) => void;
   setTabPty: (tabId: string, ptyId: number) => void;
+  /** No-op si l'état ne change pas : PostToolUse le rappelle à chaque outil. `finDeTour`
+      (défaut vrai) : un passage au repos signalé par l'agent lui-même (hook Stop ou
+      Notification) marque l'onglet « terminé » ; une interruption ou un garde-fou de
+      silence passe `false` (rien n'a été « terminé »). */
+  setPtyBusy: (ptyId: number, busy: boolean, finDeTour?: boolean) => void;
   removeTabPty: (tabId: string) => void;
   toggleDiff: (wsId: string) => void;
-  toggleSidebar: () => void;
-  requestRename: (wsId: string | null) => void;
-  requestNewWorkspace: (requested: boolean) => void;
-  requestNewGroup: (requested: boolean) => void;
   // --- groupes ---
   addGroup: (name: string, color?: string) => string;
   renameGroup: (groupId: string, name: string) => void;
@@ -154,6 +180,12 @@ interface WorkspaceState {
 let counter = 0;
 let colorIndex = 0;
 const uid = (prefix: string) => `${prefix}:${counter++}`;
+
+/** Numéro du prochain onglet d'un espace : un de plus que le plus grand en place (les
+    numéros des onglets fermés ne reviennent pas tant qu'un plus grand existe). */
+export function numeroOngletSuivant(tabs: readonly Tab[]): number {
+  return tabs.reduce((max, t, i) => Math.max(max, t.numero ?? i + 1), 0) + 1;
+}
 
 // --- Persistance localStorage v5 (I/O hors réducteurs ; no-op si localStorage absent,
 //     cas des tests node). Les clés antérieures sont lues une fois, dans l'ordre
@@ -255,6 +287,19 @@ export function setLastFolder(path: string): void {
   }
 }
 
+/** `termines` sans les onglets donnés ; même référence si aucun n'y figurait (pas de
+    réallocation, donc pas de rendu pour rien). */
+/** Expiration de l'état « terminé » de chaque onglet (maquette Mosaique : « terminé, à
+    l'instant » pendant 6 s, puis retour au repos). Reprogrammée à chaque fin de tour. */
+const expirationsTermine = new Map<string, ReturnType<typeof setTimeout>>();
+
+function sansOnglets(termines: Record<string, true>, tabs: readonly { id: string }[]): Record<string, true> {
+  if (!tabs.some((t) => t.id in termines)) return termines;
+  const suite = { ...termines };
+  for (const t of tabs) delete suite[t.id];
+  return suite;
+}
+
 /** Égalité de deux listes de ports (déjà triées côté Rust). */
 function sameNumbers(a: number[], b: number[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
@@ -338,8 +383,8 @@ function newWorkspace(
   const tabs = Array.from({ length: tabCount }, (_, i): Tab => {
     const claude = claudeSessions[i];
     return claude
-      ? { id: uid("tab"), cwd: claude.cwd, claude, pendingResume: claude.id }
-      : { id: uid("tab") };
+      ? { id: uid("tab"), numero: i + 1, cwd: claude.cwd, claude, pendingResume: claude.id }
+      : { id: uid("tab"), numero: i + 1 };
   });
   return {
     id: uid("ws"),
@@ -375,16 +420,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     // démontage des TerminalPane du workspace (cleanup closePty).
     const tabPtys = { ...s.tabPtys };
     for (const t of closed.tabs) delete tabPtys[t.id];
-    // Si le workspace fermé était actif : voisin précédent dans l'ordre VISIBLE,
-    // sinon suivant, sinon rien.
+    const tabsTermines = sansOnglets(s.tabsTermines, closed.tabs);
+    // Si le workspace fermé était actif : son SUIVANT dans l'ordre du dock, sinon le
+    // précédent, sinon rien (maquette Creation : celui qui prend sa place sous le pointeur).
     let activeId = s.activeId;
     if (s.activeId === wsId) {
       const before = sidebarOrder(s.workspaces, s.groups);
       const idx = before.findIndex((w) => w.id === wsId);
       const after = sidebarOrder(workspaces, s.groups);
-      activeId = after[idx - 1]?.id ?? after[idx]?.id ?? null;
+      activeId = after[idx]?.id ?? after[idx - 1]?.id ?? null;
     }
-    return { workspaces, tabPtys, activeId };
+    // Fermer le dernier membre d'un groupe retire le groupe : le dock ne dessine pas
+    // d'étiquette vide (aucune maquette n'en montre). Les espaces récents retiennent leur
+    // groupe, recréé à la réouverture.
+    const groupId = closed.groupId;
+    const groups =
+      groupId !== null && !workspaces.some((w) => w.groupId === groupId)
+        ? s.groups.filter((g) => g.id !== groupId)
+        : s.groups;
+    return { workspaces, tabPtys, activeId, tabsTermines, groups };
   };
 
   return {
@@ -392,11 +446,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     groups: [],
     activeId: null,
     tabPtys: {},
+    busyPtys: {},
+    tabsTermines: {},
     toast: null,
-    sidebarVisible: true,
-    renameRequestId: null,
-    newWorkspaceRequested: false,
-    newGroupRequested: false,
     addWorkspace: (cwd, name, groupId) => {
       const s = get();
       // Groupe demandé (création depuis l'en-tête d'un groupe) s'il existe encore ;
@@ -415,6 +467,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       persistNow();
       return ws.id;
     },
+    restaurerEspace: (e) => {
+      const s = get();
+      let groupId: string | null = s.workspaces.find((w) => w.id === s.activeId)?.groupId ?? null;
+      if (e.groupe === null) groupId = null;
+      else if (e.groupe) {
+        const nom = e.groupe.name;
+        groupId = s.groups.find((g) => g.name === nom)?.id ?? get().addGroup(nom, e.groupe.color);
+      }
+      // Au moins un onglet, et un par session à reprendre.
+      const tabCount = Math.max(1, Math.floor(e.tabCount) || 1, e.claudeSessions?.length ?? 0);
+      const ws = newWorkspace(e.cwd, e.name, tabCount, groupId, e.color, e.claudeSessions);
+      set((st) => ({
+        workspaces: insertAmong(st.workspaces, ws, ws.groupId, Number.MAX_SAFE_INTEGER),
+        activeId: ws.id,
+      }));
+      persistNow();
+      return ws.id;
+    },
     duplicateWorkspace: (wsId) => {
       const s = get();
       const src = s.workspaces.find((w) => w.id === wsId);
@@ -424,14 +494,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const name = nextCopyName(src.name, s.workspaces.map((w) => w.name));
       // Un onglet neuf : un PTY ne se clone pas, et l'historique du shell d'origine
       // n'appartient pas à la copie.
-      const copy = newWorkspace(src.cwd, name, 1, src.groupId, src.color);
+      const copy: Workspace = {
+        ...newWorkspace(src.cwd, name, 1, src.groupId, src.color),
+        // Même dossier : la copie montre d'emblée la branche et l'état git de l'original,
+        // au lieu de « hors dépôt » le temps que la sonde passe.
+        ...(src.branch !== undefined ? { branch: src.branch } : {}),
+        ...(src.gitConnu ? { gitConnu: true } : {}),
+        ...(src.dirty !== undefined ? { dirty: src.dirty } : {}),
+        ...(src.nbModifies !== undefined ? { nbModifies: src.nbModifies } : {}),
+      };
       const index = members(s.workspaces, src.groupId).indexOf(src) + 1;
       set((st) => ({ workspaces: insertAmong(st.workspaces, copy, copy.groupId, index), activeId: copy.id }));
       persistNow();
       return copy.id;
     },
     addTab: (wsId, cwd) => {
-      const tab: Tab = cwd ? { id: uid("tab"), cwd } : { id: uid("tab") };
+      const ws = get().workspaces.find((w) => w.id === wsId);
+      const numero = numeroOngletSuivant(ws?.tabs ?? []);
+      const tab: Tab = cwd ? { id: uid("tab"), numero, cwd } : { id: uid("tab"), numero };
       updateWs(wsId, (w) => ({ ...w, tabs: [...w.tabs, tab], activeTabId: tab.id }));
       persistNow();
       return tab.id;
@@ -445,6 +525,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         persistNow();
         return;
       }
+      set((s) => ({ tabsTermines: sansOnglets(s.tabsTermines, [{ id: tabId }]) }));
       updateWs(wsId, (w) => {
         const idx = w.tabs.findIndex((t) => t.id === tabId);
         const tabs = w.tabs.filter((t) => t.id !== tabId);
@@ -486,6 +567,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     },
     setActiveTab: (wsId, tabId) =>
       set((s) => ({
+        // Consulter l'onglet, c'est avoir vu que son agent a fini.
+        tabsTermines: sansOnglets(s.tabsTermines, [{ id: tabId }]),
+        busyPtys: sansTravailConsulte(s, s.workspaces.find((w) => w.id === wsId)?.unreadTabs.includes(tabId) ? [tabId] : []),
         workspaces: s.workspaces.map((w) =>
           w.id === wsId && w.tabs.some((t) => t.id === tabId)
             ? {
@@ -570,26 +654,38 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
           return { ...w, unread: true, lastNotification: n };
         }),
       })),
-    setActive: (wsId) =>
-      set((s) => ({
-        activeId: wsId,
-        // Activer le workspace lit le fallback ET l'onglet affiché ; les autres
-        // onglets gardent leur point tant qu'on ne les a pas ouverts.
-        workspaces: s.workspaces.map((w) =>
-          w.id === wsId
-            ? // Arriver sur un workspace montre son TERMINAL : un diff resté ouvert
-              // dessus se referme. Exception, le workspace DÉJÀ actif : le clic sur la
-              // ligne méta fait setActive + toggleDiff, refermer ici annulerait la
-              // fermeture par second clic.
-              {
-                ...w,
-                unread: false,
-                unreadTabs: w.unreadTabs.filter((t) => t !== w.activeTabId),
-                diffOpen: s.activeId === wsId ? w.diffOpen : false,
-              }
-            : w,
-        ),
-      })),
+    setActive: (wsId, opts) =>
+      set((s) => {
+        const quitte = s.activeId !== wsId ? s.workspaces.find((w) => w.id === s.activeId) : undefined;
+        const transfert = opts?.garderDiff === true && quitte?.diffOpen === true;
+        const cible = s.workspaces.find((w) => w.id === wsId);
+        const consulte = cible?.activeTabId && cible.unreadTabs.includes(cible.activeTabId) ? [cible.activeTabId] : [];
+        return {
+          activeId: wsId,
+          busyPtys: sansTravailConsulte(s, consulte),
+          // Consulter l'espace efface l'état « terminé » de tous ses onglets : c'est une
+          // information (l'agent a fini), pas une demande qui attendrait l'onglet précis.
+          tabsTermines: sansOnglets(s.tabsTermines, s.workspaces.find((w) => w.id === wsId)?.tabs ?? []),
+          // Activer le workspace lit le fallback ET l'onglet affiché ; les autres
+          // onglets gardent leur point tant qu'on ne les a pas ouverts.
+          workspaces: s.workspaces.map((w) =>
+            w.id === wsId
+              ? // Arriver sur un workspace montre son TERMINAL : un diff resté ouvert
+                // dessus se referme. Exception, le workspace DÉJÀ actif : le clic sur la
+                // ligne méta fait setActive + toggleDiff, refermer ici annulerait la
+                // fermeture par second clic.
+                {
+                  ...w,
+                  unread: false,
+                  unreadTabs: w.unreadTabs.filter((t) => t !== w.activeTabId),
+                  diffOpen: transfert || (s.activeId === wsId ? w.diffOpen : false),
+                }
+              : transfert && w.id === quitte?.id
+                ? { ...w, diffOpen: false }
+                : w,
+          ),
+        };
+      }),
     // Les deux sondes git sont séparées : la branche est gratuite et rafraîchie à
     // cadence fixe, le dirty coûte des secondes et se raréfie tout seul. Les fusionner
     // reviendrait à payer le dirty pour afficher la branche (cf. lib/pollSchedule.ts).
@@ -599,14 +695,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         // Sonde périodique : rendre l'état INCHANGÉ quand rien n'a bougé, sinon
         // chaque tick réalloue `workspaces` → Zustand notifie → re-render de tout
         // l'arbre pour rien.
-        if (!w || w.branch === branch) return s;
-        return { workspaces: s.workspaces.map((x) => (x.id === wsId ? { ...x, branch } : x)) };
+        if (!w || ((branch === null || w.branch === branch) && w.gitConnu)) return s;
+        return {
+          workspaces: s.workspaces.map((x) =>
+            x.id === wsId ? (branch === null ? { ...x, gitConnu: true } : { ...x, branch, gitConnu: true }) : x,
+          ),
+        };
       }),
-    setDirty: (wsId, dirty) =>
+    setDirty: (wsId, dirty, nbModifies) =>
       set((s) => {
         const w = s.workspaces.find((x) => x.id === wsId);
-        if (!w || w.dirty === dirty) return s;
-        return { workspaces: s.workspaces.map((x) => (x.id === wsId ? { ...x, dirty } : x)) };
+        // Compte absent : on garde le dernier connu, sauf repassé « propre » (plus rien à compter).
+        const nb = nbModifies ?? (dirty ? w?.nbModifies : undefined);
+        if (!w || (w.dirty === dirty && w.nbModifies === nb)) return s;
+        return {
+          workspaces: s.workspaces.map((x) => {
+            if (x.id !== wsId) return x;
+            const { nbModifies: _ancien, ...reste } = x;
+            return nb === undefined ? { ...reste, dirty } : { ...reste, dirty, nbModifies: nb };
+          }),
+        };
       }),
     setPorts: (wsId, ports) =>
       set((s) => {
@@ -619,16 +727,42 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     setStatus: (wsId, status) => updateWs(wsId, (w) => ({ ...w, status })),
     setProgress: (wsId, progress) => updateWs(wsId, (w) => ({ ...w, progress })),
     setTabPty: (tabId, ptyId) => set((s) => ({ tabPtys: { ...s.tabPtys, [tabId]: ptyId } })),
+    setPtyBusy: (ptyId, busy, finDeTour = true) =>
+      set((s) => {
+        if (busy === (ptyId in s.busyPtys)) return s;
+        const tabId = Object.keys(s.tabPtys).find((t) => s.tabPtys[t] === ptyId);
+        if (busy) {
+          // L'agent repart : l'onglet n'est plus « terminé », il travaille.
+          const tabsTermines = tabId ? sansOnglets(s.tabsTermines, [{ id: tabId }]) : s.tabsTermines;
+          return { busyPtys: { ...s.busyPtys, [ptyId]: true }, tabsTermines };
+        }
+        const { [ptyId]: _idle, ...rest } = s.busyPtys;
+        // Fin de tour : l'onglet passe « terminé ». Une demande en attente (notification
+        // non lue) l'emporte de toute façon à l'affichage (lib/etatAgent).
+        if (!finDeTour || !tabId) return { busyPtys: rest };
+        clearTimeout(expirationsTermine.get(tabId));
+        expirationsTermine.set(
+          tabId,
+          setTimeout(() => {
+            expirationsTermine.delete(tabId);
+            set((x) => (tabId in x.tabsTermines ? { tabsTermines: sansOnglets(x.tabsTermines, [{ id: tabId }]) } : x));
+          }, DUREE_TERMINE_MS),
+        );
+        return { busyPtys: rest, tabsTermines: { ...s.tabsTermines, [tabId]: true } };
+      }),
     removeTabPty: (tabId) =>
       set((s) => {
-        const { [tabId]: _removed, ...rest } = s.tabPtys;
-        return { tabPtys: rest };
+        const { [tabId]: removed, ...rest } = s.tabPtys;
+        // Un PTY fermé (onglet fermé, respawn) ne travaille plus, et son shell neuf n'a
+        // rien « terminé ».
+        const tabsTermines = sansOnglets(s.tabsTermines, [{ id: tabId }]);
+        if (removed === undefined || !(removed in s.busyPtys)) return { tabPtys: rest, tabsTermines };
+        const { [removed]: _idle, ...busyPtys } = s.busyPtys;
+        return { tabPtys: rest, busyPtys, tabsTermines };
       }),
     toggleDiff: (wsId) => updateWs(wsId, (w) => ({ ...w, diffOpen: !w.diffOpen })),
-    toggleSidebar: () => set((s) => ({ sidebarVisible: !s.sidebarVisible })),
-    requestRename: (wsId) => set({ renameRequestId: wsId }),
-    requestNewWorkspace: (requested) => set({ newWorkspaceRequested: requested }),
-    requestNewGroup: (requested) => set({ newGroupRequested: requested }),
+    // Les demandes d'interface (popover de création, de modification, formulaire de
+    // groupe, dock visible) vivent dans le store ui : celui-ci ne porte que les données.
     // --- groupes ---
     addGroup: (name, color) => {
       const id = uid("grp");
@@ -710,11 +844,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         groups: [],
         activeId: null,
         tabPtys: {},
+        busyPtys: {},
+        tabsTermines: {},
         toast: null,
-        sidebarVisible: true,
-        renameRequestId: null,
-        newWorkspaceRequested: false,
-        newGroupRequested: false,
       });
     },
   };
@@ -728,4 +860,39 @@ export function hasAttention(w: Workspace): boolean {
 /** Vrai si un workspace du groupe réclame l'attention (halo sur l'en-tête replié). */
 export function groupHasAttention(workspaces: Workspace[], groupId: string): boolean {
   return workspaces.some((w) => w.groupId === groupId && hasAttention(w));
+}
+
+/**
+ * Occupation des onglets dont on vient de consulter l'attente (question, autorisation) :
+ * l'agent attend la réponse affichée, il ne travaille pas. Sans cela l'avatar retrouvait
+ * l'arc « au travail » sous la question (maquette Accueil/09 : aucun arc). Le hook suivant
+ * (PostToolUse une fois la réponse donnée) rallume l'arc. Même objet rendu si rien ne change.
+ */
+function sansTravailConsulte(s: Pick<WorkspaceState, "tabPtys" | "busyPtys">, tabIds: readonly string[]): Record<number, true> {
+  let busyPtys = s.busyPtys;
+  for (const tabId of tabIds) {
+    const pty = s.tabPtys[tabId];
+    if (pty === undefined || !(pty in busyPtys)) continue;
+    const { [pty]: _attend, ...reste } = busyPtys;
+    busyPtys = reste;
+  }
+  return busyPtys;
+}
+
+type BusyState = Pick<WorkspaceState, "tabPtys" | "busyPtys">;
+
+/** Vrai si un agent travaille dans l'onglet `tabId`. */
+export function isTabBusy(s: BusyState, tabId: string): boolean {
+  const pty = s.tabPtys[tabId];
+  return pty !== undefined && pty in s.busyPtys;
+}
+
+/** Vrai si un agent travaille dans au moins un onglet du workspace. */
+export function isWorkspaceBusy(s: BusyState, w: Workspace): boolean {
+  return w.tabs.some((t) => isTabBusy(s, t.id));
+}
+
+/** Vrai si un workspace du groupe travaille (arc sur l'en-tête replié). */
+export function groupHasBusy(s: BusyState, workspaces: Workspace[], groupId: string): boolean {
+  return workspaces.some((w) => w.groupId === groupId && isWorkspaceBusy(s, w));
 }

@@ -4,7 +4,8 @@
  * puces (une par projet, cf. `friseBilan.ts`). Fonction pure, tolérante aux
  * écarts du LLM : un `#` en tête est retiré, une réponse qui commence
  * directement par une liste n'a pas de titre, et les puces au-delà de
- * `maxItems` sont coupées — le prompt en demande cinq au plus, on en tolère six.
+ * `maxItems` sont coupées (par section « ## projet » en v4) — le prompt en demande cinq
+ * au plus, on en tolère six.
  */
 
 const TITRE_MD_RE = /^#{1,3}\s+/;
@@ -27,11 +28,16 @@ function nettoyerTitre(ligne: string): string {
     .trim();
 }
 
-/** Coupe une suite de lignes-items à `max` items, en gardant tout le reste. */
+/**
+ * Coupe une suite de lignes-items à `max` items, en gardant tout le reste. Le plafond vaut
+ * PAR SECTION : le bilan v4 range ses puces sous un intertitre « ## projet » par projet,
+ * plusieurs chacun ; un plafond global perdait sans message les projets suivants.
+ */
 function limiterPuces(lignes: string[], max: number): string[] {
   const out: string[] = [];
   let items = 0;
   for (const l of lignes) {
+    if (TITRE_MD_RE.test(l.trim())) items = 0;
     if (ITEM_RE.test(l.trim())) {
       items += 1;
       if (items > max) continue;

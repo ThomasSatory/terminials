@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use crate::activity::collectors::git;
 use crate::activity::digest::{self, Digest};
 use crate::activity::providers::llm::{LlmError, LlmProvider, LlmRequest};
-use crate::activity::settings::LlmSettings;
 use crate::activity::store::{Store, StoredSummary};
 use crate::activity::{workspace_name, OpenTask, Summary};
 
@@ -86,11 +85,20 @@ pub fn range_for(day: NaiveDate, kind: SummaryKind, tz: &impl TimeZone) -> (i64,
     match kind {
         SummaryKind::Semaine => {
             let monday = lundi_de(day);
-            (local_epoch(monday, tz), local_epoch(monday + Duration::days(5), tz))
+            (
+                local_epoch(monday, tz),
+                local_epoch(monday + Duration::days(5), tz),
+            )
         }
         SummaryKind::Bilan | SummaryKind::ResteAFaire => match day.weekday() {
-            Weekday::Fri => (local_epoch(day, tz), local_epoch(day + Duration::days(3), tz)),
-            _ => (local_epoch(day, tz), local_epoch(day + Duration::days(1), tz)),
+            Weekday::Fri => (
+                local_epoch(day, tz),
+                local_epoch(day + Duration::days(3), tz),
+            ),
+            _ => (
+                local_epoch(day, tz),
+                local_epoch(day + Duration::days(1), tz),
+            ),
         },
     }
 }
@@ -141,7 +149,11 @@ fn format_tasks(tasks: &[OpenTask], offset: chrono::FixedOffset) -> String {
     if tasks.is_empty() {
         return "- (aucune)".to_string();
     }
-    tasks.iter().map(|t| format_task(t, offset)).collect::<Vec<_>>().join("\n")
+    tasks
+        .iter()
+        .map(|t| format_task(t, offset))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Une tâche en une ligne. L'échéance est rendue au **jour local** (`offset`) :
@@ -151,7 +163,10 @@ fn format_task(t: &OpenTask, offset: chrono::FixedOffset) -> String {
     let mut s = format!("- [{}]({}) {} — {}", t.id, t.url, t.name, t.status);
     if let Some(due) = t.due_date {
         if let Some(dt) = chrono::DateTime::from_timestamp(due, 0) {
-            s.push_str(&format!(" — échéance {}", dt.with_timezone(&offset).format("%Y-%m-%d")));
+            s.push_str(&format!(
+                " — échéance {}",
+                dt.with_timezone(&offset).format("%Y-%m-%d")
+            ));
         }
     }
     if let Some(p) = &t.priority {
@@ -178,7 +193,9 @@ fn format_unmerged(unmerged: &[(String, Vec<String>)]) -> String {
 /// ambiguës (retour DST, on garde la première occurrence) et inexistantes
 /// (avance de bascule DST, on prend la première heure valide qui suit).
 fn local_epoch(date: NaiveDate, tz: &impl TimeZone) -> i64 {
-    let naive = date.and_hms_opt(0, 0, 0).expect("00:00:00 est toujours une heure valide");
+    let naive = date
+        .and_hms_opt(0, 0, 0)
+        .expect("00:00:00 est toujours une heure valide");
     match tz.from_local_datetime(&naive) {
         chrono::LocalResult::Single(dt) => dt.timestamp(),
         chrono::LocalResult::Ambiguous(dt, _) => dt.timestamp(),
@@ -208,7 +225,12 @@ fn db_err(e: rusqlite::Error) -> LlmError {
 }
 
 /// Digest d'une plage `[from, to)`, tickets cités résolus depuis le store.
-fn range_digest(store: &Store, from: i64, to: i64, offset: chrono::FixedOffset) -> Result<Digest, LlmError> {
+fn range_digest(
+    store: &Store,
+    from: i64,
+    to: i64,
+    offset: chrono::FixedOffset,
+) -> Result<Digest, LlmError> {
     let events = store.query(from, to, None).map_err(db_err)?;
     let ticket_ids = store.ticket_ids_in_range(from, to).map_err(db_err)?;
     let tickets = store.tickets_by_ids(&ticket_ids).map_err(db_err)?;
@@ -235,12 +257,19 @@ fn week_digest(store: &Store, day: NaiveDate, tz: &impl TimeZone) -> Result<Dige
     }
     let text = sections.join("\n");
     let hash = sha256_hex(&text);
-    Ok(Digest { text, hash, event_count })
+    Ok(Digest {
+        text,
+        hash,
+        event_count,
+    })
 }
 
 fn sha256_hex(text: &str) -> String {
     use sha2::{Digest as _, Sha256};
-    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Jour servant de clé de cache pour `(day, kind)`. Le contenu d'une synthèse
@@ -249,7 +278,11 @@ fn sha256_hex(text: &str) -> String {
 /// naviguer du lundi au mardi en mode Semaine créait une seconde ligne au contenu
 /// identique, au prix d'un appel LLM complet.
 pub fn cache_day_for(day: NaiveDate, kind: SummaryKind) -> String {
-    let d = if kind == SummaryKind::Semaine { lundi_de(day) } else { day };
+    let d = if kind == SummaryKind::Semaine {
+        lundi_de(day)
+    } else {
+        day
+    };
     d.format("%Y-%m-%d").to_string()
 }
 
@@ -278,7 +311,6 @@ pub enum Preparation {
 /// dès le retour.
 pub fn prepare(
     store: &Store,
-    settings: &LlmSettings,
     day: &str,
     kind: SummaryKind,
     force: bool,
@@ -298,9 +330,8 @@ pub fn prepare(
         (range_digest(store, from, to, offset)?, offset)
     };
 
-    // Le nom du fournisseur est déduit des réglages : `prepare` ne reçoit pas de
-    // `LlmProvider` puisqu'elle n'en appelle aucun.
-    let model = crate::activity::providers::llm::provider_name(settings);
+    // `prepare` ne reçoit pas de `LlmProvider` puisqu'elle n'en appelle aucun.
+    let model = crate::activity::providers::llm::provider_name();
 
     if digest.text.is_empty() {
         return Ok(Preparation::Cached(Summary {
@@ -313,7 +344,10 @@ pub fn prepare(
     }
 
     if !force {
-        if let Some(stored) = store.get_summary(&cache_day, kind.as_str()).map_err(db_err)? {
+        if let Some(stored) = store
+            .get_summary(&cache_day, kind.as_str())
+            .map_err(db_err)?
+        {
             if stored.digest_hash == cache_hash(&digest.hash) {
                 return Ok(Preparation::Cached(Summary {
                     day: cache_day,
@@ -348,15 +382,16 @@ pub fn prepare(
     } else {
         (Vec::new(), Vec::new())
     };
-    let inputs = SummaryInputs { open_tasks: &open_tasks, unmerged: &unmerged };
+    let inputs = SummaryInputs {
+        open_tasks: &open_tasks,
+        unmerged: &unmerged,
+    };
 
     let request = LlmRequest {
         system: system_prompt(kind).to_string(),
         // En-tête daté de la clé de cache : le prompt d'une synthèse hebdomadaire
         // est ainsi le même quel que soit le jour de la semaine demandé.
         user: user_prompt(kind, &cache_day, &digest.text, &inputs, offset),
-        max_tokens: settings.max_tokens,
-        temperature: settings.temperature,
     };
 
     Ok(Preparation::ToGenerate(ToGenerate {
@@ -389,7 +424,13 @@ pub fn finish(
         })
         .map_err(db_err)?;
 
-    Ok(Summary { day: prep.cache_day.clone(), text, model, generated_at: now, cached: false })
+    Ok(Summary {
+        day: prep.cache_day.clone(),
+        text,
+        model,
+        generated_at: now,
+        cached: false,
+    })
 }
 
 /// Génère (ou récupère du cache) la synthèse `kind` du jour `day` : composition de
@@ -405,14 +446,13 @@ pub fn finish(
 pub fn generate(
     store: &Store,
     provider: &dyn LlmProvider,
-    settings: &LlmSettings,
     day: &str,
     kind: SummaryKind,
     force: bool,
     now: i64,
     tz: &impl TimeZone,
 ) -> Result<Summary, LlmError> {
-    match prepare(store, settings, day, kind, force, now, tz)? {
+    match prepare(store, day, kind, force, now, tz)? {
         Preparation::Cached(summary) => Ok(summary),
         Preparation::ToGenerate(prep) => {
             let text = provider.complete(&prep.request)?;
@@ -446,10 +486,26 @@ mod tests {
 
     #[test]
     fn dernier_jour_ouvre() {
-        assert_eq!(last_working_day(d("2026-09-21")), d("2026-09-18"), "lundi → vendredi");
-        assert_eq!(last_working_day(d("2026-09-22")), d("2026-09-21"), "mardi → lundi");
-        assert_eq!(last_working_day(d("2026-09-19")), d("2026-09-18"), "samedi → vendredi");
-        assert_eq!(last_working_day(d("2026-09-20")), d("2026-09-18"), "dimanche → vendredi");
+        assert_eq!(
+            last_working_day(d("2026-09-21")),
+            d("2026-09-18"),
+            "lundi → vendredi"
+        );
+        assert_eq!(
+            last_working_day(d("2026-09-22")),
+            d("2026-09-21"),
+            "mardi → lundi"
+        );
+        assert_eq!(
+            last_working_day(d("2026-09-19")),
+            d("2026-09-18"),
+            "samedi → vendredi"
+        );
+        assert_eq!(
+            last_working_day(d("2026-09-20")),
+            d("2026-09-18"),
+            "dimanche → vendredi"
+        );
     }
 
     #[test]
@@ -464,14 +520,20 @@ mod tests {
         let (f, t) = range_for(d("2026-09-21"), SummaryKind::Bilan, &utc);
         assert_eq!(
             (f, t),
-            (local_epoch(d("2026-09-21"), &utc), local_epoch(d("2026-09-22"), &utc)),
+            (
+                local_epoch(d("2026-09-21"), &utc),
+                local_epoch(d("2026-09-22"), &utc)
+            ),
             "le bilan d'un lundi couvre le lundi, du lundi 00:00 au mardi 00:00"
         );
         assert_eq!(t - f, 86400);
         let (f, t) = range_for(d("2026-09-16"), SummaryKind::Semaine, &utc); // mercredi → lundi 14 00:00 → samedi 19 00:00
         assert_eq!(f, 1_789_344_000);
         assert_eq!(t - f, 5 * 86400);
-        assert_eq!(day_range("2026-09-16", &utc), Some((1_789_516_800, 1_789_603_200)));
+        assert_eq!(
+            day_range("2026-09-16", &utc),
+            Some((1_789_516_800, 1_789_603_200))
+        );
         assert_eq!(day_range("n'importe", &utc), None);
     }
 
@@ -490,13 +552,33 @@ mod tests {
                 source_ref: "1".into(),
             }])
             .unwrap();
-        let fake = Fake { calls: Default::default(), reply: "## Bilan\n- c".into() };
-        let s = LlmSettings::default();
-        let a = generate(&store, &fake, &s, "2026-09-16", SummaryKind::Bilan, false, 1_789_600_000, &chrono::Utc).unwrap();
+        let fake = Fake {
+            calls: Default::default(),
+            reply: "## Bilan\n- c".into(),
+        };
+        let a = generate(
+            &store,
+            &fake,
+            "2026-09-16",
+            SummaryKind::Bilan,
+            false,
+            1_789_600_000,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert_eq!(a.text, "## Bilan\n- c");
         assert!(!a.cached);
         assert_eq!(a.model, "fake");
-        let b = generate(&store, &fake, &s, "2026-09-16", SummaryKind::Bilan, false, 1_789_600_001, &chrono::Utc).unwrap();
+        let b = generate(
+            &store,
+            &fake,
+            "2026-09-16",
+            SummaryKind::Bilan,
+            false,
+            1_789_600_001,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert!(b.cached);
         assert_eq!(*fake.calls.lock().unwrap(), 1);
         store
@@ -511,10 +593,28 @@ mod tests {
                 source_ref: "2".into(),
             }])
             .unwrap();
-        let c = generate(&store, &fake, &s, "2026-09-16", SummaryKind::Bilan, false, 1_789_600_002, &chrono::Utc).unwrap();
+        let c = generate(
+            &store,
+            &fake,
+            "2026-09-16",
+            SummaryKind::Bilan,
+            false,
+            1_789_600_002,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert!(!c.cached, "nouveau digest → régénéré");
         assert_eq!(*fake.calls.lock().unwrap(), 2);
-        generate(&store, &fake, &s, "2026-09-16", SummaryKind::Bilan, true, 1_789_600_003, &chrono::Utc).unwrap();
+        generate(
+            &store,
+            &fake,
+            "2026-09-16",
+            SummaryKind::Bilan,
+            true,
+            1_789_600_003,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert_eq!(*fake.calls.lock().unwrap(), 3);
     }
 
@@ -547,8 +647,20 @@ mod tests {
                 generated_at: 1,
             })
             .unwrap();
-        let fake = Fake { calls: Default::default(), reply: "Titre\n\n- c".into() };
-        let r = generate(&store, &fake, &LlmSettings::default(), "2026-09-16", SummaryKind::Bilan, false, 1_789_600_000, &chrono::Utc).unwrap();
+        let fake = Fake {
+            calls: Default::default(),
+            reply: "Titre\n\n- c".into(),
+        };
+        let r = generate(
+            &store,
+            &fake,
+            "2026-09-16",
+            SummaryKind::Bilan,
+            false,
+            1_789_600_000,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert!(!r.cached, "ancien prompt → régénéré");
         assert_eq!(r.text, "Titre\n\n- c");
         assert_eq!(*fake.calls.lock().unwrap(), 1);
@@ -573,8 +685,20 @@ mod tests {
     #[test]
     fn digest_vide_sans_appel_llm() {
         let store = Store::open_in_memory().unwrap();
-        let fake = Fake { calls: Default::default(), reply: "x".into() };
-        let r = generate(&store, &fake, &LlmSettings::default(), "2026-09-16", SummaryKind::Bilan, false, 1, &chrono::Utc).unwrap();
+        let fake = Fake {
+            calls: Default::default(),
+            reply: "x".into(),
+        };
+        let r = generate(
+            &store,
+            &fake,
+            "2026-09-16",
+            SummaryKind::Bilan,
+            false,
+            1,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert_eq!(r.text, EMPTY_TEXT);
         assert_eq!(*fake.calls.lock().unwrap(), 0);
     }
@@ -587,7 +711,7 @@ mod tests {
                 "f".into()
             }
             fn complete(&self, _: &LlmRequest) -> Result<String, LlmError> {
-                Err(LlmError::Unauthorized)
+                Err(LlmError::Timeout)
             }
         }
         let store = Store::open_in_memory().unwrap();
@@ -603,20 +727,59 @@ mod tests {
                 source_ref: "1".into(),
             }])
             .unwrap();
-        let fake = Fake { calls: Default::default(), reply: "ok".into() };
-        generate(&store, &fake, &LlmSettings::default(), "2026-09-16", SummaryKind::Bilan, false, 1, &chrono::Utc).unwrap();
+        let fake = Fake {
+            calls: Default::default(),
+            reply: "ok".into(),
+        };
+        generate(
+            &store,
+            &fake,
+            "2026-09-16",
+            SummaryKind::Bilan,
+            false,
+            1,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert_eq!(
-            generate(&store, &Fail, &LlmSettings::default(), "2026-09-16", SummaryKind::Bilan, true, 2, &chrono::Utc),
-            Err(LlmError::Unauthorized)
+            generate(
+                &store,
+                &Fail,
+                "2026-09-16",
+                SummaryKind::Bilan,
+                true,
+                2,
+                &chrono::Utc
+            ),
+            Err(LlmError::Timeout)
         );
-        assert_eq!(store.get_summary("2026-09-16", "bilan").unwrap().unwrap().text, "ok");
+        assert_eq!(
+            store
+                .get_summary("2026-09-16", "bilan")
+                .unwrap()
+                .unwrap()
+                .text,
+            "ok"
+        );
     }
 
     #[test]
     fn lundi_de_ramene_au_lundi_de_la_semaine() {
-        assert_eq!(lundi_de(d("2026-09-21")), d("2026-09-21"), "un lundi reste lui-même");
-        assert_eq!(lundi_de(d("2026-09-16")), d("2026-09-14"), "mercredi → lundi précédent");
-        assert_eq!(lundi_de(d("2026-09-20")), d("2026-09-14"), "dimanche → lundi de la même semaine");
+        assert_eq!(
+            lundi_de(d("2026-09-21")),
+            d("2026-09-21"),
+            "un lundi reste lui-même"
+        );
+        assert_eq!(
+            lundi_de(d("2026-09-16")),
+            d("2026-09-14"),
+            "mercredi → lundi précédent"
+        );
+        assert_eq!(
+            lundi_de(d("2026-09-20")),
+            d("2026-09-14"),
+            "dimanche → lundi de la même semaine"
+        );
     }
 
     #[test]
@@ -634,18 +797,57 @@ mod tests {
                 source_ref: "1".into(),
             }])
             .unwrap();
-        let fake = Fake { calls: Default::default(), reply: "## Semaine".into() };
-        let s = LlmSettings::default();
-        let mardi = generate(&store, &fake, &s, "2026-09-15", SummaryKind::Semaine, false, 10, &chrono::Utc).unwrap();
+        let fake = Fake {
+            calls: Default::default(),
+            reply: "## Semaine".into(),
+        };
+        let mardi = generate(
+            &store,
+            &fake,
+            "2026-09-15",
+            SummaryKind::Semaine,
+            false,
+            10,
+            &chrono::Utc,
+        )
+        .unwrap();
         assert!(!mardi.cached);
-        assert_eq!(mardi.day, "2026-09-14", "la synthèse hebdomadaire est datée du lundi");
+        assert_eq!(
+            mardi.day, "2026-09-14",
+            "la synthèse hebdomadaire est datée du lundi"
+        );
         // Jour différent, même semaine : la ligne de cache doit être réutilisée.
-        let jeudi = generate(&store, &fake, &s, "2026-09-17", SummaryKind::Semaine, false, 11, &chrono::Utc).unwrap();
-        assert!(jeudi.cached, "un autre jour de la même semaine réutilise la synthèse");
+        let jeudi = generate(
+            &store,
+            &fake,
+            "2026-09-17",
+            SummaryKind::Semaine,
+            false,
+            11,
+            &chrono::Utc,
+        )
+        .unwrap();
+        assert!(
+            jeudi.cached,
+            "un autre jour de la même semaine réutilise la synthèse"
+        );
         assert_eq!(jeudi.day, "2026-09-14");
-        assert_eq!(*fake.calls.lock().unwrap(), 1, "un seul appel LLM pour toute la semaine");
-        assert!(store.get_summary("2026-09-14", "semaine").unwrap().is_some());
-        assert!(store.get_summary("2026-09-17", "semaine").unwrap().is_none(), "aucune ligne parasite");
+        assert_eq!(
+            *fake.calls.lock().unwrap(),
+            1,
+            "un seul appel LLM pour toute la semaine"
+        );
+        assert!(store
+            .get_summary("2026-09-14", "semaine")
+            .unwrap()
+            .is_some());
+        assert!(
+            store
+                .get_summary("2026-09-17", "semaine")
+                .unwrap()
+                .is_none(),
+            "aucune ligne parasite"
+        );
     }
 
     #[test]
@@ -666,7 +868,10 @@ mod tests {
             SummaryKind::ResteAFaire,
             "2026-09-21",
             "## digest",
-            &SummaryInputs { open_tasks: &tasks, unmerged: &[] },
+            &SummaryInputs {
+                open_tasks: &tasks,
+                unmerged: &[],
+            },
             tokyo,
         );
         assert!(p.contains("échéance 2026-09-22"), "prompt produit : {p}");
@@ -688,7 +893,10 @@ mod tests {
             SummaryKind::ResteAFaire,
             "2026-09-16",
             "## digest",
-            &SummaryInputs { open_tasks: &tasks, unmerged: &unmerged },
+            &SummaryInputs {
+                open_tasks: &tasks,
+                unmerged: &unmerged,
+            },
             chrono::FixedOffset::east_opt(0).unwrap(),
         );
         assert!(p.contains("[86c1abc](https://app.clickup.com/t/86c1abc) Dashboard — en cours — échéance 2026-09-21 — priorité high — Sprint 42"));

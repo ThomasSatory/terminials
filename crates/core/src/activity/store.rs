@@ -6,10 +6,11 @@ use std::path::Path;
 use chrono::{FixedOffset, Timelike};
 use rusqlite::{params, params_from_iter, Connection, OptionalExtension};
 
+use crate::activity::reunions::Reunion;
 use crate::activity::tickets::{ticket_url, us_id};
 use crate::activity::{
-    ActivityEvent, ActivityStats, CorrectionBranche, DayCounts, EventKind, HourCounts, KindCounts, NewEvent,
-    OpenTask, TicketInfo, TicketRef, Totals, WorkspaceCount,
+    ActivityEvent, ActivityStats, CorrectionBranche, DayCounts, EventKind, HourCounts, KindCounts,
+    NewEvent, OpenTask, TicketInfo, TicketRef, Totals, WorkspaceCount,
 };
 
 pub type StoreResult<T> = Result<T, rusqlite::Error>;
@@ -45,6 +46,13 @@ const SCHEMA_V2: &str = "
 CREATE TABLE saisies(day TEXT NOT NULL, task_id TEXT NOT NULL, minutes INTEGER NOT NULL,
         updated_at INTEGER NOT NULL, PRIMARY KEY(day, task_id));
 PRAGMA user_version = 2;
+";
+
+/// v3 : réunions relevées dans l'agenda Outlook.
+const SCHEMA_V3: &str = "
+CREATE TABLE reunions(id TEXT PRIMARY KEY, titre TEXT NOT NULL, debut INTEGER NOT NULL, fin INTEGER NOT NULL);
+CREATE INDEX reunions_debut ON reunions(debut);
+PRAGMA user_version = 3;
 ";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -90,11 +98,20 @@ impl Store {
         if v < 2 {
             self.conn.execute_batch(SCHEMA_V2)?;
         }
+        if v < 3 {
+            self.conn.execute_batch(SCHEMA_V3)?;
+        }
         Ok(())
     }
 
     /// Ajoute `minutes` au temps déjà saisi pour (`day`, `task_id`).
-    pub fn ajouter_saisie(&self, day: &str, task_id: &str, minutes: u32, now: i64) -> StoreResult<()> {
+    pub fn ajouter_saisie(
+        &self,
+        day: &str,
+        task_id: &str,
+        minutes: u32,
+        now: i64,
+    ) -> StoreResult<()> {
         self.conn.execute(
             "INSERT INTO saisies (day, task_id, minutes, updated_at) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(day, task_id) DO UPDATE SET minutes = minutes + excluded.minutes,
@@ -106,8 +123,48 @@ impl Store {
 
     /// Temps déjà saisi ce jour-là, par US.
     pub fn saisies_du_jour(&self, day: &str) -> StoreResult<BTreeMap<String, u32>> {
-        let mut stmt = self.conn.prepare("SELECT task_id, minutes FROM saisies WHERE day = ?1")?;
-        let rows = stmt.query_map(params![day], |r| Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?)))?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT task_id, minutes FROM saisies WHERE day = ?1")?;
+        let rows = stmt.query_map(params![day], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, u32>(1)?))
+        })?;
+        rows.collect()
+    }
+
+    /// Remplace les réunions qui commencent dans [from, to) par `reunions` : ce
+    /// que l'agenda ne liste plus (annulé, déplacé) disparaît.
+    pub fn remplacer_reunions(&self, from: i64, to: i64, reunions: &[Reunion]) -> StoreResult<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "DELETE FROM reunions WHERE debut >= ?1 AND debut < ?2",
+            params![from, to],
+        )?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO reunions (id, titre, debut, fin) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(id) DO UPDATE SET titre = excluded.titre, debut = excluded.debut, fin = excluded.fin",
+            )?;
+            for r in reunions {
+                stmt.execute(params![r.id, r.titre, r.debut, r.fin])?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// Réunions qui commencent dans [from, to), par ordre de début.
+    pub fn reunions(&self, from: i64, to: i64) -> StoreResult<Vec<Reunion>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, titre, debut, fin FROM reunions WHERE debut >= ?1 AND debut < ?2 ORDER BY debut")?;
+        let rows = stmt.query_map(params![from, to], |r| {
+            Ok(Reunion {
+                id: r.get(0)?,
+                titre: r.get(1)?,
+                debut: r.get(2)?,
+                fin: r.get(3)?,
+            })
+        })?;
         rows.collect()
     }
 
@@ -171,7 +228,9 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare("SELECT source_ref FROM events WHERE kind = ?1")?;
-        let rows = stmt.query_map(params![EventKind::ClaudeSession.as_str()], |r| r.get::<_, String>(0))?;
+        let rows = stmt.query_map(params![EventKind::ClaudeSession.as_str()], |r| {
+            r.get::<_, String>(0)
+        })?;
         rows.collect()
     }
 
@@ -220,8 +279,16 @@ impl Store {
         to: i64,
         workspace_dir: Option<&str>,
     ) -> StoreResult<Vec<ActivityEvent>> {
-        let mut rows: Vec<(i64, i64, EventKind, Option<String>, Option<String>, String, Option<String>, String)> =
-            Vec::new();
+        let mut rows: Vec<(
+            i64,
+            i64,
+            EventKind,
+            Option<String>,
+            Option<String>,
+            String,
+            Option<String>,
+            String,
+        )> = Vec::new();
         {
             let sql = if workspace_dir.is_some() {
                 "SELECT id, ts, kind, workspace_dir, branch, title, body, ticket_ids FROM events
@@ -362,24 +429,28 @@ impl Store {
             }
             let r = match trouve {
                 Some((tid, name, status, url)) => TicketRef {
-                    url: if url.is_empty() { ticket_url(&tid) } else { url },
+                    url: if url.is_empty() {
+                        ticket_url(&tid)
+                    } else {
+                        url
+                    },
                     id: tid,
                     name,
                     status,
                 },
-                None => TicketRef { id: id.clone(), name: None, status: None, url: ticket_url(id) },
+                None => TicketRef {
+                    id: id.clone(),
+                    name: None,
+                    status: None,
+                    url: ticket_url(id),
+                },
             };
             out.insert(id.clone(), r);
         }
         Ok(out)
     }
 
-    pub fn stats(
-        &self,
-        from: i64,
-        to: i64,
-        offset: FixedOffset,
-    ) -> StoreResult<ActivityStats> {
+    pub fn stats(&self, from: i64, to: i64, offset: FixedOffset) -> StoreResult<ActivityStats> {
         let events = self.query(from, to, None)?;
 
         fn bump(c: &mut KindCounts, kind: EventKind) {
@@ -427,7 +498,10 @@ impl Store {
         }
 
         let totals = Totals {
-            commits: events.iter().filter(|e| e.kind == EventKind::Commit).count() as u32,
+            commits: events
+                .iter()
+                .filter(|e| e.kind == EventKind::Commit)
+                .count() as u32,
             prompts: events
                 .iter()
                 .filter(|e| e.kind == EventKind::ClaudePrompt)
@@ -541,7 +615,14 @@ impl Store {
                 digest_hash = excluded.digest_hash,
                 text = excluded.text,
                 generated_at = excluded.generated_at",
-            params![s.day, s.kind, s.model, s.digest_hash, s.text, s.generated_at],
+            params![
+                s.day,
+                s.kind,
+                s.model,
+                s.digest_hash,
+                s.text,
+                s.generated_at
+            ],
         )?;
         Ok(())
     }
@@ -710,7 +791,10 @@ impl Store {
             "SELECT DISTINCT branch, workspace_dir FROM events WHERE ts >= ?1 AND ts < ?2",
         )?;
         let rows = stmt.query_map(params![from, to], |r| {
-            Ok((r.get::<_, Option<String>>(0)?, r.get::<_, Option<String>>(1)?))
+            Ok((
+                r.get::<_, Option<String>>(0)?,
+                r.get::<_, Option<String>>(1)?,
+            ))
         })?;
         let mut ids = BTreeSet::new();
         for row in rows {
@@ -754,8 +838,16 @@ mod tests {
     use chrono::FixedOffset;
 
     fn ev(ts: i64, kind: EventKind, dir: &str, title: &str, sref: &str) -> NewEvent {
-        NewEvent { ts, kind, workspace_dir: Some(dir.into()), branch: Some("master".into()), title: title.into(),
-                   body: None, ticket_ids: vec![], source_ref: sref.into() }
+        NewEvent {
+            ts,
+            kind,
+            workspace_dir: Some(dir.into()),
+            branch: Some("master".into()),
+            title: title.into(),
+            body: None,
+            ticket_ids: vec![],
+            source_ref: sref.into(),
+        }
     }
     const T0: i64 = 1_758_067_200; // 2025-09-17 00:00:00 UTC (peu importe : les tests utilisent offset 0)
 
@@ -769,9 +861,16 @@ mod tests {
         let mut bonne = e.clone();
         bonne.branch = Some("feat/ABC-2-x".into());
         bonne.ticket_ids = vec!["ABC-2".into()];
-        let corr = CorrectionBranche { event: bonne.clone(), branche_figee: e.branch.clone() };
+        let corr = CorrectionBranche {
+            event: bonne.clone(),
+            branche_figee: e.branch.clone(),
+        };
         assert_eq!(s.corriger_prompts(std::slice::from_ref(&corr)).unwrap(), 1);
-        assert_eq!(s.corriger_prompts(std::slice::from_ref(&corr)).unwrap(), 0, "déjà corrigé");
+        assert_eq!(
+            s.corriger_prompts(std::slice::from_ref(&corr)).unwrap(),
+            0,
+            "déjà corrigé"
+        );
         let lu = &s.query(T0, T0 + 86400, None).unwrap()[0];
         assert_eq!(lu.branch.as_deref(), Some("feat/ABC-2-x"));
         assert_eq!(lu.ticket_ids, vec!["ABC-2".to_string()]);
@@ -779,9 +878,15 @@ mod tests {
         // différente de la branche figée, n'est pas réécrite.
         let mut autre = bonne;
         autre.branch = Some("feat/ABC-3-x".into());
-        let corr = CorrectionBranche { event: autre, branche_figee: e.branch };
+        let corr = CorrectionBranche {
+            event: autre,
+            branche_figee: e.branch,
+        };
         assert_eq!(s.corriger_prompts(&[corr]).unwrap(), 0);
-        assert_eq!(s.query(T0, T0 + 86400, None).unwrap()[0].branch.as_deref(), Some("feat/ABC-2-x"));
+        assert_eq!(
+            s.query(T0, T0 + 86400, None).unwrap()[0].branch.as_deref(),
+            Some("feat/ABC-2-x")
+        );
     }
 
     #[test]
@@ -799,7 +904,8 @@ mod tests {
             ev(T0, EventKind::Commit, "/a", "a", "1"),
             ev(T0 + 86400, EventKind::Commit, "/a", "b", "2"),
             ev(T0 + 10, EventKind::ShellCmd, "/b", "ls", "3"),
-        ]).unwrap();
+        ])
+        .unwrap();
         assert_eq!(s.query(T0, T0 + 86400, None).unwrap().len(), 2);
         assert_eq!(s.query(T0, T0 + 86400, Some("/b")).unwrap()[0].title, "ls");
     }
@@ -809,8 +915,19 @@ mod tests {
         let mut e = ev(T0, EventKind::Commit, "/a", "fix", "1");
         e.ticket_ids = vec!["abc1234".into(), "zzz9999".into()];
         s.insert_events(&[e]).unwrap();
-        s.upsert_tickets(&[TicketInfo { id: "abc1234".into(), name: "Dashboard".into(), status: "en cours".into(),
-            status_type: "custom".into(), url: "https://app.clickup.com/t/abc1234".into(), due_date: None, list_name: None }], T0).unwrap();
+        s.upsert_tickets(
+            &[TicketInfo {
+                id: "abc1234".into(),
+                name: "Dashboard".into(),
+                status: "en cours".into(),
+                status_type: "custom".into(),
+                url: "https://app.clickup.com/t/abc1234".into(),
+                due_date: None,
+                list_name: None,
+            }],
+            T0,
+        )
+        .unwrap();
         let got = s.query(T0, T0 + 1, None).unwrap();
         assert_eq!(got[0].tickets[0].name.as_deref(), Some("Dashboard"));
         assert_eq!(got[0].tickets[1].url, "https://app.clickup.com/t/zzz9999");
@@ -828,16 +945,31 @@ mod tests {
             due_date: None,
             list_name: None,
         };
-        s.upsert_tickets(&[info("ABC-1234", "Faire X"), info("ABC-6352", "XYZ-10690 | Notifs")], 1).unwrap();
+        s.upsert_tickets(
+            &[
+                info("ABC-1234", "Faire X"),
+                info("ABC-6352", "XYZ-10690 | Notifs"),
+            ],
+            1,
+        )
+        .unwrap();
         let mut a = ev(10, EventKind::ClaudePrompt, "/p/app", "p", "1");
         a.branch = Some("ABC-1234-faire-x-from-2.0.back".into());
         let mut b = ev(11, EventKind::ClaudePrompt, "/p/app", "p", "2");
         b.branch = Some("XYZ-10690-notifs".into());
         let mut c = ev(12, EventKind::ClaudePrompt, "/p/app", "p", "3");
         c.branch = Some("ABC-9999-inconnue".into());
-        s.insert_events(&[a, b, c, ev(13, EventKind::Commit, "/p/app", "c", "4")]).unwrap();
+        s.insert_events(&[a, b, c, ev(13, EventKind::Commit, "/p/app", "c", "4")])
+            .unwrap();
         let q = s.query(0, 100, None).unwrap();
-        let us: Vec<_> = q.iter().map(|e| e.us_ticket.as_ref().map(|t| (t.id.as_str(), t.name.as_deref()))).collect();
+        let us: Vec<_> = q
+            .iter()
+            .map(|e| {
+                e.us_ticket
+                    .as_ref()
+                    .map(|t| (t.id.as_str(), t.name.as_deref()))
+            })
+            .collect();
         assert_eq!(
             us,
             vec![
@@ -870,7 +1002,32 @@ mod tests {
         let mut b = ev(11, EventKind::ClaudePrompt, "/p/app", "p", "2");
         b.branch = Some("XYZ-10690-notifs".into());
         s.insert_events(&[a, b]).unwrap();
-        assert_eq!(s.stale_ticket_ids(0, 100, 500, 30).unwrap(), vec!["ABC-1234".to_string()]);
+        assert_eq!(
+            s.stale_ticket_ids(0, 100, 500, 30).unwrap(),
+            vec!["ABC-1234".to_string()]
+        );
+    }
+
+    #[test]
+    fn reunions_remplacees_dans_la_fenetre() {
+        let s = Store::open_in_memory().unwrap();
+        let r = |id: &str, debut: i64| Reunion {
+            id: id.into(),
+            titre: "Point".into(),
+            debut,
+            fin: debut + 900,
+        };
+        s.remplacer_reunions(0, 1000, &[r("d1", 100), r("d2", 50), r("d3", 500)])
+            .unwrap();
+        s.remplacer_reunions(80, 1000, &[r("d1", 120)]).unwrap();
+        let lues = s.reunions(0, 1000).unwrap();
+        assert_eq!(
+            lues.iter()
+                .map(|r| (r.id.as_str(), r.debut))
+                .collect::<Vec<_>>(),
+            vec![("d2", 50), ("d1", 120)]
+        );
+        assert!(s.reunions(200, 1000).unwrap().is_empty());
     }
 
     #[test]
@@ -879,7 +1036,10 @@ mod tests {
         s.ajouter_saisie("2026-09-28", "ABC-1", 30, 1).unwrap();
         s.ajouter_saisie("2026-09-28", "ABC-1", 15, 2).unwrap();
         s.ajouter_saisie("2026-09-29", "ABC-1", 60, 3).unwrap();
-        assert_eq!(s.saisies_du_jour("2026-09-28").unwrap().get("ABC-1"), Some(&45));
+        assert_eq!(
+            s.saisies_du_jour("2026-09-28").unwrap().get("ABC-1"),
+            Some(&45)
+        );
         assert!(s.saisies_du_jour("2026-09-27").unwrap().is_empty());
     }
 
@@ -888,11 +1048,32 @@ mod tests {
         let s = Store::open_in_memory().unwrap();
         s.insert_events(&[
             ev(T0 + 9 * 3600, EventKind::Commit, "/home/t/dev/a", "c", "1"),
-            ev(T0 + 9 * 3600 + 60, EventKind::ShellCmd, "/home/t/dev/a", "npm test", "2"),
-            ev(T0 + 14 * 3600, EventKind::ClaudePrompt, "/home/t/dev/b", "p", "3"),
-            ev(T0 + 14 * 3600 + 20 * 60, EventKind::ClaudePrompt, "/home/t/dev/b", "p2", "4"),
-        ]).unwrap();
-        let st = s.stats(T0, T0 + 86400, FixedOffset::east_opt(0).unwrap()).unwrap();
+            ev(
+                T0 + 9 * 3600 + 60,
+                EventKind::ShellCmd,
+                "/home/t/dev/a",
+                "npm test",
+                "2",
+            ),
+            ev(
+                T0 + 14 * 3600,
+                EventKind::ClaudePrompt,
+                "/home/t/dev/b",
+                "p",
+                "3",
+            ),
+            ev(
+                T0 + 14 * 3600 + 20 * 60,
+                EventKind::ClaudePrompt,
+                "/home/t/dev/b",
+                "p2",
+                "4",
+            ),
+        ])
+        .unwrap();
+        let st = s
+            .stats(T0, T0 + 86400, FixedOffset::east_opt(0).unwrap())
+            .unwrap();
         assert_eq!(st.by_hour.len(), 24);
         assert_eq!(st.by_hour[9].counts.commit, 1);
         assert_eq!(st.by_hour[9].counts.shell_cmd, 1);
@@ -910,8 +1091,11 @@ mod tests {
     #[test]
     fn stats_decale_l_heure_selon_l_offset() {
         let s = Store::open_in_memory().unwrap();
-        s.insert_events(&[ev(T0 + 9 * 3600, EventKind::Commit, "/a", "c", "1")]).unwrap();
-        let st = s.stats(T0, T0 + 86400, FixedOffset::east_opt(7200).unwrap()).unwrap();
+        s.insert_events(&[ev(T0 + 9 * 3600, EventKind::Commit, "/a", "c", "1")])
+            .unwrap();
+        let st = s
+            .stats(T0, T0 + 86400, FixedOffset::east_opt(7200).unwrap())
+            .unwrap();
         assert_eq!(st.by_hour[11].counts.commit, 1);
     }
     #[test]
@@ -924,10 +1108,25 @@ mod tests {
         s.set_cursor("git", "42").unwrap();
         s.set_cursor("git", "43").unwrap();
         assert_eq!(s.get_cursor("git").unwrap().as_deref(), Some("43"));
-        let sum = StoredSummary { day: "2026-09-16".into(), kind: "bilan".into(), model: "m".into(), digest_hash: "h".into(), text: "t".into(), generated_at: 5 };
+        let sum = StoredSummary {
+            day: "2026-09-16".into(),
+            kind: "bilan".into(),
+            model: "m".into(),
+            digest_hash: "h".into(),
+            text: "t".into(),
+            generated_at: 5,
+        };
         s.put_summary(&sum).unwrap();
         assert_eq!(s.get_summary("2026-09-16", "bilan").unwrap(), Some(sum));
-        let task = OpenTask { id: "x".into(), name: "n".into(), status: "à faire".into(), url: "u".into(), due_date: Some(9), priority: None, list_name: None };
+        let task = OpenTask {
+            id: "x".into(),
+            name: "n".into(),
+            status: "à faire".into(),
+            url: "u".into(),
+            due_date: Some(9),
+            priority: None,
+            list_name: None,
+        };
         s.replace_open_tasks(&[task.clone()], 1).unwrap();
         s.replace_open_tasks(&[task.clone()], 2).unwrap();
         assert_eq!(s.open_tasks().unwrap(), vec![task]);
@@ -938,7 +1137,15 @@ mod tests {
         let mut e = ev(T0, EventKind::Commit, "/a", "fix", "1");
         e.ticket_ids = vec!["abc1234".into(), "old1234".into(), "fresh12".into()];
         s.insert_events(&[e]).unwrap();
-        let mk = |id: &str| TicketInfo { id: id.into(), name: "".into(), status: "".into(), status_type: "".into(), url: "".into(), due_date: None, list_name: None };
+        let mk = |id: &str| TicketInfo {
+            id: id.into(),
+            name: "".into(),
+            status: "".into(),
+            status_type: "".into(),
+            url: "".into(),
+            due_date: None,
+            list_name: None,
+        };
         s.upsert_tickets(&[mk("old1234")], T0 - 100_000).unwrap();
         s.upsert_tickets(&[mk("fresh12")], T0).unwrap();
         let mut stale = s.stale_ticket_ids(T0, T0 + 1, T0 - 86400, 10).unwrap();

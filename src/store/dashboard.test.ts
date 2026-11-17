@@ -66,9 +66,29 @@ describe("dashboard store", () => {
     expect(store().mode).toBe("week");
   });
 
-  it("bumpGenerate incrémente generateTick", () => {
-    const before = store().generateTick;
-    store().bumpGenerate();
-    expect(store().generateTick).toBe(before + 1);
+  it("setOnglet bascule entre le récap et la chronologie", () => {
+    store().setOnglet("chrono");
+    expect(store().onglet).toBe("chrono");
+    store().setOnglet("recap");
+    expect(store().onglet).toBe("recap");
+  });
+
+  it("changer de jour garde la mise en avant (le récap la réconcilie avec les données)", () => {
+    useDashboardStore.setState({ day: "2026-09-16" });
+    store().setFilterDir("/a");
+    store().setDay("2026-09-15");
+    expect(store().filterDir).toBe("/a");
+    store().shiftDay(1);
+    expect(store().filterDir).toBe("/a");
+    store().today();
+    expect(store().filterDir).toBe("/a");
+  });
+
+  it("clearFilterDir lève la mise en avant sans bascule", () => {
+    store().setFilterDir("/a");
+    store().clearFilterDir();
+    expect(store().filterDir).toBeNull();
+    store().clearFilterDir();
+    expect(store().filterDir).toBeNull();
   });
 });

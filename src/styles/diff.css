@@ -1,0 +1,483 @@
+/* Vue « Fichiers modifiés » (maquette Diff). Classes préfixées « diff-v- » ; couleurs et
+   mouvements via les jetons de tokens.css. */
+
+.diff-v {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 18px 22px var(--reserve-dock);
+  overflow: auto;
+  background: var(--fond-app);
+  color: var(--texte);
+  outline: none;
+  animation: var(--diff-entree, inB) 0.3s var(--courbe-glisse) both;
+}
+
+/* ---------- Barre d'en-tête ---------- */
+
+.diff-v-tete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.diff-v-titre {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  flex: 1;
+  min-width: 0;
+}
+.diff-v-intertitre {
+  margin: 0;
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+.diff-v-somme {
+  display: inline-flex;
+  gap: 10px;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.diff-v-ajout {
+  color: var(--succes);
+}
+.diff-v-retrait {
+  color: var(--suppression);
+}
+
+.diff-v-rafraichir {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte);
+  box-shadow: inset 0 0 0 1px var(--filet-2);
+}
+.diff-v-rafraichir svg[data-tourne="true"] {
+  animation: spin 0.7s linear infinite;
+}
+
+.diff-v-retour {
+  height: 32px;
+  padding: 0 6px 0 12px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+  background: var(--fond-discret);
+  box-shadow: inset 0 0 0 1px var(--filet-4);
+}
+.diff-v-retour-seul {
+  height: 34px;
+  margin-top: 8px;
+  padding: 0 6px 0 14px;
+}
+
+/* ---------- Corps : liste + panneau ---------- */
+
+.diff-v-corps {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  transition: opacity 0.2s;
+}
+.diff-v-corps[data-charge="true"] {
+  opacity: 0.45;
+}
+
+.diff-v-liste {
+  flex: 0 1 290px;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.diff-v-filtre {
+  height: 34px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border-radius: var(--rayon-controle);
+  border: none;
+  outline-offset: 0;
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px var(--filet-2);
+  color: var(--texte-fort);
+  font-family: var(--police-mono);
+  font-size: 12px;
+  transition: box-shadow var(--duree-survol);
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.diff-v-filtre::placeholder {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.diff-v-filtre:focus {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.22);
+}
+
+.diff-v-fichiers {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.diff-v-selection {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 50px;
+  border-radius: var(--rayon-controle-grand);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+  transition:
+    transform 0.3s var(--courbe-glisse),
+    opacity 0.18s;
+  pointer-events: none;
+}
+.diff-v-ligne {
+  position: relative;
+  height: 50px;
+  padding: 0 12px 0 10px;
+  box-sizing: border-box;
+  border-radius: var(--rayon-controle-grand);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  color: var(--texte);
+  transition: color 0.18s;
+}
+.diff-v-ligne:hover,
+.diff-v-ligne[aria-selected="true"] {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+
+.diff-v-lettre {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: var(--rayon-controle-petit);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  font-weight: var(--graisse-mono-moyenne-courant);
+  color: var(--st);
+  background: var(--st-doux);
+}
+.diff-v-noms {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.diff-v-nom {
+  font-family: var(--police-mono);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.diff-v-dossier {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.diff-v-compteurs {
+  display: inline-flex;
+  gap: 7px;
+  flex-shrink: 0;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+.diff-v-aucun {
+  /* Marge droite réduite (10 px dans la maquette) : les métriques d'Inter sous WebKitGTK
+     sont un peu plus larges que sous Chrome, et « Aucun fichier ne correspond à « … ». »
+     passait à la ligne pour quelques pixels. */
+  padding: 14px 0 14px 10px;
+  color: var(--texte-discret);
+  animation: fade 0.2s ease both;
+  font-weight: var(--graisse-normale-discret);
+}
+.diff-v-aide {
+  margin-top: 6px;
+  padding: 10px 2px 0;
+  border-top: 1px solid var(--filet-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+/* ---------- Panneau du diff ---------- */
+
+/* Hauteur de son contenu (maquette : corps en align-items: flex-start) : le panneau
+   s'arrête après la dernière ligne du diff, la zone de code gardant 200 px au moins. */
+.diff-v-panneau {
+  flex: 1 1 520px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--rayon-panneau-petit);
+  background: var(--fond-panneau);
+  box-shadow: inset 0 0 0 1px var(--filet-2);
+  overflow: hidden;
+}
+.diff-v-panneau-tete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  animation: var(--diff-fichier, inB) 0.26s var(--courbe-glisse) both;
+}
+.diff-v-chemin {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--police-mono);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.diff-v-chemin-dir {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.diff-v-chemin-nom {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.diff-v-statut {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+/* Plafond sur la zone de code, comme la maquette (et non sur tout le panneau). */
+.diff-v-defile {
+  max-height: calc(100vh - 290px);
+  min-height: 200px;
+  overflow: auto;
+  padding: 6px 0 10px;
+}
+.diff-v-code {
+  min-width: 100%;
+  width: max-content;
+  font-family: var(--police-mono);
+  font-size: 12.5px;
+  line-height: 1.7;
+  /* Changement de fichier : le code entre avec l'en-tête (maquette Diff, panelAnim). */
+  animation: var(--diff-fichier, inB) 0.26s var(--courbe-glisse) both;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+.diff-v-hunk {
+  display: flex;
+  gap: 12px;
+  padding: 4px 16px 4px 18px;
+  background: rgba(255, 255, 255, 0.035);
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  white-space: pre;
+}
+.diff-v-hunk[data-suite="true"] {
+  margin-top: 10px;
+  border-top-color: rgba(255, 255, 255, 0.05);
+}
+.diff-v-hunk-plage {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.diff-v-hunk-section {
+  color: var(--texte);
+}
+
+.diff-v-l {
+  display: flex;
+}
+.diff-v-l[data-genre="add"] {
+  background: rgba(126, 231, 135, 0.08);
+}
+.diff-v-l[data-genre="del"] {
+  background: rgba(255, 157, 148, 0.08);
+}
+.diff-v-no {
+  width: 48px;
+  flex-shrink: 0;
+  padding-right: 8px;
+  box-sizing: border-box;
+  text-align: right;
+  color: var(--texte-discret);
+  user-select: none;
+  font-weight: var(--graisse-normale-discret);
+}
+.diff-v-no-neuf {
+  box-shadow: inset -1px 0 0 var(--filet-1);
+}
+.diff-v-signe {
+  width: 24px;
+  flex-shrink: 0;
+  text-align: center;
+  color: var(--texte-discret);
+  user-select: none;
+  font-weight: var(--graisse-normale-discret);
+}
+.diff-v-texte {
+  flex: 1;
+  padding-right: 20px;
+  white-space: pre;
+  color: var(--texte);
+}
+.diff-v-l[data-genre="add"] .diff-v-signe {
+  color: var(--succes);
+  font-weight: var(--graisse-normale-courant);
+}
+.diff-v-l[data-genre="add"] .diff-v-texte {
+  color: #e9f7eb;
+}
+.diff-v-l[data-genre="del"] .diff-v-signe {
+  color: var(--suppression);
+  font-weight: var(--graisse-normale-courant);
+}
+.diff-v-l[data-genre="del"] .diff-v-texte {
+  color: #f8e6e4;
+}
+.diff-v-meta {
+  padding: 2px 18px;
+  color: var(--texte-discret);
+  white-space: pre;
+  font-weight: var(--graisse-normale-discret);
+}
+.diff-v-attente {
+  padding: 8px 18px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+
+/* ---------- État vide ---------- */
+
+.diff-v-vide {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Avec le padding de .diff-v (18 px en haut, 130 px en bas) : 40 px et 150 px, comme la maquette. */
+  padding: 22px 0 20px;
+}
+.diff-v-vide-carte {
+  width: 100%;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+}
+.diff-v-vide-icone {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+}
+.diff-v-vide-titre {
+  margin: 4px 0 0;
+  font-size: 16px;
+  font-weight: var(--graisse-titre);
+  color: var(--texte-fort);
+  letter-spacing: -0.01em;
+}
+.diff-v-vide-texte {
+  margin: 0;
+  color: var(--texte);
+}
+.diff-v-ailleurs {
+  margin-top: 22px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.diff-v-ailleurs-liste {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+.diff-v-ailleurs-btn {
+  height: 32px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte-fort);
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+  font-weight: var(--graisse-normale-fort);
+}
+.diff-v-ailleurs-point {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.diff-v-ailleurs-compte {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+/* ---------- Étroit ---------- */
+
+@media (max-width: 800px) {
+  .diff-v-corps {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .diff-v-liste {
+    flex: none;
+  }
+  .diff-v-panneau {
+    flex: none;
+    height: 70vh;
+  }
+}

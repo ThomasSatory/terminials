@@ -1,0 +1,592 @@
+/* Mosaïque des agents (Mosaique.tsx, components/mosaique/*) : une tuile par espace avec
+   les dernières lignes de son terminal, filtres par groupe. Référence : Mosaique.dc.html
+   (valeurs reprises telles quelles, via les jetons quand ils existent). */
+
+.mos {
+  /* Accent dosé de la maquette (accent + « 1f », « 2b », « 14 »), en rgba seulement : une
+     propriété personnalisée n'a pas de repli, une seconde déclaration en color-mix()
+     l'emporterait et deviendrait invalide sur un moteur qui l'ignore. */
+  --mos-accent-12: rgba(var(--accent-rgb), 0.12);
+  --mos-accent-17: rgba(var(--accent-rgb), 0.17);
+  --mos-accent-8: rgba(var(--accent-rgb), 0.078);
+
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  color: var(--texte);
+  /* La zone défile seule ; son entrée (mos-retour, scale 1.025) déborderait sinon de la
+     vue, et la vue plein écran (overflow auto) montrait des barres de défilement le temps
+     de l'animation. */
+  overflow: hidden;
+}
+.mos:focus {
+  outline: none;
+}
+
+/* ---------- Barre du haut ---------- */
+
+.mos-barre {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 18px;
+  padding: 8px 14px 8px 18px;
+  min-height: var(--hauteur-barre);
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--filet-1);
+}
+.mos-titre {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.mos-titre-icone {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: var(--graisse-normale-discret);
+}
+.mos-titre-texte {
+  margin: 0;
+  font-size: inherit;
+  font-weight: var(--graisse-forte-fort);
+  color: var(--texte-fort);
+  letter-spacing: -0.01em;
+}
+.mos-resume {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte-discret);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+.mos-filtres {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  box-shadow: inset 0 0 0 1px var(--filet-1);
+}
+.mos-filtre,
+.mos-bascule {
+  transition:
+    background var(--duree-survol),
+    color var(--duree-survol),
+    box-shadow var(--duree-survol);
+}
+.mos-filtre:hover,
+.mos-bascule:hover {
+  color: var(--texte-fort);
+  background: rgba(255, 255, 255, 0.07);
+  font-weight: var(--graisse-normale-fort);
+}
+.mos-filtre {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-moyenne-discret);
+}
+.mos-filtre[aria-pressed="true"] {
+  color: var(--texte-fort);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px var(--filet-4);
+  font-weight: var(--graisse-moyenne-fort);
+}
+.mos-carre {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+.mos-filtre-nombre {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-moyenne-discret);
+}
+.mos-filtre-attente {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--attente);
+  color: var(--attente);
+  animation: halo 1.6s ease-out infinite;
+}
+.mos-filtre-travail {
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid var(--travail-piste);
+  border-top-color: var(--travail);
+  animation: spin 0.9s linear infinite;
+}
+.mos-espaceur {
+  flex: 1;
+}
+
+/* Bascule « En attente d'abord » (role=switch). */
+.mos-bascule {
+  height: 30px;
+  padding: 0 10px 0 8px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--texte);
+  white-space: nowrap;
+}
+.mos-bascule[aria-checked="true"] {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+.mos-bascule-piste {
+  position: relative;
+  flex-shrink: 0;
+  width: 26px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--filet-separateur);
+  transition: background 0.2s;
+}
+.mos-bascule[aria-checked="true"] .mos-bascule-piste {
+  background: var(--accent);
+}
+.mos-bascule-bouton {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--texte);
+  transition:
+    transform 0.22s var(--courbe-glisse),
+    background 0.2s;
+}
+.mos-bascule[aria-checked="true"] .mos-bascule-bouton {
+  background: var(--texte-sur-accent);
+  transform: translateX(10px);
+}
+
+/* ---------- Zone des tuiles ---------- */
+
+/* Elle défile seule (la barre reste en place) et garde la réserve basse du dock : 130 px
+   de la maquette, posée par Mosaique.tsx comme celle des terminaux (dock masqué, bulle). */
+.mos-zone {
+  flex: 1 1 0px;
+  min-height: 320px;
+  overflow: auto;
+  padding: 18px clamp(12px, 1.8vw, 26px) var(--mos-reserve, var(--reserve-dock));
+  scrollbar-width: thin;
+  scrollbar-color: var(--filet-separateur) transparent;
+  animation: mos-retour 0.3s var(--courbe-glisse) both;
+}
+
+.mos-section {
+  margin-bottom: 22px;
+}
+.mos-section-tete {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  margin: 0 2px 10px;
+}
+.mos-section-nom {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.mos-intertitre {
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+.mos-section-nombre {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.mos-section-parts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.mos-part {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--texte);
+}
+.mos-part-point {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--neutre);
+}
+.mos-part[data-etat="travail"] .mos-part-point {
+  background: var(--travail);
+}
+.mos-part[data-etat="attente"] .mos-part-point {
+  background: var(--attente);
+}
+.mos-part[data-etat="termine"] .mos-part-point {
+  background: var(--succes);
+}
+
+.mos-grille {
+  display: grid;
+  gap: 12px;
+  align-items: stretch;
+}
+.mos-cellule {
+  min-width: 0;
+  display: flex;
+}
+
+/* ---------- Tuile ---------- */
+
+.mos-tuile {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--rayon-panneau-petit);
+  overflow: hidden;
+  background: #0d0e11;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  transition:
+    background 0.2s,
+    box-shadow 0.3s,
+    transform 0.2s var(--courbe-douce);
+}
+.mos-tuile[data-etat="travail"] {
+  box-shadow: inset 0 0 0 1px var(--travail-piste);
+}
+.mos-tuile[data-etat="attente"] {
+  background: #101116;
+  box-shadow:
+    inset 0 0 0 1.5px var(--attente),
+    0 0 0 4px var(--mos-accent-12),
+    0 0 30px var(--mos-accent-17);
+}
+.mos-tuile[data-etat="repos"] {
+  background: #0a0a0c;
+}
+/* Après les états : le survol l'emporte sur leur fond. */
+.mos-tuile:hover {
+  background: #131418;
+  transform: translateY(-1px);
+}
+/* Agent qui vient de finir : couronne verte qui s'éteint (doneA de la maquette). */
+.mos-tuile[data-etat="termine"] {
+  animation: mos-fini 2.8s ease-out both;
+}
+/* Éclair « vu » sur la tuile de l'espace qu'on vient de quitter ; la couronne « terminé »
+   l'emporte (maquette : done avant seen). */
+.mos-tuile[data-eclair]:not([data-etat="termine"]) {
+  animation: mos-vu 1.4s ease-out both;
+}
+
+/* Le bouton couvre toute la tuile : son anneau de focus, rogné par l'overflow de la
+   tuile, est reporté sur la tuile elle-même (à l'intérieur sans :has). */
+.mos-tuile-ouvrir {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--rayon-panneau-petit);
+}
+.mos-tuile-ouvrir:focus-visible {
+  outline-offset: -2px;
+}
+.mos-tuile:has(> .mos-tuile-ouvrir:focus-visible) {
+  outline: 2px solid var(--accent-focus);
+  outline-offset: 2px;
+}
+.mos-tuile:has(> .mos-tuile-ouvrir:focus-visible) > .mos-tuile-ouvrir {
+  outline: none;
+}
+
+.mos-tuile-tete {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 9px;
+}
+/* Pastille « vous attend » de la maquette : 10 px, bord sur le fond de la tuile. */
+.mos-tuile .ui-avatar-pastille {
+  width: 10px !important;
+  height: 10px !important;
+  border-color: #0f1014;
+}
+.mos-tuile-ident {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.mos-tuile-nom {
+  font-weight: var(--graisse-forte-fort);
+  color: var(--texte-fort);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mos-tuile[data-etat="repos"] .mos-tuile-nom {
+  color: var(--texte);
+  font-weight: var(--graisse-forte-courant);
+}
+.mos-tuile-branche,
+.mos-tuile-temps {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.mos-tuile-branche {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mos-tuile-etat {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+.mos-tuile-libelle {
+  font-size: 11.5px;
+  font-weight: var(--graisse-moyenne-discret);
+  color: var(--texte-discret);
+  white-space: nowrap;
+}
+.mos-tuile[data-etat="travail"] .mos-tuile-libelle {
+  color: var(--travail);
+  font-weight: var(--graisse-moyenne-courant);
+}
+.mos-tuile[data-etat="attente"] .mos-tuile-libelle {
+  color: var(--attente);
+  font-weight: var(--graisse-moyenne-discret);
+}
+.mos-tuile[data-etat="termine"] .mos-tuile-libelle {
+  color: var(--succes);
+  font-weight: var(--graisse-moyenne-courant);
+}
+/* Hauteur gardée même sans repère : toutes les têtes d'une rangée s'alignent. */
+.mos-tuile-temps {
+  min-height: 1.4em;
+}
+
+/* Trait de 2 px sous l'en-tête ; balayage cyan quand l'agent travaille. */
+.mos-balayage {
+  position: relative;
+  flex-shrink: 0;
+  height: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+.mos-balayage > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28%;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--travail);
+  opacity: 0.85;
+  animation-name: mos-balayage;
+  animation-timing-function: cubic-bezier(0.45, 0.05, 0.55, 0.95);
+  animation-iteration-count: infinite;
+}
+
+/* Mini-terminal : hauteur = n lignes de 1.6em ; la sortie se cale en bas une fois pleine. */
+.mos-corps {
+  flex: 1 0 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 12px 7px;
+  font-family: var(--police-mono);
+  line-height: 1.6;
+  transition:
+    height var(--duree-glisse) var(--courbe-glisse),
+    font-size var(--duree-glisse) var(--courbe-glisse);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.mos-ligne {
+  flex-shrink: 0;
+  height: 1.6em;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: mos-flux 0.34s var(--courbe-glisse) both;
+}
+.mos [data-ton="fort"] {
+  color: var(--texte-terminal);
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.mos [data-ton="texte"] {
+  color: var(--texte);
+}
+.mos [data-ton="discret"] {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+.mos-pied {
+  height: 36px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  padding: 0 8px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--filet-1);
+  font-size: 12px;
+}
+.mos-tuile[data-etat="attente"] .mos-pied {
+  background: var(--mos-accent-8);
+}
+.mos-pied-travail,
+.mos-pied-question,
+.mos-pied-repos {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mos-pied-travail {
+  color: var(--travail);
+}
+.mos-pied-attente {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mos-pied-question {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+}
+.mos-pied-termine {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--succes);
+}
+.mos-pied-termine svg {
+  flex-shrink: 0;
+}
+.mos-pied-termine-texte {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mos-pied-repos {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+/* « Aller » : au-dessus du bouton qui couvre la tuile. */
+.mos-aller {
+  position: relative;
+  z-index: 2;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0 9px 0 11px;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--accent);
+  color: var(--texte-sur-accent);
+  font-weight: var(--graisse-forte-sur-accent);
+  transition: filter var(--duree-survol);
+}
+.mos-aller:hover {
+  filter: brightness(1.12);
+}
+
+/* ---------- Keyframes (préfixés : les partagés sont dans tokens.css) ---------- */
+
+/* Retour sur la mosaïque : léger recul en fondu. */
+@keyframes mos-retour {
+  from {
+    opacity: 0;
+    transform: scale(1.025);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Nouvelle ligne d'un mini-terminal : elle pousse les autres en grandissant. */
+@keyframes mos-flux {
+  from {
+    opacity: 0;
+    height: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    height: 1.6em;
+    transform: none;
+  }
+}
+@keyframes mos-balayage {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(340%);
+  }
+}
+/* Éclair « vu » (seenA de la maquette) : la couronne suit le jeton de focus, repli rgba
+   pour un moteur sans color-mix. */
+@keyframes mos-vu {
+  from {
+    box-shadow:
+      inset 0 0 0 1.5px var(--accent-focus),
+      0 0 0 4px rgba(195, 202, 255, 0.14);
+    box-shadow:
+      inset 0 0 0 1.5px var(--accent-focus),
+      0 0 0 4px color-mix(in srgb, var(--accent-focus) 14%, transparent);
+  }
+}
+/* Couronne verte « terminé » (doneA de la maquette) : part de l'anneau plein et s'éteint
+   vers l'ombre de repos de la tuile. */
+@keyframes mos-fini {
+  from {
+    box-shadow:
+      inset 0 0 0 1.5px var(--succes),
+      0 0 0 4px rgba(126, 231, 135, 0.16),
+      0 0 28px rgba(126, 231, 135, 0.2);
+  }
+}

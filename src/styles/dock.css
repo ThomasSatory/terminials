@@ -1,0 +1,685 @@
+/* Dock flottant (dock/Dock.tsx) : avatars d'espaces, groupes, séparateurs, « + »,
+   mosaïque, activité, palette, indicateur d'espace actif, menu de groupe.
+   Références : Dock.dc.html, Groupes.dc.html (bande, piles), Mosaique.dc.html (bouton
+   mosaïque), Recap.dc.html (bouton activité), Creation.dc.html (« + », menu). */
+
+/* Densité (Paramètres › Apparence) : --dock-avatar (32, 40 ou 48 px, posé sur :root par
+   useApparence) dimensionne avatars, boutons, segments et filets ; les largeurs de la bande
+   sont calculées au même pixel par lib/dockLayout. Bouton = avatar + 4 (marge de survol).
+   Le passage d'une densité à l'autre glisse en .28 s (maquette Parametres). */
+:root {
+  --dock-bouton: calc(var(--dock-avatar) + 4px);
+  --dock-filet: calc(var(--dock-avatar) * 0.7);
+}
+
+/* Accent translucide (composantes dans tokens.css) : fonds des boutons enfoncés. */
+.dock-enveloppe {
+  --dock-accent-14: rgba(var(--accent-rgb), 0.14);
+  --dock-accent-18: rgba(var(--accent-rgb), 0.18);
+  --dock-accent-12: rgba(var(--accent-rgb), 0.12);
+
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--dock-bas);
+  z-index: var(--z-dock);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+/* Le dock reste SOUS la bulle « vous attend » (--z-bulle), infobulles comprises : une
+   infobulle de voisin passe dessous et ne masque jamais « Aller » (maquette Accueil). */
+/* Pendant un popover ou un menu ancré : au-dessus du voile, le dock reste cliquable. */
+.dock-enveloppe[data-eleve="true"] {
+  z-index: var(--z-dock-eleve);
+}
+
+.dock-nav {
+  pointer-events: auto;
+  position: relative;
+  max-width: calc(100% - 24px);
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 13px;
+  border-radius: var(--rayon-dock);
+  background: var(--fond-flottant);
+  -webkit-backdrop-filter: var(--flou-flottant);
+  backdrop-filter: var(--flou-flottant);
+  /* Filet du dock à 11 % (entre --filet-3 et --filet-4), valeur exacte des maquettes. */
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.11),
+    var(--ombre-dock);
+  animation: rise var(--duree-dock) var(--courbe-glisse) both;
+  user-select: none;
+}
+
+/* ---------- Bande des espaces ---------- */
+
+/* La bande déborde de 13 px sous elle-même (padding + marge négative) pour loger
+   l'indicateur dans la marge basse du dock. Transparente aux clics : quand elle défile,
+   sa réserve haute (pour les infobulles) ne doit pas avaler les clics du terminal. */
+.dock-bande {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 13px;
+  margin: 0 0 -13px;
+  pointer-events: none;
+  scrollbar-width: none;
+}
+.dock-bande::-webkit-scrollbar {
+  display: none;
+}
+.dock-bande > * {
+  pointer-events: auto;
+}
+/* Dernier recours, fenêtre trop étroite : la bande défile, bords estompés du côté où il
+   reste des espaces à voir (--dock-fondu-g / -d posés par le composant). */
+.dock-bande[data-defile="true"] {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-top: 140px;
+  margin-top: -140px;
+  -webkit-mask-image: linear-gradient(
+    to right,
+    var(--dock-fondu-g, #000),
+    #000 28px,
+    #000 calc(100% - 28px),
+    var(--dock-fondu-d, #000)
+  );
+  mask-image: linear-gradient(
+    to right,
+    var(--dock-fondu-g, #000),
+    #000 28px,
+    #000 calc(100% - 28px),
+    var(--dock-fondu-d, #000)
+  );
+}
+
+/* Indicateur d'accent : glisse sous l'espace ouvert, ou sous Mosaïque / Activité quand
+   leur vue est affichée. Posé dans le <nav> (5 px au-dessus de son bord bas, dans sa marge
+   basse de 13 px) : la boîte extérieure suit le défilement de la bande, sans transition ;
+   l'intérieure glisse d'une cible à l'autre. */
+.dock-indicateur {
+  position: absolute;
+  left: 0;
+  bottom: 5px;
+  width: var(--dock-bouton);
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.dock-indicateur-glisse {
+  display: flex;
+  justify-content: center;
+  width: var(--dock-bouton);
+  transition:
+    transform var(--duree-glisse) var(--courbe-glisse),
+    width 0.28s var(--courbe-glisse);
+}
+.dock-indicateur-glisse > span {
+  width: 16px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* Filet vertical : après le hors-groupe, avant le « + » (70 % de l'avatar : 28 px). */
+.dock-sep {
+  width: 1px;
+  height: var(--dock-filet);
+  flex-shrink: 0;
+  background: var(--filet-separateur);
+  transition: height 0.28s var(--courbe-glisse);
+}
+
+/* ---------- Segments (hors groupe, groupes) ---------- */
+
+.dock-segment {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--dock-bouton);
+  border-radius: calc(var(--dock-bouton) / 2);
+  transition:
+    background var(--duree-survol),
+    box-shadow var(--duree-survol),
+    height 0.28s var(--courbe-glisse);
+}
+.dock-segment[data-groupe="true"] {
+  padding: 0 4px 0 6px;
+  background: rgba(255, 255, 255, 0.04);
+}
+/* Cible d'un espace qu'on dépose dans le groupe. */
+.dock-segment[data-cible="true"] {
+  background: var(--dock-accent-12);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.dock-carre {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+/* Étiquette de groupe : clic = replier / déplier, glisser = réordonner les groupes. */
+.dock-etiquette {
+  height: 32px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  /* 8 px et non 10 : la largeur calculée (dockLayout) tombe au pixel près sur le nom, et le
+     rendu réel de la police le rognait d'un signe (« servic… ») dès 8 lettres. */
+  padding: 0 8px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  font-weight: var(--graisse-mono-moyenne-courant);
+  color: var(--texte);
+  touch-action: none;
+}
+.dock-etiquette[aria-expanded="false"] {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-moyenne-discret);
+}
+.dock-etiquette-nom {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dock-etiquette[data-glisse="true"] {
+  opacity: 0.5;
+}
+
+/* Boîte des membres : rangée d'avatars ou pile, sa largeur glisse de l'une à l'autre. */
+.dock-membres {
+  position: relative;
+  flex-shrink: 0;
+  height: var(--dock-bouton);
+  transition:
+    width var(--duree-glisse) var(--courbe-glisse),
+    height 0.28s var(--courbe-glisse);
+}
+/* Groupe replié dont un agent attend : c'est toute la pile qui sautille. */
+.dock-membres[data-sautille="true"] {
+  animation: hop 2s ease-in-out infinite;
+}
+
+/* ---------- Avatars ---------- */
+
+.dock-btn {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--dock-bouton);
+  height: var(--dock-bouton);
+  /* Pas de rayon : l'anneau de focus encadre la zone du bouton, comme la maquette
+     (un rayon de 50 % le collerait en cercle au disque de 40). */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  transition:
+    transform var(--duree-glisse) var(--courbe-glisse),
+    opacity 0.24s,
+    width 0.28s var(--courbe-glisse),
+    height 0.28s var(--courbe-glisse);
+}
+/* Disque : mêmes transitions que ui.css, plus le changement de densité. */
+.dock-av {
+  transition:
+    transform 0.2s var(--courbe-douce),
+    background 0.2s,
+    box-shadow 0.2s,
+    color 0.2s,
+    width 0.28s var(--courbe-glisse),
+    height 0.28s var(--courbe-glisse),
+    font-size 0.28s;
+}
+/* L'avatar survolé passe devant ses voisins (et son infobulle avec). */
+.dock-btn:hover,
+.dock-btn:focus-visible {
+  z-index: 30 !important;
+}
+.dock-btn[data-glisse="true"] {
+  opacity: 0.5 !important;
+}
+
+/* Survol : l'avatar se soulève et grossit ; survol d'une pile : elle se soulève à peine. */
+.dock-btn:hover .dock-av {
+  transform: translateY(-6px) scale(1.14);
+}
+.dock-membres:has(.dock-pile:hover) .dock-av {
+  transform: translateY(-3px);
+}
+
+/* Nouvel espace : il jaillit du dock (maquette Création). */
+.dock-entree {
+  display: inline-flex;
+}
+.dock-entree[data-apparition="rebond"] {
+  animation: dock-apparition 0.55s var(--courbe-glisse) both;
+}
+/* Premier espace ouvert depuis l'accueil (slot + drop de la maquette Accueil) : sa place
+   s'ouvre (largeur depuis 0, jusqu'à la largeur posée en inline) et il tombe d'en haut. */
+.dock-membres[data-place="true"] {
+  animation: dock-place 0.4s var(--courbe-glisse) both;
+}
+.dock-entree[data-apparition="chute"] {
+  animation: dock-chute 0.56s var(--courbe-glisse) both;
+}
+@keyframes dock-place {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+}
+@keyframes dock-chute {
+  0% {
+    opacity: 0;
+    transform: translateY(-28px) scale(0.45);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(3px) scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* Espace fermé : il se rétracte et tombe dans le dock (vanish de la maquette Creation). */
+.dock-entree[data-disparition="true"] {
+  animation: dock-disparition 0.24s cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes dock-disparition {
+  to {
+    opacity: 0;
+    transform: translateY(10px) scale(0.3);
+  }
+}
+@keyframes dock-apparition {
+  0% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.3);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-5px) scale(1.12);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Pile d'un groupe replié : zone cliquable qui déplie, au-dessus des avatars empilés. */
+.dock-pile {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  border-radius: calc(var(--dock-bouton) / 2);
+  animation: fade 0.2s ease both;
+}
+.dock-pile:hover,
+.dock-pile:focus-visible {
+  z-index: 30;
+}
+
+/* Compteur à droite de la pile : apparaît une fois les avatars rassemblés. */
+.dock-compte {
+  position: absolute;
+  /* left : posé par le composant, collé au dernier avatar visible (lib/dockLayout,
+     abscisseCompteur). */
+  left: 66px;
+  top: calc((var(--dock-bouton) - 20px) / 2);
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--fond-survol-ligne);
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.dock-compte[data-visible="true"] {
+  opacity: 1;
+  transition-delay: 0.16s;
+}
+
+/* Trait d'insertion du glisser-déposer. */
+.dock-trait {
+  position: absolute;
+  width: 2px;
+  height: var(--dock-filet);
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none !important;
+}
+
+/* ---------- Infobulles (classes ui-tip de ui.css, contenu propre au dock) ---------- */
+
+.dock-btn:hover > .ui-tip,
+.dock-btn:focus-visible > .ui-tip,
+.dock-pile:hover > .ui-tip,
+.dock-pile:focus-visible > .ui-tip {
+  opacity: 1;
+  transform: translate(calc(-50% + var(--tip-dx, 0px)), 0);
+}
+/* Un popover ancré est ouvert, ou un glissement est en cours : pas d'infobulle. */
+.dock-nav[data-calme="true"] .ui-tip {
+  visibility: hidden;
+}
+
+/* En-tête « groupe » au-dessus du nom (intertitre). */
+.dock-tip-groupe {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+.dock-tip-nom-groupe {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.dock-tip-ligne {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dock-tip-ligne[data-ton="travail"] {
+  color: var(--travail);
+}
+.dock-tip-ligne[data-ton="attente"] {
+  color: var(--attente);
+  font-weight: var(--graisse-normale-discret);
+}
+.dock-tip-ligne[data-ton="termine"] {
+  color: var(--succes);
+}
+/* En relais : qui l'agent attend (maquette Superviseur, #c8cad0). */
+.dock-tip-ligne[data-ton="relais"] {
+  color: var(--texte);
+}
+/* Progression poussée par la CLI : fin trait sous les lignes. */
+.dock-tip-progression {
+  display: block;
+  height: 3px;
+  margin-top: 3px;
+  border-radius: 2px;
+  background: var(--fond-survol-ligne);
+  overflow: hidden;
+}
+.dock-tip-progression > span {
+  display: block;
+  height: 100%;
+  background: var(--texte-discret);
+  transform-origin: 0 50%;
+}
+
+/* ---------- Boutons fixes ---------- */
+
+/* « + » : enfoncé pendant la création, la croix pivote en ×. */
+/* Menu « + » de l'accueil ouvert : simple fond de survol (maquette Accueil). Le popover de
+   création, lui, éclaire le bouton et fait pivoter la croix (maquette Creation). */
+.dock-nav .dock-plus[aria-expanded="true"] {
+  background: var(--fond-survol);
+  color: var(--texte);
+}
+.dock-nav .dock-plus[data-rotation="true"] {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+.dock-plus svg {
+  transition: transform 0.26s var(--courbe-glisse);
+}
+.dock-plus[data-rotation="true"] svg {
+  transform: rotate(45deg);
+}
+
+/* Mosaïque et activité : accent quand leur vue est affichée ; l'indicateur d'accent
+   glisse alors dessous. */
+.dock-mosaique,
+.dock-activite {
+  position: relative;
+}
+/* « + », mosaïque, activité : leur côté (taille de l'avatar) glisse avec la densité. */
+.dock-nav .ui-icone-btn {
+  transition:
+    background var(--duree-survol),
+    color var(--duree-survol),
+    box-shadow 0.2s,
+    width 0.28s var(--courbe-glisse),
+    height 0.28s var(--courbe-glisse);
+}
+.dock-nav .dock-mosaique[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--dock-accent-14);
+  font-weight: var(--graisse-normale-discret);
+}
+.dock-activite {
+  transition:
+    background 0.2s,
+    color 0.2s,
+    box-shadow 0.2s;
+}
+.dock-nav .dock-activite[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--dock-accent-18);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  font-weight: var(--graisse-normale-discret);
+}
+/* Résumé de la journée prêt, pas encore lu. */
+.dock-non-lu {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--fond-dock-opaque);
+}
+
+.dock-palette {
+  height: var(--dock-avatar);
+  flex-shrink: 0;
+  padding: 0 12px;
+  border-radius: calc(var(--dock-avatar) / 2);
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--texte);
+  background: var(--fond-discret);
+}
+.dock-palette-touche {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+/* ---------- Menu d'un groupe (rendu hors du dock) ---------- */
+
+.dock-mg-voile {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-voile);
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  cursor: default;
+}
+
+.dock-mg {
+  position: fixed;
+  z-index: var(--z-popover);
+  box-sizing: border-box;
+  border-radius: var(--rayon-panneau);
+  background: var(--fond-panneau);
+  box-shadow:
+    inset 0 0 0 1px var(--filet-4),
+    var(--ombre-panneau);
+  animation: dock-mg-entree 0.26s var(--courbe-glisse) both;
+}
+@keyframes dock-mg-entree {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.dock-mg-pointe {
+  position: absolute;
+  bottom: -6px;
+  width: 12px;
+  height: 12px;
+  background: var(--fond-panneau);
+  transform: rotate(45deg);
+  box-shadow: 1px 1px 0 0 var(--filet-4);
+}
+
+.dock-mg-tete {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 14px 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+.dock-mg-titres {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.dock-mg-nom {
+  font-weight: var(--graisse-forte-fort);
+  color: var(--texte-fort);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dock-mg-sous {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+.dock-mg-bloc {
+  position: relative;
+  padding: 6px;
+}
+.dock-mg-item {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: var(--rayon-controle);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+.dock-mg-item[data-danger="true"] {
+  color: var(--suppression);
+  font-weight: var(--graisse-normale-courant);
+}
+.dock-mg-icone {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.dock-mg-libelle {
+  flex: 1;
+  white-space: nowrap;
+}
+.dock-mg-indice {
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte-discret);
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+.dock-mg-filet {
+  position: relative;
+  height: 1px;
+  margin: 0 12px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.dock-mg-couleurs {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 8px;
+}
+.dock-mg-entete {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.dock-intertitre {
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+.dock-mg-valeur {
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.dock-mg-nuancier {
+  display: grid;
+  grid-template-columns: repeat(8, 22px);
+  gap: 8px;
+  justify-content: space-between;
+}
+.dock-mg-nuance {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  transition:
+    transform 0.14s var(--courbe-douce),
+    box-shadow 0.14s;
+}
+.dock-mg-nuance:hover {
+  transform: scale(1.15);
+}

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   useWorkspaceStore,
   hasAttention,
@@ -8,8 +8,10 @@ import {
   loadSavedState,
   getLastFolder,
   setLastFolder,
+  numeroOngletSuivant,
   type SavedState,
 } from "./workspace";
+import { titreParDefaut } from "../lib/titreParDefaut";
 import { basename, defaultGroupColor } from "../lib/palette";
 
 const store = () => useWorkspaceStore.getState();
@@ -136,6 +138,25 @@ describe("workspace store", () => {
     const before = ws(id);
     store().moveTab(id, t0, 7);
     expect(ws(id)).toBe(before);
+  });
+
+  it("« Terminal N » suit l'onglet déplacé : numéro de création, pas de position", () => {
+    const id = store().addWorkspace("/tmp");
+    store().addTab(id);
+    store().addTab(id);
+    const [t0] = tabIds(id);
+    store().moveTab(id, t0, 2);
+    expect(ws(id).tabs.map((t, i) => titreParDefaut(t, i))).toEqual(["Terminal 2", "Terminal 3", "Terminal 1"]);
+    // Un onglet fermé ne libère pas un numéro inférieur au plus grand : pas de doublon.
+    store().closeTab(id, tabIds(id)[0]);
+    store().addTab(id);
+    expect(ws(id).tabs.map((t, i) => titreParDefaut(t, i))).toEqual(["Terminal 3", "Terminal 1", "Terminal 4"]);
+  });
+
+  it("numeroOngletSuivant : sans numéro, le rang en tient lieu", () => {
+    expect(numeroOngletSuivant([])).toBe(1);
+    expect(numeroOngletSuivant([{ id: "a" }, { id: "b" }])).toBe(3);
+    expect(numeroOngletSuivant([{ id: "a", numero: 5 }, { id: "b" }])).toBe(6);
   });
 
   it("setTabTitle pose le titre, idempotent sur la même valeur", () => {
@@ -306,58 +327,26 @@ describe("workspace store", () => {
     expect(ws(a).diffOpen).toBe(true);
   });
 
-  it("toggleSidebar bascule sidebarVisible (défaut true)", () => {
-    expect(store().sidebarVisible).toBe(true);
-    store().toggleSidebar();
-    expect(store().sidebarVisible).toBe(false);
-    store().toggleSidebar();
-    expect(store().sidebarVisible).toBe(true);
-  });
-
-  it("requestRename pose et efface renameRequestId", () => {
-    const id = store().addWorkspace("/tmp");
-    expect(store().renameRequestId).toBeNull();
-    store().requestRename(id);
-    expect(store().renameRequestId).toBe(id);
-    store().requestRename(null);
-    expect(store().renameRequestId).toBeNull();
-  });
-
-  it("requestNewWorkspace pose et efface la demande sans rien créer", () => {
-    expect(store().newWorkspaceRequested).toBe(false);
-    store().requestNewWorkspace(true);
-    expect(store().newWorkspaceRequested).toBe(true);
-    expect(store().workspaces).toHaveLength(0);
-    store().requestNewWorkspace(false);
-    expect(store().newWorkspaceRequested).toBe(false);
-  });
-
-  it("reset restaure sidebarVisible, renameRequestId et newWorkspaceRequested", () => {
-    store().toggleSidebar();
-    store().requestRename("ws:0");
-    store().requestNewWorkspace(true);
-    store().reset();
-    expect(store().sidebarVisible).toBe(true);
-    expect(store().renameRequestId).toBeNull();
-    expect(store().newWorkspaceRequested).toBe(false);
-  });
-
-
-  it("reset vide aussi les groupes et newGroupRequested", () => {
+  it("reset vide aussi les groupes", () => {
     store().addGroup("g");
-    store().requestNewGroup(true);
     store().reset();
     expect(store().groups).toEqual([]);
-    expect(store().newGroupRequested).toBe(false);
   });
 
-  it("closeWorkspace du ws actif du milieu active le voisin précédent", () => {
+  it("closeWorkspace du ws actif du milieu active son suivant (maquette Creation)", () => {
     const a = store().addWorkspace("/a");
     const b = store().addWorkspace("/b");
     const c = store().addWorkspace("/c");
     store().setActive(b);
     store().closeWorkspace(b);
     expect(store().workspaces.map((w) => w.id)).toEqual([a, c]);
+    expect(store().activeId).toBe(c);
+  });
+
+  it("closeWorkspace du dernier ws actif de la liste active le précédent", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    store().closeWorkspace(b);
     expect(store().activeId).toBe(a);
   });
 
@@ -661,7 +650,7 @@ describe("création dans un groupe et duplication", () => {
     expect(ws(store().duplicateWorkspace(c)!).name).toBe("app 3");
   });
 
-  it("la copie ne reprend ni notification, ni branche, ni ports de l'original", () => {
+  it("la copie ne reprend ni notification ni ports, mais montre d'emblée la branche du même dossier", () => {
     const a = store().addWorkspace("/a", "app");
     store().setNotification(a, { title: "n", body: "" });
     store().setBranch(a, "main");
@@ -670,7 +659,9 @@ describe("création dans un groupe et duplication", () => {
     expect(c.unread).toBe(false);
     expect(c.unreadTabs).toEqual([]);
     expect(c.lastNotification).toBeUndefined();
-    expect(c.branch).toBeUndefined();
+    // Même dossier, même dépôt : pas de « hors dépôt » le temps que la sonde passe.
+    expect(c.branch).toBe("main");
+    expect(c.gitConnu).toBe(true);
     expect(c.ports).toEqual([]);
   });
 
@@ -1011,6 +1002,26 @@ describe("sondes idempotentes (git, ports)", () => {
     expect(ws(id).dirty).toBe(true);
   });
 
+  it("setDirty porte le nombre de fichiers modifiés, oublié au retour à « propre »", () => {
+    const id = store().addWorkspace("/a");
+    store().setDirty(id, true, 3);
+    expect(ws(id).nbModifies).toBe(3);
+    const before = store().workspaces;
+    store().setDirty(id, true, 3);
+    expect(store().workspaces).toBe(before);
+    // Sans compte (ancienne sonde) : le dernier connu reste.
+    store().setDirty(id, true);
+    expect(ws(id).nbModifies).toBe(3);
+    store().setDirty(id, true, 5);
+    expect(ws(id).nbModifies).toBe(5);
+    store().setDirty(id, false, 0);
+    expect(ws(id).dirty).toBe(false);
+    expect(ws(id).nbModifies).toBe(0);
+    store().setDirty(id, true, 2);
+    store().setDirty(id, false);
+    expect(ws(id)).not.toHaveProperty("nbModifies");
+  });
+
   it("setPorts compare le CONTENU, pas la référence du tableau", () => {
     const id = store().addWorkspace("/a");
     store().setPorts(id, [3000, 8080]);
@@ -1089,6 +1100,77 @@ describe("sessions Claude par onglet", () => {
     expect(saved().workspaces[0]).not.toHaveProperty("claudeSessions");
   });
 
+  it("restaurerEspace rouvre un espace fermé avec ses onglets et arme la reprise", () => {
+    const a = store().addWorkspace("/a");
+    const id = store().restaurerEspace({
+      cwd: "/b",
+      name: "bee",
+      tabCount: 1,
+      color: "#aabbcc",
+      claudeSessions: [null, { id: SID, cwd: "/b/api" }],
+    });
+    expect(store().activeId).toBe(id);
+    expect(store().workspaces.map((w) => w.id)).toEqual([a, id]);
+    expect(ws(id)).toMatchObject({ name: "bee", cwd: "/b", color: "#aabbcc", groupId: null });
+    // Un onglet par session, même si le compte enregistré est plus petit.
+    const [premier, second] = ws(id).tabs;
+    expect(ws(id).tabs).toHaveLength(2);
+    expect(premier.pendingResume).toBeUndefined();
+    expect(second).toMatchObject({ cwd: "/b/api", pendingResume: SID, claude: { id: SID, cwd: "/b/api" } });
+  });
+
+  it("restaurerEspace range l'espace dans son groupe, recréé s'il a disparu", () => {
+    const id = store().restaurerEspace({ cwd: "/b", name: "b", tabCount: 1, groupe: { name: "services", color: "#f78fc6" } });
+    const g = store().groups.find((x) => x.name === "services");
+    expect(g?.color).toBe("#f78fc6");
+    expect(ws(id).groupId).toBe(g?.id);
+    const id2 = store().restaurerEspace({ cwd: "/c", name: "c", tabCount: 1, groupe: { name: "services", color: "#000000" } });
+    expect(ws(id2).groupId).toBe(g?.id);
+    expect(store().groups.filter((x) => x.name === "services")).toHaveLength(1);
+    const id3 = store().restaurerEspace({ cwd: "/d", name: "d", tabCount: 1, groupe: null });
+    expect(ws(id3).groupId).toBeNull();
+  });
+
+  it("fermer le dernier membre d'un groupe retire le groupe", () => {
+    const g = store().addGroup("produit", "#a99cff");
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    store().assignToGroup(a, g);
+    store().assignToGroup(b, g);
+    store().closeWorkspace(a);
+    expect(store().groups.map((x) => x.id)).toContain(g);
+    store().closeWorkspace(b);
+    expect(store().groups.map((x) => x.id)).not.toContain(g);
+  });
+
+  it("un clic d'avatar pendant la vue des fichiers modifiés la garde ouverte sur l'espace choisi", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    store().setActive(a);
+    store().toggleDiff(a);
+    store().setActive(b, { garderDiff: true });
+    expect(ws(a).diffOpen).toBe(false);
+    expect(ws(b).diffOpen).toBe(true);
+    // Sans l'option (Aller, palette…), arriver sur un espace montre son terminal.
+    store().setActive(a);
+    expect(ws(a).diffOpen).toBe(false);
+  });
+
+  it("consulter l'attente d'un onglet occupé éteint son arc jusqu'au hook suivant", () => {
+    const a = store().addWorkspace("/a");
+    const b = store().addWorkspace("/b");
+    const tab = ws(b).tabs[0].id;
+    store().setTabPty(tab, 42);
+    store().setPtyBusy(42, true);
+    store().setActive(a);
+    store().setNotification(b, { title: "Claude Code", body: "Autoriser ?" }, tab);
+    expect(42 in store().busyPtys).toBe(true);
+    store().setActive(b);
+    expect(42 in store().busyPtys).toBe(false);
+    store().setPtyBusy(42, true);
+    expect(42 in store().busyPtys).toBe(true);
+  });
+
   it("la restauration rouvre l'onglet dans le dossier de la session et arme la reprise", () => {
     store().restoreState({
       groups: [],
@@ -1142,5 +1224,99 @@ describe("sessions Claude par onglet", () => {
     store().setTabClaudeSession(id, tabIds(id)[0], { id: SID, cwd: "/a" });
     const copy = store().duplicateWorkspace(id)!;
     expect(ws(copy).tabs[0].claude).toBeUndefined();
+  });
+});
+
+describe("état « terminé » (fin de tour d'agent)", () => {
+  beforeEach(() => store().reset());
+
+  function deuxEspaces() {
+    const a = store().addWorkspace("/a");
+    store().addTab(a);
+    const [t0, t1] = tabIds(a);
+    store().setTabPty(t0, 10);
+    store().setTabPty(t1, 11);
+    const b = store().addWorkspace("/b"); // actif = b
+    return { a, t0, t1, b };
+  }
+
+  it("un passage au repos signalé par l'agent marque l'onglet terminé", () => {
+    const { t1 } = deuxEspaces();
+    store().setPtyBusy(11, true);
+    expect(store().tabsTermines).toEqual({});
+    store().setPtyBusy(11, false);
+    expect(store().tabsTermines).toEqual({ [t1]: true });
+  });
+
+  it("une interruption ou le garde-fou de silence ne marquent rien", () => {
+    deuxEspaces();
+    store().setPtyBusy(11, true);
+    store().setPtyBusy(11, false, false);
+    expect(store().tabsTermines).toEqual({});
+  });
+
+  it("un repos sans travail préalable ne marque rien (idempotent)", () => {
+    deuxEspaces();
+    store().setPtyBusy(11, false);
+    expect(store().tabsTermines).toEqual({});
+  });
+
+  it("« terminé » revient de lui-même au repos après 6 s (maquette Mosaique)", () => {
+    vi.useFakeTimers();
+    try {
+      const { t1 } = deuxEspaces();
+      store().setPtyBusy(11, true);
+      store().setPtyBusy(11, false);
+      vi.advanceTimersByTime(5900);
+      expect(store().tabsTermines).toEqual({ [t1]: true });
+      vi.advanceTimersByTime(200);
+      expect(store().tabsTermines).toEqual({});
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("l'agent qui repart efface « terminé »", () => {
+    const { t1 } = deuxEspaces();
+    store().setPtyBusy(11, true);
+    store().setPtyBusy(11, false);
+    expect(store().tabsTermines).toEqual({ [t1]: true });
+    store().setPtyBusy(11, true);
+    expect(store().tabsTermines).toEqual({});
+  });
+
+  it("consulter l'espace efface « terminé » de tous ses onglets", () => {
+    const { a, t0 } = deuxEspaces();
+    store().setPtyBusy(10, true);
+    store().setPtyBusy(10, false);
+    store().setPtyBusy(11, true);
+    store().setPtyBusy(11, false);
+    expect(Object.keys(store().tabsTermines)).toHaveLength(2);
+    store().setActive(a);
+    expect(store().tabsTermines).toEqual({});
+    // Consulter un onglet suffit aussi.
+    store().setPtyBusy(10, true);
+    store().setPtyBusy(10, false);
+    store().setActiveTab(a, t0);
+    expect(store().tabsTermines).toEqual({});
+  });
+
+  it("onglet ou espace fermé, PTY respawné : plus rien de terminé", () => {
+    const { a, t0, t1 } = deuxEspaces();
+    store().setPtyBusy(10, true);
+    store().setPtyBusy(10, false);
+    store().removeTabPty(t0);
+    expect(store().tabsTermines).toEqual({});
+    store().setPtyBusy(11, true);
+    store().setPtyBusy(11, false);
+    store().closeTab(a, t1);
+    expect(store().tabsTermines).toEqual({});
+  });
+
+  it("rien à effacer : même référence (pas de rendu pour rien)", () => {
+    const { a } = deuxEspaces();
+    const avant = store().tabsTermines;
+    store().setActive(a);
+    expect(store().tabsTermines).toBe(avant);
   });
 });

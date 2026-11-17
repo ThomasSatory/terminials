@@ -118,16 +118,6 @@ export interface ClickupSettings {
 }
 
 export interface ActivitySettings {
-  llm: {
-    provider: "openai" | "ollama" | "claude_cli";
-    baseUrl: string;
-    model: string;
-    token: string;
-    extraHeaders: Record<string, string>;
-    temperature: number;
-    maxTokens: number;
-    tokenCommand: string | null;
-  };
   clickup: ClickupSettings;
   schedule: {
     hour: number;
@@ -145,6 +135,15 @@ export interface ActivitySettings {
   saisie: SaisieSettings;
 }
 
+/** Réunion relevée dans l'agenda Outlook (miroir de `Reunion` côté Rust). */
+export interface Reunion {
+  id: string;
+  titre: string;
+  /** Epoch secondes. */
+  debut: number;
+  fin: number;
+}
+
 /** Issue d'une entrée de temps (miroir de `ResultatSaisie` côté Rust). */
 export interface ResultatSaisie {
   taskId: string;
@@ -160,6 +159,9 @@ export interface SaisieSettings {
   vendrediMinutes: number;
   /** US qui reçoit le temps sans US ; vide = l'US « Réunion » du sprint. */
   usReunion: string;
+  /** Réunions de l'agenda relevées par Claude Code à chaque collecte des tâches. Absent
+      (fichier écrit par une version antérieure) : actif, comme le défaut Rust. */
+  reunionsAgenda?: boolean;
 }
 
 export const activityApi = {
@@ -197,6 +199,9 @@ export const activityApi = {
   saisirTemps: (day: string, entrees: EntreeTemps[]): Promise<ResultatSaisie[]> =>
     invoke("activity_saisir_temps", { day, entrees }),
 
+  /** Réunions relevées qui commencent dans [from, to). */
+  reunions: (from: number, to: number): Promise<Reunion[]> => invoke("activity_reunions", { from, to }),
+
   /** US « Réunion » du sprint en cours, `null` tant qu'aucune collecte ne l'a trouvée. */
   reunionUs: (): Promise<TicketRef | null> => invoke("activity_reunion_us"),
 
@@ -212,9 +217,4 @@ export const activityApi = {
  */
 export function clickupActif(clickup: ClickupSettings): boolean {
   return clickup.source !== "off" && (clickup.source !== "api" || clickup.token !== "");
-}
-
-/** Vrai si `err` est une erreur de jeton LLM expiré (convention "unauthorized:" en préfixe). */
-export function isUnauthorized(err: unknown): boolean {
-  return String(err).startsWith("unauthorized:");
 }

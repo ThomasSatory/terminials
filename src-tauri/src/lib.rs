@@ -1,8 +1,12 @@
 mod activity;
+mod hooks;
 mod images;
 mod notify;
+mod pont;
 mod pty;
+mod reglages;
 mod socket;
+mod superviseur;
 
 use std::io::Read;
 use std::sync::Arc;
@@ -41,9 +45,16 @@ fn spawn_pty(
         .filter(|_| integration)
         .and_then(|dir| launch_for(&shell, dir));
 
-    let (id, mut reader) =
-        pty::spawn_pty(reg.inner(), &shell, &cwd, &workspace_id, cols, rows, launch.as_ref())
-            .map_err(|e| e.to_string())?;
+    let (id, mut reader) = pty::spawn_pty(
+        reg.inner(),
+        &shell,
+        &cwd,
+        &workspace_id,
+        cols,
+        rows,
+        launch.as_ref(),
+    )
+    .map_err(|e| e.to_string())?;
 
     thread::spawn(move || {
         let mut buf = [0u8; 8192];
@@ -76,7 +87,10 @@ fn spawn_pty(
                             }
                         }
                     }
-                    if on_data.send(InvokeResponseBody::Raw(chunk.to_vec())).is_err() {
+                    if on_data
+                        .send(InvokeResponseBody::Raw(chunk.to_vec()))
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -128,6 +142,13 @@ fn git_dirty(cwd: String) -> bool {
     terminials_core::git::is_dirty(&cwd)
 }
 
+/// Sonde dirty avec le nombre de fichiers modifiés : même coût que `git_dirty` (un seul
+/// `git status`), elle tient aussi le compteur du bouton ± à jour. Même règle d'espacement.
+#[tauri::command]
+fn git_dirty_count(cwd: String) -> u32 {
+    terminials_core::git::dirty_count(&cwd)
+}
+
 #[tauri::command]
 fn git_changed_files(cwd: String) -> Vec<terminials_core::git::ChangedFile> {
     terminials_core::git::changed_files(&cwd)
@@ -157,7 +178,28 @@ fn workspace_ports(reg: State<'_, Arc<PtyRegistry>>, pty_id: PtyId) -> Vec<u16> 
 #[tauri::command]
 fn pty_cwd(reg: State<'_, Arc<PtyRegistry>>, pty_id: PtyId) -> Option<String> {
     let pid = reg.handles.lock().unwrap().get(&pty_id)?.pid?;
-    terminials_core::cwd::process_cwd(pid)?.into_os_string().into_string().ok()
+    terminials_core::cwd::process_cwd(pid)?
+        .into_os_string()
+        .into_string()
+        .ok()
+}
+
+/// Colle le presse-papier dans l'élément qui a le focus (le terminal, via le textarea de
+/// xterm qui reçoit alors un événement `paste`), par la commande d'édition de la webview :
+/// celle du menu natif que remplace le menu « Copier / Coller » du terminal. La lecture du
+/// presse-papier par la page (navigator.clipboard) est refusée par WebKitGTK.
+#[tauri::command]
+fn coller_presse_papier(webview: tauri::Webview) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    webview
+        .with_webview(|w| {
+            use webkit2gtk::WebViewExt;
+            w.inner().execute_editing_command("Paste");
+        })
+        .map_err(|e| e.to_string())?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = webview;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -167,6 +209,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(PtyRegistry::new()))
         .manage(Arc::new(activity::init()))
+        .manage(Arc::new(pont::Pont::new()))
+        .manage(Arc::new(superviseur::init()))
         .invoke_handler(tauri::generate_handler![
             spawn_pty,
             write_pty,
@@ -175,11 +219,13 @@ pub fn run() {
             git_info,
             git_branch,
             git_dirty,
+            git_dirty_count,
             git_changed_files,
             git_file_diff,
             dir_exists,
             workspace_ports,
             pty_cwd,
+            coller_presse_papier,
             images::save_pasted_image,
             activity::activity_register_workspaces,
             activity::activity_collect_now,
@@ -189,14 +235,32 @@ pub fn run() {
             activity::activity_summary_cached,
             activity::activity_open_tasks,
             activity::activity_reunion_us,
+            activity::activity_reunions,
             activity::activity_saisies,
             activity::activity_saisir_temps,
             activity::activity_status,
             activity::activity_get_settings,
-            activity::activity_set_settings
+            activity::activity_set_settings,
+            // Pont requête/réponse des outils (socket ↔ front).
+            pont::outil_repondre,
+            notify::notifier_systeme,
+            // Réglages de l'application (vue Paramètres).
+            reglages::reglages_lire,
+            reglages::reglages_ecrire,
+            reglages::reglages_infos,
+            // Hooks Claude Code (Paramètres › Agents et notifications).
+            hooks::hooks_etat,
+            hooks::hooks_installer,
+            // Superviseur.
+            superviseur::superviseur_signaler,
+            superviseur::superviseur_etat,
+            superviseur::superviseur_interrompre,
+            superviseur::superviseur_nouvelle_session
         ])
         .setup(|app| {
             activity::start_scheduler(app.handle().clone());
+            // Le moteur ne lance rien tant que le superviseur n'est pas activé.
+            superviseur::demarrer(app.handle().clone());
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = socket::serve(handle).await {
@@ -207,8 +271,9 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
+                superviseur::arreter(app);
                 let _ = std::fs::remove_file(socket::socket_path());
             }
         });

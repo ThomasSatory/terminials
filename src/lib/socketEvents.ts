@@ -3,6 +3,8 @@ import { useWorkspaceStore } from "../store/workspace";
 import { useDashboardStore } from "../store/dashboard";
 import { coalesce } from "./coalesce";
 import { parseClaudeSession } from "./claudeResume";
+import { setBusy, startBusySweep } from "./agentBusy";
+import { useSuperviseurStore } from "../store/superviseur";
 
 interface SocketCommand {
   method: string;
@@ -45,13 +47,29 @@ export function applyClaudeSession(wsId: string, params: Record<string, unknown>
   if (session) s.setTabClaudeSession(wsId, tabId, session);
 }
 
-/** Écoute les events émis par le backend (socket-command, agent-notification) → store. */
+/**
+ * Notification d'un hook qui annonce une DEMANDE D'AUTORISATION (l'agent est bloqué sur
+ * « Autoriser cette commande ? ») : le superviseur ne doit alors rien écrire dans la
+ * session sans validation explicite. Paramètre `attente` posé par la CLI
+ * (`terminials notify --attente autorisation`) ; à défaut, le texte que le script de hook
+ * produit pour ce cas (scripts installés avant ce paramètre).
+ */
+export function estDemandeAutorisation(params: Record<string, unknown>): boolean {
+  if (params.attente === "autorisation") return true;
+  if (params.attente !== undefined) return false;
+  return typeof params.body === "string" && params.body.startsWith("Claude demande l'autorisation");
+}
+
+/** Écoute les events émis par le backend (socket-command, agent-notification) → store,
+    et balaie les indicateurs « au travail » restés allumés (cf. agentBusy). */
 export function registerSocketEvents(): Promise<UnlistenFn> {
   const store = () => useWorkspaceStore.getState();
 
   const p1 = listen<SocketCommand>("socket-command", (e) => {
     const s = store();
-    const { method, params } = e.payload;
+    const { method } = e.payload;
+    // Une requête sans params arrive avec `null` : on la lit comme un objet vide.
+    const params: SocketCommand["params"] = e.payload.params ?? {};
     // Routage : la CLI joint workspaceId (env TERMINIALS_WORKSPACE_ID injectée
     // dans le shell du pane) ; fallback sur le workspace actif (CLI hors pane).
     // Un workspaceId qui ne résout plus (workspace fermé) → commande ignorée.
@@ -61,16 +79,20 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
       case "new-workspace":
         s.addWorkspace(params.cwd ?? "/home");
         break;
-      case "notify":
+      case "notify": {
         // Hook Claude Code lancé dans un onglet : la CLI joint aussi ptyId
         // (TERMINIALS_PTY_ID), ce qui allume le point de CET onglet.
-        if (target)
-          s.setNotification(
-            target.id,
-            { title: params.title, body: params.body },
-            tabIdForPty(s.tabPtys, params.ptyId),
-          );
+        const tabId = tabIdForPty(s.tabPtys, params.ptyId);
+        const attente = typeof params.attente === "string" ? { attente: params.attente } : {};
+        if (target) s.setNotification(target.id, { title: params.title, body: params.body, ...attente }, tabId);
+        // Session bloquée sur une demande d'autorisation, ou rendue (fin de tour).
+        if (tabId) {
+          const sup = useSuperviseurStore.getState();
+          if (estDemandeAutorisation(params)) sup.bloquerSession(tabId, String(params.body ?? ""));
+          else sup.debloquerSession(tabId);
+        }
         break;
+      }
       case "set-status":
         if (target) s.setStatus(target.id, { label: params.label, color: params.color });
         break;
@@ -80,6 +102,17 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
       case "claude-session":
         if (target) applyClaudeSession(target.id, params);
         break;
+      case "agent-busy": {
+        // Identifié par le PTY émetteur seul : un hook lancé hors onglet n'a rien à allumer.
+        if (typeof params.ptyId === "number") setBusy(params.ptyId, params.busy === true);
+        // L'agent repart (autorisation accordée, nouveau prompt) ou rend la main (fin de
+        // tour, session close) : plus de demande en cours. Une nouvelle demande
+        // d'autorisation suit toujours ce passage au repos (hook Notification : idle puis
+        // notify), elle rebloque l'onglet.
+        const tabId = tabIdForPty(s.tabPtys, params.ptyId);
+        if (tabId) useSuperviseurStore.getState().debloquerSession(tabId);
+        break;
+      }
       default:
         break;
     }
@@ -104,9 +137,11 @@ export function registerSocketEvents(): Promise<UnlistenFn> {
   const rafraichir = coalesce(() => useDashboardStore.getState().bumpRefresh(), 2000);
   const p3 = listen("activity-updated", rafraichir);
   const p4 = listen("summary-ready", () => useDashboardStore.getState().markSummaryReady());
+  const stopSweep = startBusySweep();
 
   return Promise.all([p1, p2, p3, p4]).then((fns) => () => {
     rafraichir.cancel();
+    stopSweep();
     fns.forEach((f) => f());
   });
 }

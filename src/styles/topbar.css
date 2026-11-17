@@ -1,0 +1,391 @@
+/* Barre du haut (TopBar.tsx) : pastille et nom de l'espace actif, branche, onglets,
+   bouton des fichiers modifiés. Référence : Dock.dc.html, première rangée (valeurs en px
+   de la maquette, couleurs et courbes par les jetons). */
+
+.topbar {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px 0 18px;
+  /* Une seule rangée de 46 px, à toute largeur (maquette Groupes/08) : en fenêtre étroite,
+     les onglets se compriment et défilent, « Tout fermer » se réduit à son icône. */
+  height: var(--hauteur-barre);
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--filet-1);
+  user-select: none;
+}
+/* Apparition de la barre (premier espace ouvert depuis l'accueil) : fondu de la maquette. */
+.topbar[data-entree="true"] {
+  animation: fade 0.3s ease both;
+}
+
+/* Variante « retour » (maquette Mosaique) : ouvert depuis la mosaïque, la barre commence
+   par le bouton qui y ramène ; marge gauche resserrée à 12 px comme la maquette. */
+.topbar[data-retour="true"] {
+  padding-left: 12px;
+}
+.topbar-retour {
+  height: 30px;
+  flex-shrink: 0;
+  padding: 0 5px 0 9px;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+  box-shadow: inset 0 0 0 1px var(--filet-4);
+}
+
+/* ---------- Espace actif ---------- */
+
+.topbar-espace {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* Groupe de l'espace, avant sa pastille : « produit / ». */
+.topbar-groupe {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--texte-discret);
+  white-space: nowrap;
+  font-weight: var(--graisse-normale-discret);
+}
+.topbar-pastille {
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  transition: background 0.3s;
+}
+.topbar-nom {
+  font-weight: var(--graisse-forte-fort);
+  color: var(--texte-fort);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.topbar-branche {
+  min-width: 0;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte-discret);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+/* ---------- Onglets ---------- */
+
+/* Les onglets prennent la place qui reste sur l'unique rangée ; trop nombreux ou fenêtre
+   étroite, leur liste défile (molette, défilement vers l'onglet actif). */
+.topbar-onglets {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-self: stretch;
+}
+
+/* Liste défilante quand les onglets débordent (ascenseur masqué : la molette et le
+   défilement vers l'onglet actif suffisent). Elle descend d'un pixel sur le filet du
+   bas, comme le soulignement de la maquette (bottom: -1px) : le défilement découperait
+   sinon le trait. */
+.topbar-liste {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  min-width: 0;
+  margin-bottom: -1px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.topbar-liste::-webkit-scrollbar {
+  display: none;
+}
+
+.topbar-onglet {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  touch-action: none;
+}
+.topbar-onglet[data-glisse="true"] {
+  opacity: 0.5;
+}
+
+.topbar-tab {
+  min-height: var(--hauteur-barre);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-moyenne-discret);
+  white-space: nowrap;
+  transition: color 0.18s;
+}
+.topbar-tab:hover {
+  color: var(--texte);
+  font-weight: var(--graisse-moyenne-courant);
+}
+.topbar-tab[data-courant="true"] {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+}
+/* Anneau de focus rentré : la liste défile, un anneau extérieur y serait coupé. */
+.topbar-tab:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--rayon-controle);
+}
+
+.topbar-titre {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Arc « un agent travaille » (maquette : 10 px, piste cyan pâle, quart cyan, .9s). */
+.topbar-arc {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid var(--travail-piste);
+  border-top-color: var(--travail);
+  animation: spin 0.9s linear infinite;
+}
+
+/* Pastille « un agent vous attend » : accent et halo, comme sur l'avatar du dock. */
+.topbar-attente {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--attente);
+  color: var(--attente);
+  animation: halo 1.6s ease-out infinite;
+}
+
+/* Croix de fermeture (souris seulement, hors du focus) : visible au survol, quand
+   l'onglet a le focus et sur l'onglet actif. Sur l'onglet actif, elle est toujours là et
+   prend sa place dans le flux. Sur un onglet inactif, elle ne réserve rien (maquette :
+   onglets à 24 px les uns des autres) : au survol, elle se pose dans l'espace vide entre
+   la fin du titre et le titre suivant (marge droite de 10 px, écart de 4 px, marge
+   gauche du voisin), sans mordre sur aucun des deux titres. */
+.topbar-fermer {
+  width: 18px;
+  height: 18px;
+  margin: 0 2px 0 -6px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--rayon-controle-petit);
+  color: var(--texte-discret);
+  opacity: 0;
+  transition:
+    opacity var(--duree-survol),
+    background var(--duree-survol),
+    color var(--duree-survol);
+}
+.topbar-onglet:not([data-actif="true"]) .topbar-fermer {
+  /* De 8 px après le titre à 24 px (début du titre voisin). */
+  position: absolute;
+  z-index: 1;
+  right: -10px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0;
+  /* Invisible, elle déborde sur la marge du voisin : elle n'y prend pas les clics. */
+  pointer-events: none;
+}
+/* Après le dernier onglet, la marge qui reçoit sa croix (la liste défile et rognerait ce
+   qui dépasse). */
+.topbar-onglet:last-of-type {
+  margin-right: 10px;
+}
+.topbar-onglet:hover .topbar-fermer,
+.topbar-onglet:focus-within .topbar-fermer,
+.topbar-onglet[data-actif="true"] .topbar-fermer {
+  opacity: 1;
+  pointer-events: auto;
+}
+.topbar-fermer:hover {
+  color: var(--texte-fort);
+  background: var(--fond-survol);
+  font-weight: var(--graisse-normale-fort);
+}
+
+/* Soulignement de l'onglet actif : un seul trait, posé en translateX/largeur sous
+   l'onglet et qui glisse de l'un à l'autre (courbe et durée du trait de la maquette).
+   Pas de transition à la première pose (data-anime). Masqué (rétracté) quand le diff ou
+   le récap recouvre le terminal, comme le scaleX(0) de la maquette. */
+.topbar-soulignement {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  pointer-events: none;
+}
+.topbar-soulignement[data-anime="true"] {
+  transition:
+    transform 0.26s var(--courbe-douce),
+    width 0.26s var(--courbe-douce);
+}
+.topbar-soulignement-trait {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: transform 0.26s var(--courbe-douce);
+}
+.topbar-soulignement[data-masque="true"] .topbar-soulignement-trait {
+  transform: scaleX(0);
+}
+
+/* Trait d'insertion pendant un glisser d'onglet. */
+.topbar-depot {
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent-focus);
+  pointer-events: none;
+}
+
+/* « + » nouvel onglet : juste après le dernier onglet. */
+.ui-icone-btn.topbar-ajout {
+  align-self: center;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+.ui-icone-btn.topbar-ajout:hover {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+
+/* ---------- Fichiers modifiés (Ctrl+Maj+D) ---------- */
+
+.topbar-diff {
+  height: 28px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono);
+  color: var(--texte-fort);
+  white-space: nowrap;
+  box-shadow: inset 0 0 0 1px var(--filet-3);
+  transition:
+    background var(--duree-survol),
+    color var(--duree-survol),
+    box-shadow var(--duree-survol);
+  font-weight: var(--graisse-mono-normale-fort);
+}
+.topbar-diff:hover {
+  background: var(--fond-survol);
+}
+/* Vue des fichiers modifiés ouverte (maquette Diff). */
+.topbar-diff[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+.topbar-diff-signe {
+  color: var(--succes);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+/* « Tout fermer » (maquette Accueil, bouton fantôme). */
+.topbar-tout-fermer {
+  height: 28px;
+  padding: 0 9px;
+  flex-shrink: 0;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--texte-discret);
+  white-space: nowrap;
+  transition:
+    background var(--duree-survol),
+    color var(--duree-survol);
+  font-weight: var(--graisse-normale-discret);
+}
+.topbar-tout-fermer:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--texte-fort);
+  font-weight: var(--graisse-normale-fort);
+}
+/* Fenêtre étroite : « Tout fermer » se réduit à son icône (nom accessible et infobulle
+   gardés) pour laisser la rangée aux onglets. */
+@media (max-width: 900px) {
+  .topbar-tout-fermer {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+  .topbar-tout-fermer-texte {
+    display: none;
+  }
+}
+
+/* Icône des Paramètres (maquette Parametres) : carré 28 px au filet discret, enfoncée
+   quand la vue est ouverte. */
+.topbar-reglages {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: var(--rayon-controle);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--texte);
+  box-shadow: inset 0 0 0 1px var(--filet-2);
+  transition:
+    background var(--duree-survol),
+    color var(--duree-survol);
+}
+.topbar-reglages:hover {
+  background: var(--fond-survol);
+}
+.topbar-reglages[aria-pressed="true"] {
+  color: var(--texte-fort);
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  font-weight: var(--graisse-normale-fort);
+}
+
+/* ---------- Panneaux de terminal (TabbedTerminals) ---------- */
+
+/* Changer d'onglet ou d'espace rejoue l'entrée du contenu (maquette : inA, .26s, courbe
+   douce, fondu et 8 px de montée). La translation ne touche pas la mise en page : le
+   fit de xterm (dimensions du parent) et le PTY ne la voient pas, et l'état final
+   (transform: none) rend un canvas net. Sans mouvement : figée par tokens.css. */
+.terminal-panneau[data-affiche="true"] {
+  animation: inA 0.26s var(--courbe-douce) both;
+}
+/* Ouvert depuis une tuile de la mosaïque : c'est toute la zone qui grandit (ZoomTerminal),
+   le panneau n'ajoute pas son propre glissement par-dessus. Durée nulle plutôt que
+   `animation: none` : au retrait de data-zoom, la même animation reprend sa durée sans
+   redémarrer (déjà finie), au lieu de rejouer son entrée après le zoom. */
+.app-zone[data-zoom] .terminal-panneau[data-affiche="true"] {
+  animation-duration: 0s;
+}

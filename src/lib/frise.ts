@@ -90,19 +90,22 @@ function hourEpoch(day: string, hour: number): number {
 
 /**
  * Bornes de la frise en mode jour : 7h → 20h, étendues à l'heure pleine qui
- * précède le premier événement et à celle qui suit le dernier.
+ * précède le premier événement et à celle qui suit le dernier. Pour le jour en cours
+ * (`maintenant` dans la journée), elles englobent aussi l'instant présent : le trait
+ * « maintenant » reste sur la frise après le dernier événement (maquette Recap).
  */
-export function dayBounds(day: string, events: ActivityEvent[]): { start: number; end: number } {
+export function dayBounds(day: string, events: ActivityEvent[], maintenant?: number): { start: number; end: number } {
   let start = hourEpoch(day, HEURE_DEBUT);
   let end = hourEpoch(day, HEURE_FIN);
   const { from, to } = dayRange(day);
-  for (const ev of events) {
-    if (ev.ts < from || ev.ts >= to) continue;
-    const d = new Date(ev.ts * 1000);
-    const h = d.getHours();
-    if (ev.ts < start) start = hourEpoch(day, h);
-    if (ev.ts >= end) end = hourEpoch(day, h + 1);
-  }
+  const etendre = (ts: number) => {
+    if (ts < from || ts >= to) return;
+    const h = new Date(ts * 1000).getHours();
+    if (ts < start) start = hourEpoch(day, h);
+    if (ts >= end) end = hourEpoch(day, h + 1);
+  };
+  for (const ev of events) etendre(ev.ts);
+  if (maintenant !== undefined) etendre(maintenant);
   return { start, end };
 }
 
@@ -178,10 +181,12 @@ export function buildFrise(
   events: ActivityEvent[],
   byWorkspace: WorkspaceCount[],
   colors: Map<string, string>,
+  /** Instant présent (s) : la frise du jour en cours l'englobe (dayBounds). */
+  maintenant?: number,
 ): Frise {
   const cellSeconds = mode === "day" ? 900 : 3600;
   const bounds: { start: number; end: number; days?: string[] } =
-    mode === "day" ? dayBounds(day, events) : weekBounds(day, events);
+    mode === "day" ? dayBounds(day, events, maintenant) : weekBounds(day, events);
   const { start, end } = bounds;
   const span = Math.max(end - start, cellSeconds);
   const nCells = Math.ceil(span / cellSeconds);

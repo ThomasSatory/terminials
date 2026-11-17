@@ -46,3 +46,31 @@ export function nextDelayMs(lastDurationMs: number, budget: PollBudget): number 
   const target = duration / budget.dutyCycle;
   return Math.min(budget.maxDelayMs, Math.max(budget.minDelayMs, target));
 }
+
+/** Part du temps qu'une sonde ANTICIPÉE (fin de tour d'agent) peut consommer : quatre fois
+    le budget ordinaire. Assez pour qu'un dépôt léger se recompte dans les 2 s qui suivent
+    la fin d'un tour, jamais assez pour qu'une rafale de fins de tour sur un dépôt géant
+    relance `git status` en boucle. */
+export const FACTEUR_ANTICIPATION = 4;
+
+/**
+ * Échéance d'une sonde avancée par un événement (un agent vient de finir son tour : il a
+ * peut-être écrit des fichiers). Jamais plus tard que l'échéance prévue, jamais avant
+ * maintenant, et jamais plus tôt que `derniereFin + duree / (dutyCycle × FACTEUR)` (au
+ * moins le plancher du budget) : la sonde chère garde un espacement proportionnel à son
+ * coût mesuré, même sous une rafale d'événements.
+ * `derniereFin` / `duree` : fin et durée de la dernière sonde (absentes : jamais sondé).
+ */
+export function echeanceAnticipee(
+  prevue: number,
+  maintenant: number,
+  budget: PollBudget,
+  derniere?: { fin: number; duree: number },
+): number {
+  if (!derniere) return Math.min(prevue, maintenant);
+  const ecart = Math.max(
+    budget.minDelayMs,
+    nextDelayMs(derniere.duree, { ...budget, dutyCycle: budget.dutyCycle * FACTEUR_ANTICIPATION }),
+  );
+  return Math.min(prevue, Math.max(maintenant, derniere.fin + ecart));
+}

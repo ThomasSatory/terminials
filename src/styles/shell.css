@@ -1,0 +1,122 @@
+/* Coquille de l'app (App.tsx) : barre du haut, zone terminal keep-alive, calque des vues
+   plein écran, toast. Les calques (dock, popovers, palette) se placent eux-mêmes avec
+   les z-index de tokens.css : `.app` est leur unique contexte d'empilement. */
+
+.app {
+  position: relative;
+  isolation: isolate;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--fond-app);
+  color: var(--texte);
+}
+
+/* Tout ce que la palette recouvre, rendu inerte d'un bloc pendant qu'elle est ouverte.
+   Aucune boîte : ses enfants gardent leur place et leurs z-index dans `.app`. */
+.app-sous-palette {
+  display: contents;
+}
+/* Flou de 4 px sous la palette (maquette : voile assombri ET flouté). Porté par ce qui
+   est recouvert (un `filter`, rendu aussi sans composition accélérée) et non par un
+   backdrop-filter du voile, que WebKitGTK ne dessine pas quand la composition
+   accélérée est indisponible (pilote, écran distant) : la barre et le dock y restaient
+   nets. */
+.app-sous-palette > * {
+  transition: filter 0.18s ease;
+}
+.app-sous-palette[data-flou] > * {
+  filter: blur(4px);
+}
+
+/* Enveloppe de la barre du haut : rendue inerte quand une vue la couvre. */
+.app-barre {
+  flex-shrink: 0;
+}
+
+/* Sous la barre du haut. Contexte d'empilement propre (z-index 0) : les vues qui s'y
+   posent (fichiers modifiés, récap) ne passent jamais au-dessus du dock. */
+.app-zone {
+  position: relative;
+  z-index: 0;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Pile des terminaux : marges de la maquette (22 px en haut, 26 px sur les côtés) et
+   réserve basse pour le dock, posée en style inline selon l'état (dock, bulle).
+   La marge est portée par CETTE boîte et non par l'hôte xterm : FitAddon mesure le
+   parent du terminal sans en retirer le padding.
+   Les réserves glissent comme dans les maquettes : à droite pour le panneau du
+   superviseur (Superviseur : .32 s), en bas pour le dock et la bulle (Accueil : .3 s).
+   TerminalPane ne refait la grille qu'une fois la taille posée (un seul resize du PTY à
+   la fin, pas un par image). */
+.app-terminaux {
+  position: absolute;
+  top: 22px;
+  left: 26px;
+  right: 26px;
+  transition:
+    right var(--duree-vue) var(--courbe-glisse),
+    bottom 0.3s var(--courbe-glisse);
+}
+
+/* Vue plein écran sur toute la fenêtre, barre du haut comprise (accueil, mosaïque),
+   toujours sous le dock. */
+.app-vue-totale {
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-vue);
+  background: var(--fond-app);
+  overflow: auto;
+}
+
+/* ---------- Toast ---------- */
+
+@keyframes toast {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* En bas à droite, au-dessus de la ligne du dock (dock + marge) : il ne le recouvre
+   jamais, quelle que soit sa largeur. */
+.app-toast {
+  position: absolute;
+  right: 20px;
+  bottom: calc(var(--dock-bas) + 82px);
+  z-index: var(--z-toast);
+  max-width: min(440px, calc(100% - 40px));
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: var(--rayon-panneau-petit);
+  background: #17181c;
+  box-shadow:
+    inset 0 0 0 1px var(--filet-3),
+    0 14px 40px rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--texte-fort);
+  animation: toast var(--duree-glisse) var(--courbe-douce) both;
+  font-weight: var(--graisse-normale-fort);
+}
+.app-toast-point {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--avertissement);
+}
+.app-toast-texte {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

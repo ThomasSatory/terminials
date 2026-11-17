@@ -58,13 +58,16 @@ fn duree_mcp(minutes: u32) -> String {
     }
 }
 
-/// Prompt envoyé sur stdin. Pur.
+/// Prompt envoyé sur stdin. Pur. Les entrées sont numérotées : une même US peut
+/// en avoir plusieurs (une par réunion, ou un bloc coupé par une réunion).
 pub fn prompt_saisie(entrees: &[EntreeTemps]) -> String {
     let lignes: Vec<String> = entrees
         .iter()
-        .map(|e| {
+        .enumerate()
+        .map(|(n, e)| {
             format!(
-                "- task_id \"{}\", start \"{}\", duration \"{}\"",
+                "- n {}, task_id \"{}\", start \"{}\", duration \"{}\"",
+                n + 1,
                 e.task_id,
                 e.debut,
                 duree_mcp(e.minutes)
@@ -74,39 +77,51 @@ pub fn prompt_saisie(entrees: &[EntreeTemps]) -> String {
     format!(
         "Tu as accès à l'outil MCP ClickUp clickup_add_time_entry. Ajoute exactement \
 les entrées de temps suivantes, une par ligne, avec ces valeurs telles quelles \
-(les task_id sont des identifiants personnalisés ClickUp) :\n{}\n\n\
+(les task_id sont des identifiants personnalisés ClickUp ; une même tâche peut \
+avoir plusieurs entrées, à des heures différentes) :\n{}\n\n\
 N'ajoute rien d'autre et ne réessaie pas une entrée en erreur. Réponds UNIQUEMENT \
 avec un objet JSON, sans texte autour ni balises markdown :\n\
-{{\"resultats\":[{{\"taskId\":\"…\",\"ok\":true ou false,\"erreur\":\"…\" ou null}}]}}\n\
-avec un résultat par entrée, dans le même ordre.",
+{{\"resultats\":[{{\"n\":numéro de l'entrée,\"taskId\":\"…\",\"ok\":true ou false,\"erreur\":\"…\" ou null}}]}}\n\
+avec un résultat par entrée.",
         lignes.join("\n")
     )
 }
 
-/// Lit la réponse du modèle. Une entrée absente de la réponse est comptée en
-/// échec : mieux vaut la redemander que la croire saisie. Pur.
+/// Lit la réponse du modèle, entrée par entrée (numéro `n`). Une entrée absente
+/// de la réponse est comptée en échec : mieux vaut la redemander que la croire
+/// saisie. Pur.
 pub fn parse_resultats(sortie: &str, entrees: &[EntreeTemps]) -> Vec<ResultatSaisie> {
-    let lus: Vec<ResultatSaisie> = extraire_json(sortie)
+    let lus: Vec<(u64, ResultatSaisie)> = extraire_json(sortie)
         .and_then(|j| serde_json::from_str::<Value>(j).ok())
         .and_then(|v| v["resultats"].as_array().cloned())
         .unwrap_or_default()
         .iter()
         .filter_map(|r| {
-            Some(ResultatSaisie {
-                task_id: r["taskId"].as_str()?.to_string(),
-                ok: r["ok"].as_bool().unwrap_or(false),
-                erreur: r["erreur"].as_str().map(str::to_string),
-            })
+            Some((
+                r["n"].as_u64()?,
+                ResultatSaisie {
+                    task_id: r["taskId"].as_str()?.to_string(),
+                    ok: r["ok"].as_bool().unwrap_or(false),
+                    erreur: r["erreur"].as_str().map(str::to_string),
+                },
+            ))
         })
         .collect();
     entrees
         .iter()
-        .map(|e| {
-            lus.iter().find(|r| r.task_id == e.task_id).cloned().unwrap_or(ResultatSaisie {
-                task_id: e.task_id.clone(),
-                ok: false,
-                erreur: Some(format!("pas de réponse pour cette entrée : {}", sortie.chars().take(160).collect::<String>())),
-            })
+        .enumerate()
+        .map(|(i, e)| {
+            lus.iter()
+                .find(|(n, r)| *n == i as u64 + 1 && r.task_id == e.task_id)
+                .map(|(_, r)| r.clone())
+                .unwrap_or(ResultatSaisie {
+                    task_id: e.task_id.clone(),
+                    ok: false,
+                    erreur: Some(format!(
+                        "pas de réponse pour cette entrée : {}",
+                        sortie.chars().take(160).collect::<String>()
+                    )),
+                })
         })
         .collect()
 }
@@ -116,11 +131,14 @@ pub fn saisir(binary: &str, entrees: &[EntreeTemps]) -> Result<Vec<ResultatSaisi
     if entrees.is_empty() {
         return Ok(Vec::new());
     }
-    let sortie = run_claude_p(binary, &ARGS_SAISIE, &prompt_saisie(entrees), DELAI_SAISIE).map_err(|e| match e {
-        ClaudeProcessError::Spawn(msg) => format!("claude introuvable : {msg}"),
-        ClaudeProcessError::Timeout => "claude -p : délai dépassé".to_string(),
-        ClaudeProcessError::Failed { code, stderr } => format!("claude -p a échoué ({code}) : {stderr}"),
-    })?;
+    let sortie = run_claude_p(binary, &ARGS_SAISIE, &prompt_saisie(entrees), DELAI_SAISIE)
+        .map_err(|e| match e {
+            ClaudeProcessError::Spawn(msg) => format!("claude introuvable : {msg}"),
+            ClaudeProcessError::Timeout => "claude -p : délai dépassé".to_string(),
+            ClaudeProcessError::Failed { code, stderr } => {
+                format!("claude -p a échoué ({code}) : {stderr}")
+            }
+        })?;
     Ok(parse_resultats(&sortie, entrees))
 }
 
@@ -129,7 +147,11 @@ mod tests {
     use super::*;
 
     fn entree(id: &str, minutes: u32) -> EntreeTemps {
-        EntreeTemps { task_id: id.into(), debut: "2026-09-28 09:00".into(), minutes }
+        EntreeTemps {
+            task_id: id.into(),
+            debut: "2026-09-28 09:00".into(),
+            minutes,
+        }
     }
 
     #[test]
@@ -142,7 +164,10 @@ mod tests {
     #[test]
     fn prompt_liste_chaque_entree() {
         let p = prompt_saisie(&[entree("ABC-1", 90), entree("ABC-2", 15)]);
-        assert!(p.contains(r#"task_id "ABC-1", start "2026-09-28 09:00", duration "1h 30m""#), "{p}");
+        assert!(
+            p.contains(r#"n 1, task_id "ABC-1", start "2026-09-28 09:00", duration "1h 30m""#),
+            "{p}"
+        );
         assert!(p.contains(r#"task_id "ABC-2""#));
     }
 
@@ -150,11 +175,22 @@ mod tests {
     fn resultats_lus_et_entree_manquante_en_echec() {
         let e = [entree("ABC-1", 30), entree("ABC-2", 15)];
         let r = parse_resultats(
-            "```json\n{\"resultats\":[{\"taskId\":\"ABC-1\",\"ok\":true,\"erreur\":null}]}\n```",
+            "```json\n{\"resultats\":[{\"n\":1,\"taskId\":\"ABC-1\",\"ok\":true,\"erreur\":null}]}\n```",
             &e,
         );
         assert!(r[0].ok);
         assert!(!r[1].ok && r[1].erreur.is_some());
         assert!(parse_resultats("rien compris", &e).iter().all(|r| !r.ok));
+    }
+
+    #[test]
+    fn deux_entrees_sur_la_meme_us_lues_par_numero() {
+        let e = [entree("R-1", 30), entree("R-1", 60)];
+        let r = parse_resultats(
+            r#"{"resultats":[{"n":2,"taskId":"R-1","ok":true,"erreur":null},{"n":1,"taskId":"R-1","ok":false,"erreur":"refusé"}]}"#,
+            &e,
+        );
+        assert!(!r[0].ok && r[0].erreur.as_deref() == Some("refusé"));
+        assert!(r[1].ok);
     }
 }

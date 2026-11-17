@@ -19,8 +19,9 @@ const PREMIER_SCAN_SECONDES: i64 = 30 * 86_400;
 /// Scanne tous les repos actifs du store depuis leur curseur `git:<dir>`, insère les
 /// événements trouvés et avance le curseur. Retourne (nombre inséré, erreurs).
 ///
-/// Un dossier disparu (déplacé/supprimé) est désactivé silencieusement (pas une erreur) ;
-/// seul un échec de `git log` sur un dépôt toujours présent est remonté dans `errors`.
+/// Un dossier disparu (déplacé/supprimé) est désactivé silencieusement (pas une erreur), un
+/// dossier hors dépôt git est passé ; seul un échec de `git log` sur un dépôt est remonté
+/// dans `errors`.
 pub fn collect(
     store: &Store,
     author_email: Option<&str>,
@@ -40,6 +41,13 @@ pub fn collect(
             if let Err(e) = store.deactivate_repo(&dir) {
                 errors.push(format!("désactivation de {dir}: {e}"));
             }
+            continue;
+        }
+
+        // Dossier hors dépôt git (un espace « notes », par exemple) : cas normal, rien à
+        // collecter et rien à signaler. Remonté en erreur, il laissait la pastille
+        // « erreurs de collecte » allumée en permanence.
+        if git_out(&dir, &["rev-parse", "--git-dir"]).is_none() {
             continue;
         }
 
@@ -462,5 +470,15 @@ mod tests {
         assert_eq!(store.active_repos().unwrap().len(), 1);
         assert!(store.get_cursor(&format!("git:{}", dir.display())).unwrap().is_some());
         assert_eq!(collect(&store, Some("moi@x.fr"), &[], now).0, 0);
+    }
+
+    #[test]
+    fn collect_passe_un_dossier_hors_depot_sans_erreur() {
+        let hors = tempfile::tempdir().unwrap();
+        let store = Store::open_in_memory().unwrap();
+        store.register_repos(&[hors.path().to_str().unwrap().to_string()], 1).unwrap();
+        let (n, errs) = collect(&store, Some("moi@x.fr"), &[], TS_FIXTURE);
+        assert_eq!(n, 0);
+        assert!(errs.is_empty(), "un dossier hors dépôt n'est pas une erreur : {errs:?}");
     }
 }

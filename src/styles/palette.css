@@ -1,0 +1,225 @@
+/* Palette de commandes (CommandPalette.tsx, Ctrl K) : aller à un espace, lancer une
+   action. Référence : Rail.dc.html (palette) dans le langage du Dock. */
+
+.pal-racine {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-palette);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 110px 16px 16px;
+  box-sizing: border-box;
+}
+
+/* Voile : fond sombre, un vrai bouton pour fermer au clic. Le flou de 4 px est porté par
+   ce qu'il recouvre (shell.css, .app-sous-palette[data-flou]). */
+.pal-voile {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--voile);
+  cursor: default;
+  animation: fade 0.18s ease both;
+}
+
+.pal-boite {
+  position: relative;
+  width: 100%;
+  max-width: 580px;
+  border-radius: var(--rayon-panneau);
+  background: var(--fond-panneau);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.12),
+    var(--ombre-panneau);
+  overflow: hidden;
+  animation: pop var(--duree-entree) var(--courbe-glisse) both;
+}
+
+.pal-entete {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px 0 16px;
+  height: 54px;
+  border-bottom: 1px solid var(--fond-survol-ligne);
+}
+
+.pal-champ {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  /* Retrait du champ de Chrome (moteur des maquettes), que WebKitGTK n'applique pas : le
+     texte saisi tombe à la même abscisse que dans la maquette. */
+  padding: 1px 2px;
+  background: transparent;
+  border: none;
+  outline-offset: -2px;
+  color: var(--texte-fort);
+  font: inherit;
+  font-size: 15px;
+  font-weight: var(--graisse-normale-fort);
+}
+/* Anneau rentré dans le champ (maquette) : la règle générale input:focus-visible
+   (tokens.css, plus spécifique que .pal-champ seul) le poserait 2 px à l'extérieur. */
+.pal-champ:focus-visible {
+  outline-offset: -2px;
+}
+/* Focus posé à l'ouverture : curseur dans le champ, mais pas d'anneau (maquettes
+   Accueil/03, Dock/08). L'anneau n'apparaît qu'une fois le champ visé, au clic ou à Tab
+   (Dock/09) : CommandPalette pose alors data-anneau. */
+.pal-champ:not([data-anneau]):focus-visible {
+  outline: none;
+}
+.pal-champ::placeholder {
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+
+.pal-echap {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--rayon-controle-petit);
+  font-family: var(--police-mono);
+  font-size: var(--taille-mono-petit);
+  color: var(--texte);
+  background: var(--fond-survol-ligne);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+
+.pal-liste {
+  position: relative;
+  padding: 6px 6px 8px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+/* Sélection qui glisse : un seul fond déplacé sous la ligne choisie (positionné en JS).
+   Sans transition tant qu'il n'est pas posé, pour ne pas voler depuis le coin. */
+.pal-surbrillance {
+  position: absolute;
+  top: 0;
+  left: 6px;
+  right: 6px;
+  border-radius: var(--rayon-controle-grand);
+  background: var(--fond-discret);
+  pointer-events: none;
+  opacity: 0;
+}
+.pal-surbrillance[data-pret="1"] {
+  transition:
+    transform var(--duree-entree) var(--courbe-glisse),
+    height var(--duree-entree) var(--courbe-glisse),
+    opacity var(--duree-survol);
+}
+
+.pal-titre {
+  padding: 10px 10px 4px;
+  font-size: var(--intertitre-taille);
+  font-weight: var(--intertitre-graisse);
+  letter-spacing: var(--intertitre-espacement);
+  text-transform: uppercase;
+  color: var(--texte-discret);
+}
+
+.pal-ligne {
+  position: relative;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  border-radius: var(--rayon-controle-grand);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+/* Survol (maquette .pi:hover, .08) : il s'ajoute à la sélection du clavier (.06, fond
+   glissant) sans la déplacer. */
+.pal-ligne:hover {
+  background: var(--fond-survol-ligne);
+}
+
+/* Gabarit de 10 px commun aux repères des maquettes (rond d'espace, carré d'action), pour
+   que les libellés s'alignent. L'icône d'onglet (15 px, absente des maquettes) déborde
+   un peu de part et d'autre, centrée. */
+.pal-pastille {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pal-rond {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.pal-carre {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--neutre);
+}
+
+.pal-libelle {
+  color: var(--texte-fort);
+  font-weight: var(--graisse-moyenne-fort);
+  white-space: nowrap;
+}
+.pal-trouve {
+  color: var(--accent-focus);
+  font-weight: var(--graisse-moyenne-courant);
+}
+
+.pal-indice {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--police-mono);
+  font-size: 11px;
+  color: var(--texte-discret);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--graisse-mono-normale-discret);
+}
+.pal-indice[data-ton="travail"] {
+  color: var(--travail);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.pal-indice[data-ton="termine"] {
+  color: var(--succes);
+  font-weight: var(--graisse-mono-normale-courant);
+}
+.pal-indice[data-ton="attente"] {
+  color: var(--attente);
+  font-weight: var(--graisse-mono-normale-discret);
+}
+
+.pal-vide {
+  padding: 22px 10px;
+  text-align: center;
+  color: var(--texte-discret);
+  font-weight: var(--graisse-normale-discret);
+}
+
+/* Annonce du nombre de résultats pour les lecteurs d'écran. */
+.pal-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .pal-racine {
+    padding-top: 64px;
+  }
+}

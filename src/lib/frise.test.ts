@@ -26,6 +26,12 @@ describe("dayBounds", () => {
     const b = dayBounds(JOUR, [ev(at(6, 40), "shell_cmd", A), ev(at(21, 5), "commit", A)]);
     expect(b).toEqual({ start: at(6), end: at(22) });
   });
+  it("aujourd'hui, englobe l'instant présent (trait « maintenant » après 20h)", () => {
+    expect(dayBounds(JOUR, [ev(at(9), "commit", A)], at(21, 16))).toEqual({ start: at(7), end: at(22) });
+    expect(dayBounds(JOUR, [], at(6, 30))).toEqual({ start: at(6), end: at(20) });
+    // Un autre jour : l'instant présent ne compte pas.
+    expect(dayBounds(JOUR, [], at(23) + 86400)).toEqual({ start: at(7), end: at(20) });
+  });
   it("ignore les événements hors du jour", () => {
     const hier = at(6) - 86400;
     expect(dayBounds(JOUR, [ev(hier, "commit", A)])).toEqual({ start: at(7), end: at(20) });

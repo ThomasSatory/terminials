@@ -1,48 +1,6 @@
 //! Réglages du dashboard : ~/.config/terminials/settings.json (0600, écriture atomique).
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LlmProviderKind {
-    Openai,
-    Ollama,
-    ClaudeCli,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct LlmSettings {
-    pub provider: LlmProviderKind,
-    pub base_url: String,
-    pub model: String,
-    pub token: String,
-    pub extra_headers: BTreeMap<String, String>,
-    pub temperature: f32,
-    pub max_tokens: u32,
-    pub token_command: Option<String>,
-}
-impl Default for LlmSettings {
-    fn default() -> Self {
-        let mut extra_headers = BTreeMap::new();
-        extra_headers.insert("x-env".to_string(), "dev".to_string());
-        Self {
-            // `claude -p` par défaut : le jeton Gemma est un JWT de 6 h, trop
-            // court pour être recollé à la main chaque matin. Les champs Gemma
-            // ci-dessous restent renseignés, ils resservent tels quels si on
-            // rebascule le fournisseur sur `openai`.
-            provider: LlmProviderKind::ClaudeCli,
-            base_url: "https://llm.example.com/gemma4-31b".into(),
-            model: "google/gemma-4-31B-it".into(),
-            token: String::new(),
-            extra_headers,
-            temperature: 0.3,
-            max_tokens: 1500,
-            token_command: None,
-        }
-    }
-}
+use std::path::{Path, PathBuf};
 
 /// D'où viennent les tâches ClickUp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -103,7 +61,11 @@ pub struct ScheduleSettings {
 }
 impl Default for ScheduleSettings {
     fn default() -> Self {
-        Self { hour: 7, minute: 0, weekdays_only: true }
+        Self {
+            hour: 7,
+            minute: 0,
+            weekdays_only: true,
+        }
     }
 }
 
@@ -142,23 +104,36 @@ pub struct SaisieSettings {
     /// US qui reçoit le temps sans US. Vide : l'US « Réunion » du sprint en
     /// cours, trouvée par la collecte ClickUp.
     pub us_reunion: String,
+    /// Réunions de l'agenda relevées par Claude Code (un `claude -p` à chaque collecte
+    /// des tâches) pour pré-remplir le temps à saisir. Coupé : aucun relevé, aucun jeton.
+    pub reunions_agenda: bool,
 }
 impl Default for SaisieSettings {
     fn default() -> Self {
-        Self { journee_minutes: 450, vendredi_minutes: 420, us_reunion: String::new() }
+        Self {
+            journee_minutes: 450,
+            vendredi_minutes: 420,
+            us_reunion: String::new(),
+            reunions_agenda: true,
+        }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
-    pub llm: LlmSettings,
     pub clickup: ClickupSettings,
     pub schedule: ScheduleSettings,
     pub shell: ShellSettings,
     pub git: GitSettings,
     pub ticket_patterns: Vec<String>,
     pub saisie: SaisieSettings,
+    /// Réglages de l'application (vue Paramètres), dans le même fichier : cf.
+    /// `crate::reglages`. Écrits par `reglages_ecrire` seulement ; la commande des
+    /// réglages d'activité conserve ceux qui sont en mémoire. Illisibles : leurs défauts,
+    /// sans rendre illisible le reste du fichier (cf. `reglages::tolerant`).
+    #[serde(deserialize_with = "crate::reglages::tolerant")]
+    pub app: crate::reglages::ReglagesApp,
 }
 
 /// `$XDG_CONFIG_HOME/terminials/settings.json`, défaut `~/.config/terminials/settings.json`.
@@ -167,7 +142,9 @@ pub fn default_path() -> PathBuf {
         .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())).join(".config"));
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into())).join(".config")
+        });
     base.join("terminials").join("settings.json")
 }
 
@@ -204,7 +181,12 @@ pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
     let tmp = path.with_extension("json.tmp");
     let json = serde_json::to_string_pretty(settings).map_err(std::io::Error::other)?;
     {
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp)?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
         use std::io::Write;
         f.write_all(json.as_bytes())?;
         f.sync_all()?;
@@ -220,9 +202,18 @@ mod tests {
     #[test]
     fn id_liste_accepte_l_identifiant_ou_l_url() {
         assert_eq!(id_liste(" 1234 ").as_deref(), Some("1234"));
-        assert_eq!(id_liste("https://app.clickup.com/9/v/l/li/1234").as_deref(), Some("1234"));
-        assert_eq!(id_liste("https://app.clickup.com/9/v/l/li/1234?pr=1").as_deref(), Some("1234"));
-        assert_eq!(id_liste("https://app.clickup.com/9/v/l/li/1234/"), Some("1234".into()));
+        assert_eq!(
+            id_liste("https://app.clickup.com/9/v/l/li/1234").as_deref(),
+            Some("1234")
+        );
+        assert_eq!(
+            id_liste("https://app.clickup.com/9/v/l/li/1234?pr=1").as_deref(),
+            Some("1234")
+        );
+        assert_eq!(
+            id_liste("https://app.clickup.com/9/v/l/li/1234/"),
+            Some("1234".into())
+        );
         assert_eq!(id_liste(""), None);
         assert_eq!(id_liste("Sprint 42"), None);
         assert_eq!(id_liste("https://app.clickup.com/t/abc"), None);
@@ -231,7 +222,12 @@ mod tests {
     #[test]
     fn ids_listes_sans_doublon_ni_entree_illisible() {
         let c = ClickupSettings {
-            listes: vec!["12".into(), "n'importe quoi".into(), "https://x/v/l/li/12".into(), "34".into()],
+            listes: vec![
+                "12".into(),
+                "n'importe quoi".into(),
+                "https://x/v/l/li/12".into(),
+                "34".into(),
+            ],
             ..Default::default()
         };
         assert_eq!(c.ids_listes(), vec!["12".to_string(), "34".to_string()]);
@@ -243,16 +239,35 @@ mod tests {
         assert!(s.clickup.listes.is_empty());
     }
     #[test]
-    fn defauts_sur_claude_cli_en_gardant_les_champs_gemma() {
+    fn reunions_de_l_agenda_actives_si_le_fichier_n_en_dit_rien() {
+        let s: Settings = serde_json::from_str(r#"{"saisie":{"journeeMinutes":400}}"#).unwrap();
+        assert!(s.saisie.reunions_agenda);
+        let s: Settings = serde_json::from_str(r#"{"saisie":{"reunionsAgenda":false}}"#).unwrap();
+        assert!(!s.saisie.reunions_agenda);
+        assert_eq!(s.saisie.journee_minutes, 450, "le reste garde ses défauts");
+    }
+
+    #[test]
+    fn defauts_de_planification_et_de_shell() {
         let s = Settings::default();
-        assert_eq!(s.llm.provider, LlmProviderKind::ClaudeCli);
-        assert_eq!(s.llm.base_url, "https://llm.example.com/gemma4-31b");
-        assert_eq!(s.llm.model, "google/gemma-4-31B-it");
-        assert_eq!(s.llm.extra_headers.get("x-env").map(String::as_str), Some("dev"));
-        assert!(s.llm.token.is_empty());
         assert_eq!(s.schedule.hour, 7);
         assert!(s.schedule.weekdays_only);
         assert!(s.shell.ignored_commands.contains(&"ls".to_string()));
+    }
+    #[test]
+    fn ancien_bloc_llm_est_ignore_au_chargement() {
+        // Les fichiers écrits avant la suppression des fournisseurs HTTP portent
+        // encore un bloc `llm` : il doit se charger sans erreur, le reste étant lu.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        std::fs::write(
+            &path,
+            r#"{"llm":{"provider":"openai","baseUrl":"http://x","model":"m","token":"t","extraHeaders":{"a":"b"},"temperature":0.3,"maxTokens":1500,"tokenCommand":null},"schedule":{"hour":9}}"#,
+        )
+        .unwrap();
+        let s = load(&path).unwrap();
+        assert_eq!(s.schedule.hour, 9);
+        assert_eq!(s.schedule.minute, 0);
     }
     #[test]
     fn save_puis_load_roundtrip_en_0600() {
@@ -260,7 +275,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let mut s = Settings::default();
-        s.llm.token = "secret".into();
         s.clickup.token = "cu".into();
         save(&path, &s).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
@@ -269,7 +283,10 @@ mod tests {
     }
     #[test]
     fn load_fichier_absent_rend_les_defauts() {
-        assert_eq!(load(std::path::Path::new("/nonexistent/x.json")).unwrap(), Settings::default());
+        assert_eq!(
+            load(std::path::Path::new("/nonexistent/x.json")).unwrap(),
+            Settings::default()
+        );
     }
     #[test]
     fn defaut_clickup_passe_par_le_mcp_de_claude_code() {
@@ -294,9 +311,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.json");
         std::fs::write(&path, r#"{"clickup":{"token":""}}"#).unwrap();
-        assert_eq!(load(&path).unwrap().clickup.source, ClickupSource::ClaudeMcp);
-        std::fs::write(&path, r#"{"llm":{"token":"x"}}"#).unwrap();
-        assert_eq!(load(&path).unwrap().clickup.source, ClickupSource::ClaudeMcp);
+        assert_eq!(
+            load(&path).unwrap().clickup.source,
+            ClickupSource::ClaudeMcp
+        );
+        std::fs::write(&path, r#"{"schedule":{"hour":8}}"#).unwrap();
+        assert_eq!(
+            load(&path).unwrap().clickup.source,
+            ClickupSource::ClaudeMcp
+        );
     }
     #[test]
     fn source_explicite_l_emporte_sur_la_compatibilite() {
@@ -304,16 +327,63 @@ mod tests {
         let path = dir.path().join("s.json");
         std::fs::write(&path, r#"{"clickup":{"source":"off","token":"pk_123"}}"#).unwrap();
         assert_eq!(load(&path).unwrap().clickup.source, ClickupSource::Off);
-        std::fs::write(&path, r#"{"clickup":{"source":"claude_mcp","token":"pk_123"}}"#).unwrap();
-        assert_eq!(load(&path).unwrap().clickup.source, ClickupSource::ClaudeMcp);
+        std::fs::write(
+            &path,
+            r#"{"clickup":{"source":"claude_mcp","token":"pk_123"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load(&path).unwrap().clickup.source,
+            ClickupSource::ClaudeMcp
+        );
+    }
+    #[test]
+    fn les_reglages_de_l_app_vivent_sous_la_cle_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        // Fichier écrit avant les réglages de l'app : `app` prend ses défauts.
+        std::fs::write(&path, r#"{"schedule":{"hour":9}}"#).unwrap();
+        assert_eq!(
+            load(&path).unwrap().app,
+            crate::reglages::ReglagesApp::default()
+        );
+
+        let mut s = Settings::default();
+        s.app.superviseur.nom = "Vigie".into();
+        save(&path, &s).unwrap();
+        let brut: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(brut["app"]["superviseur"]["nom"], "Vigie");
+        assert_eq!(load(&path).unwrap().app.superviseur.nom, "Vigie");
+    }
+    #[test]
+    fn un_reglage_de_l_app_illisible_ne_coute_pas_le_reste_du_fichier() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.json");
+        std::fs::write(
+            &path,
+            r#"{"schedule":{"hour":9},"ticketPatterns":["T-\\d+"],
+                "app":{"apparence":{"densite":"enorme"},"superviseur":{"actif":true,"niveau":"agir"}}}"#,
+        )
+        .unwrap();
+        let s = load(&path).unwrap();
+        assert_eq!(s.schedule.hour, 9);
+        assert_eq!(s.ticket_patterns, vec!["T-\\d+".to_string()]);
+        assert_eq!(s.app.apparence.densite, crate::reglages::Densite::Normale);
+        assert!(s.app.superviseur.actif);
+        // `app` d'un type inattendu : ses défauts, le reste est gardé.
+        std::fs::write(&path, r#"{"schedule":{"hour":8},"app":"?"}"#).unwrap();
+        let s = load(&path).unwrap();
+        assert_eq!(s.schedule.hour, 8);
+        assert_eq!(s.app, crate::reglages::ReglagesApp::default());
     }
     #[test]
     fn load_json_partiel_complete_avec_les_defauts() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.json");
-        std::fs::write(&path, r#"{"llm":{"token":"abc"}}"#).unwrap();
+        std::fs::write(&path, r#"{"schedule":{"hour":9}}"#).unwrap();
         let s = load(&path).unwrap();
-        assert_eq!(s.llm.token, "abc");
-        assert_eq!(s.llm.model, "google/gemma-4-31B-it");
+        assert_eq!(s.schedule.hour, 9);
+        assert!(s.shell.integration);
     }
 }

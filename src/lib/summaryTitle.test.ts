@@ -32,4 +32,13 @@ describe("splitTitle", () => {
     expect(r.title).toBe("T");
     expect(r.body).toBe("- a\n- b");
   });
+
+  it("v4 : le plafond vaut par section, aucun projet n'est perdu", () => {
+    const projets = ["terminials", "api", "notes", "site-vitrine"]
+      .map((p) => `## ${p}\n- un\n- deux`)
+      .join("\n\n");
+    const r = splitTitle(`Titre\n\n${projets}`);
+    expect(r.body).toContain("## site-vitrine\n- un\n- deux");
+    expect(r.body.match(/^- /gm)).toHaveLength(8);
+  });
 });

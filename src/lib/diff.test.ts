@@ -152,3 +152,54 @@ describe("parseUnifiedDiff", () => {
     ]);
   });
 });
+
+import {
+  filtrerFichiers,
+  libelleFichier,
+  pluriel,
+  scinderChemin,
+  scinderEnteteHunk,
+  totauxDiff,
+  type ChangedFile,
+} from "./diff";
+
+describe("aides de la vue Fichiers modifiés", () => {
+  const fichiers: ChangedFile[] = [
+    { path: "src/App.css", status: "modified", added: 10, deleted: 3 },
+    { path: "img/logo.png", status: "added" },
+    { path: "README.md", status: "untracked", added: 1, deleted: 0 },
+  ];
+
+  it("accorde les pluriels", () => {
+    expect(pluriel(0, "fichier")).toBe("0 fichier");
+    expect(pluriel(1, "ajout")).toBe("1 ajout");
+    expect(pluriel(2, "ajout")).toBe("2 ajouts");
+  });
+
+  it("scinde un chemin en dossier et nom", () => {
+    expect(scinderChemin("src/a/b.ts")).toEqual({ dir: "src/a/", nom: "b.ts" });
+    expect(scinderChemin("b.ts")).toEqual({ dir: "./", nom: "b.ts" });
+  });
+
+  it("totalise en ignorant les binaires", () => {
+    expect(totauxDiff(fichiers)).toEqual({ ajouts: 11, suppressions: 3 });
+  });
+
+  it("filtre sur le chemin sans tenir compte de la casse", () => {
+    expect(filtrerFichiers(fichiers, "  READme").map((f) => f.path)).toEqual(["README.md"]);
+    expect(filtrerFichiers(fichiers, "")).toHaveLength(3);
+  });
+
+  it("décrit un fichier pour un lecteur d'écran", () => {
+    expect(libelleFichier(fichiers[0])).toBe("src/App.css, modifié, 10 ajouts, 3 suppressions");
+    expect(libelleFichier(fichiers[1])).toBe("img/logo.png, ajouté, binaire");
+  });
+
+  it("sépare l'en-tête de hunk", () => {
+    expect(scinderEnteteHunk("@@ -212,7 +212,9 @@ .sidebar {")).toEqual({
+      plage: "@@ -212,7 +212,9 @@",
+      section: ".sidebar {",
+    });
+    expect(scinderEnteteHunk("@@ -1 +1 @@")).toEqual({ plage: "@@ -1 +1 @@", section: "" });
+  });
+});

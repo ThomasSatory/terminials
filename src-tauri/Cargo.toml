@@ -35,3 +35,8 @@ notify-rust = "4.17"
 protocol = { path = "../crates/protocol" }
 terminials-core = { path = "../crates/core" }
 chrono = { workspace = true }
+
+# Coller dans le terminal depuis le menu du clic droit : commande d'édition « Paste » de la
+# webview (celle du menu natif qu'il remplace). Déjà tirée par tauri, même version.
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"

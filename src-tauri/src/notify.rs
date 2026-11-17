@@ -16,6 +16,14 @@ pub fn fire(app: &AppHandle, title: &str, body: &str) {
         // L'app est au premier plan : l'anneau/badge front suffisent, pas de notif desktop.
         return;
     }
+    // Réglage « Notifications système » (Paramètres › Agents et notifications).
+    let autorisees = app
+        .try_state::<std::sync::Arc<crate::activity::ActivityState>>()
+        .map(|st| crate::activity::reglages_app(&st).notifications.systeme)
+        .unwrap_or(true);
+    if !autorisees {
+        return;
+    }
 
     let mut notif = notify_rust::Notification::new();
     notif
@@ -56,4 +64,11 @@ fn icon_path() -> Option<&'static str> {
         path.to_str().map(str::to_owned)
     })
     .as_deref()
+}
+
+/// Notification du bureau demandée par le front (outil `notifier` du superviseur), aux
+/// mêmes conditions que celles des hooks : fenêtre sans le focus, réglage activé.
+#[tauri::command]
+pub fn notifier_systeme(app: AppHandle, titre: String, texte: String) {
+    fire(&app, &titre, &texte);
 }
