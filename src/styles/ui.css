@@ -31,15 +31,15 @@
     color 0.2s;
 }
 
-/* Arc cyan « un agent travaille » : deux quarts colorés qui tournent autour du disque. */
+/* Arc « un agent travaille », à la couleur d'accent : deux quarts colorés qui tournent autour du disque. */
 .ui-avatar-arc {
   position: absolute;
   inset: calc(var(--avatar-arc-ecart, 4px) * -1);
   box-sizing: border-box;
   border-radius: 50%;
   border: 2px solid transparent;
-  border-top-color: var(--travail);
-  border-right-color: var(--travail);
+  border-top-color: var(--accent);
+  border-right-color: var(--accent);
   animation: spin 1s linear infinite;
   pointer-events: none;
 }

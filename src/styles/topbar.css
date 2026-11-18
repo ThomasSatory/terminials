@@ -154,15 +154,15 @@
   text-overflow: ellipsis;
 }
 
-/* Arc « un agent travaille » (maquette : 10 px, piste cyan pâle, quart cyan, .9s). */
+/* Arc « un agent travaille » (10 px, piste d'accent pâle, quart d'accent, .9s). */
 .topbar-arc {
   width: 10px;
   height: 10px;
   flex-shrink: 0;
   box-sizing: border-box;
   border-radius: 50%;
-  border: 2px solid var(--travail-piste);
-  border-top-color: var(--travail);
+  border: 2px solid rgba(var(--accent-rgb), 0.2);
+  border-top-color: var(--accent);
   animation: spin 0.9s linear infinite;
 }
 
