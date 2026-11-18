@@ -99,10 +99,10 @@ describe("MarqueSuperviseur", () => {
     expect(html).toContain("sup-viseur-barre");
   });
 
-  it("agit : arc cyan pendant un tour", () => {
+  it("agit : coins en diaphragme pendant un tour", () => {
     etat<SuperviseurState>(useSuperviseurStore, { moteur: { enCours: true, dernierTour: null, derniereErreur: null } });
     const html = renderToStaticMarkup(<MarqueSuperviseur />);
-    expect(html).toContain("sup-viseur-arc");
+    expect(html).toContain("sup-viseur-diaph");
     expect(html).toContain("agit · réflexion");
   });
 });

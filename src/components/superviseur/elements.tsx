@@ -18,31 +18,41 @@ const COINS = "M3 7.5V5a2 2 0 0 1 2-2h2.5M12.5 3H15a2 2 0 0 1 2 2v2.5M17 12.5V15
 
 /**
  * Viseur dont le centre dit le mode : point (observe), point plus gros (a quelque chose à
- * dire), arc cyan qui tourne (agit), deux barres (en pause). `taille` : « dock » (22 px,
- * marque) ou « tete » (18 px, en-tête du poste de suivi). Le centre rejoue son apparition
- * (`sup-mk`) à chaque changement de mode.
+ * dire), deux barres (en pause). Quand il agit, ce sont les coins qui bougent : le carré
+ * pivote en losange en se contractant puis reprend sa forme (« diaphragme »), autour d'un
+ * point qui respire. Coins et point sont dans le même SVG, centrés en (10, 10) : un élément
+ * HTML posé au centre tombait sur un demi-pixel et tournait décentré. `taille` : « dock »
+ * (22 px, marque) ou « tete » (18 px, en-tête du poste de suivi). Le centre rejoue son
+ * apparition (`sup-mk`) à chaque changement de mode.
  */
 export function Viseur({ mode, taille }: { mode: ModeSuperviseur; taille: "dock" | "tete" }) {
   const px = taille === "dock" ? 22 : 18;
   return (
     <span className="sup-viseur" data-taille={taille} aria-hidden="true">
       <svg width={px} height={px} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={taille === "dock" ? 1.5 : 1.6} strokeLinecap="round">
-        <path d={COINS} />
+        {mode === "agit" ? (
+          <>
+            <path className="sup-viseur-diaph" d={COINS} />
+            <circle className="sup-viseur-diaph-point" cx="10" cy="10" r="2.3" fill="currentColor" stroke="none" />
+          </>
+        ) : (
+          <path d={COINS} />
+        )}
       </svg>
-      <span className="sup-viseur-centre">
-        <span key={mode} className="sup-mk" data-mode={mode}>
-          {mode === "agit" ? (
-            <span className="sup-viseur-arc" />
-          ) : mode === "pause" ? (
-            <>
-              <span className="sup-viseur-barre" />
-              <span className="sup-viseur-barre" />
-            </>
-          ) : (
-            <span className="sup-viseur-point" />
-          )}
+      {mode !== "agit" && (
+        <span className="sup-viseur-centre">
+          <span key={mode} className="sup-mk" data-mode={mode}>
+            {mode === "pause" ? (
+              <>
+                <span className="sup-viseur-barre" />
+                <span className="sup-viseur-barre" />
+              </>
+            ) : (
+              <span className="sup-viseur-point" />
+            )}
+          </span>
         </span>
-      </span>
+      )}
     </span>
   );
 }
